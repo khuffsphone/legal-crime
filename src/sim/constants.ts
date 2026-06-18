@@ -60,5 +60,16 @@ export const HEAT_MAX = 100;
 export const HEAT_DECAY = 2; // heat lost per tick (before bribe effects)
 export const RAID_THRESHOLD = 60;
 
+// Law / raid model.
+export const RAID_MAX_CHANCE = 0.8; // raid probability at HEAT_MAX with no bribe
+export const BUST_HEAT = 90; // a raid at or above this heat busts the boss
+export const RAID_CASH_SEIZE_FRACTION = 0.3; // cash seized on a non-bust raid
+export const RAID_HEAT_RELIEF = 0.5; // fraction of heat shed after a non-bust raid
+
+// Bribery effects.
+export const BRIBE_MITIGATION_PER_LEVEL = 0.01; // raid-chance reduction per bribe point
+export const BRIBE_MAX_MITIGATION = 0.9; // cap on raid-chance reduction
+export const BRIBE_DECAY_PER_LEVEL = 0.05; // extra heat decay per bribe point
+
 export const BANKRUPT_FLOOR = -1000;
 export const WIN_DISTRICTS = 0.6; // fraction of districts the player must hold to win

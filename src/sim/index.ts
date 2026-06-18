@@ -27,7 +27,16 @@ export {
   type RecruitGangsterCommand,
   type AssignGangsterCommand,
   type ExpandControlCommand,
+  type BribeCommand,
 } from './commands';
+export {
+  raidBaseChance,
+  bribeMitigation,
+  raidChance,
+  bribeDecayBonus,
+  effectiveDecay,
+  resolveLaw,
+} from './law';
 export {
   loyaltyDelta,
   desertionChance,

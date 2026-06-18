@@ -72,13 +72,21 @@ export interface ExpandControlCommand {
   districtId: string;
 }
 
+/** Phase 6: raise a family's standing bribe (a per-tick retainer that buys protection). */
+export interface BribeCommand {
+  type: 'bribe';
+  familyId: string;
+  amount: number;
+}
+
 /** Union of all commands. Extended in later phases. */
 export type Command =
   | ExtortCommand
   | EstablishOperationCommand
   | RecruitGangsterCommand
   | AssignGangsterCommand
-  | ExpandControlCommand;
+  | ExpandControlCommand
+  | BribeCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -408,6 +416,51 @@ function applyExpandControl(state: GameState, cmd: ExpandControlCommand): GameSt
   return state;
 }
 
+function applyBribe(state: GameState, cmd: BribeCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  if (!family) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'bribe-invalid',
+      message: `Invalid bribe: family ${cmd.familyId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (cmd.amount <= 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'bribe-invalid',
+      message: `Bribe amount must be positive (got ${cmd.amount})`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  // The bribe is a standing retainer; its cost is realized per tick by the economy
+  // (familyExpenses includes bribeLevel), so it is not deducted up front. Require the
+  // family to be able to cover at least one tick of the new retainer.
+  if (family.cash < cmd.amount) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'bribe-denied',
+      message: `${family.name} cannot sustain a $${cmd.amount} bribe ($${family.cash} cash)`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  family.bribeLevel += cmd.amount;
+  state.log.push({
+    tick: state.tick,
+    kind: 'bribe',
+    message: `${family.name} raised its bribe to ${family.bribeLevel}`,
+    data: { familyId: family.id, amount: cmd.amount, bribeLevel: family.bribeLevel },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -421,6 +474,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyAssignGangster(state, cmd);
     case 'expandControl':
       return applyExpandControl(state, cmd);
+    case 'bribe':
+      return applyBribe(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);

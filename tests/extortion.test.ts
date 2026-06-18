@@ -8,7 +8,7 @@ import {
 } from '../src/sim/commands';
 import { controlOf } from '../src/sim/territory';
 import { tick } from '../src/sim/tick';
-import { EXTORT_HEAT, EXTORT_MIN_CONTROL, EXTORT_RATE } from '../src/sim/constants';
+import { EXTORT_HEAT, EXTORT_MIN_CONTROL, EXTORT_RATE, HEAT_DECAY } from '../src/sim/constants';
 import type { Business, Gangster } from '../src/sim/types';
 
 function front(id: string, baseIncome: number): Business {
@@ -144,8 +144,9 @@ describe('extortion income & heat over ticks', () => {
     applyCommand(s, extort('player', 'f1'));
     const heatAfterCommand = s.player.heat; // includes the act's one-off heat
 
+    // A tick adds EXTORT_HEAT (step 3) then sheds HEAT_DECAY in the law step (step 7).
     tick(s);
-    expect(s.player.heat).toBe(heatAfterCommand + EXTORT_HEAT);
+    expect(s.player.heat).toBe(heatAfterCommand + EXTORT_HEAT - HEAT_DECAY);
   });
 
   it('control lookup helper reads the right family', () => {

@@ -3,7 +3,7 @@ import { createInitialState } from '../src/sim/state';
 import { applyCommand, type EstablishOperationCommand } from '../src/sim/commands';
 import { tick } from '../src/sim/tick';
 import { operationHeat, operationIncome } from '../src/sim/economy';
-import { OPERATION_COST, OPERATION_HEAT, OPERATION_INCOME } from '../src/sim/constants';
+import { OPERATION_COST, OPERATION_HEAT, OPERATION_INCOME, HEAT_DECAY } from '../src/sim/constants';
 import type { OperationKind } from '../src/sim/types';
 
 function establish(
@@ -97,8 +97,9 @@ describe('operationHeat — police-presence amplification', () => {
     applyCommand(s, establish('player', 'district-0', 'protection')); // base 5 -> 10
     const heat0 = s.player.heat;
 
+    // A tick adds the amplified operation heat (step 2) then sheds HEAT_DECAY (step 7).
     tick(s);
-    expect(s.player.heat).toBe(heat0 + 10);
+    expect(s.player.heat).toBe(heat0 + 10 - HEAT_DECAY);
   });
 
   it('fronts never generate operation heat', () => {

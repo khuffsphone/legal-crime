@@ -119,3 +119,27 @@
   logic, held-district counting, exact gain with/without muscle, cap, rival contest math,
   zero-floor, denial, hold-after-expansion, and determinism).
 - Commit: phase5: Territory Control — green
+
+## Phase 6 — Heat, Bribery & Law — GREEN  (2026-06-18)
+- Summary: Added pure law module `src/sim/law.ts` — raidBaseChance (linear from
+  RAID_THRESHOLD to RAID_MAX_CHANCE at HEAT_MAX), bribeMitigation (1%/point, cap 90%),
+  raidChance, bribeDecayBonus / effectiveDecay — and `resolveLaw` as tick step 7: rolls a
+  seeded raid against each living family above threshold (bust at ≥ BUST_HEAT → player
+  loses 'busted'; otherwise seize 30% cash or shut an operation + heat relief), then
+  decays heat (base + bribe bonus). Added the `bribe` command (raises bribeLevel, a
+  per-tick retainer; no upfront deduction; denied if cash < amount).
+- Files: src/sim/law.ts, src/sim/tick.ts (step 7), src/sim/commands.ts (bribe),
+  src/sim/constants.ts, src/sim/index.ts, tests/law.test.ts; updated two heat-per-tick
+  assertions in tests/extortion.test.ts and tests/operations.test.ts to net out the
+  newly-added decay.
+- Decisions: Bribe is modeled as a standing retainer whose cost flows through the Phase 1
+  economy each tick (no double-charge), and whose effect is BOTH reduced raid chance and
+  faster heat decay — interpreting "reduces effective heat gain" as net decay so earlier
+  per-step heat code is untouched. Decay's introduction legitimately changes per-tick heat
+  totals, so the two earlier heat assertions were updated to subtract HEAT_DECAY (still
+  asserting the exact gain, now net). resolveLaw draws RNG only above threshold, so
+  low-heat ticks keep the cursor untouched and all prior determinism holds.
+- Gate: typecheck ✅  build ✅  test ✅ (102 total; +18 asserting exact raid/mitigation/
+  decay math, no-draw-below-threshold, bust path → player loss, both non-bust raid
+  outcomes via seed-scan, exact 30% seizure, and bribe command behavior + per-tick cost).
+- Commit: phase6: Heat, Bribery & Law — green

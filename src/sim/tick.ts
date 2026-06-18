@@ -9,6 +9,7 @@
 import { EXTORT_HEAT, HEAT_MAX } from './constants';
 import { allBusinesses, familyExpenses, familyIncome, operationHeat } from './economy';
 import { resolveLoyalty } from './gangsters';
+import { resolveLaw } from './law';
 import { allFamilies, findFamily, type Family, type GameState } from './types';
 
 /** Apply one tick's economy to a single family: cash += income - expenses. */
@@ -72,7 +73,10 @@ export function tick(state: GameState): GameState {
   // Step 4 (gangster loyalty drift & desertion).
   resolveLoyalty(state);
 
-  // Step 9: advance the clock. (Steps 5–8 are filled in by later phases.)
+  // Step 7 (heat decay + raid checks). Steps 5–6 (rivals, conflict) come in later phases.
+  resolveLaw(state);
+
+  // Step 9: advance the clock. (Steps 5–6, 8 are filled in by later phases.)
   state.tick += 1;
   return state;
 }
