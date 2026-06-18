@@ -18,6 +18,24 @@ export function operationHeat(business: Business, district: District): number {
   return Math.round(business.heatPerTick * (1 + district.policePresence / 100));
 }
 
+/**
+ * Per-tick income a single business yields to its earning family: a front pays the
+ * extortion cut to its extorter; an operation pays its base income to its owner. Returns
+ * 0 for a business with no earning family. (Phase 12: this is the per-business accrual
+ * rate that piles up as `uncollected`.)
+ */
+export function businessAccrual(business: Business): number {
+  if (business.kind === 'front') {
+    return business.extortedBy ? Math.floor(business.baseIncome * EXTORT_RATE) : 0;
+  }
+  return business.ownerFamily ? business.baseIncome : 0;
+}
+
+/** The family that earns from a business: its extorter (front) or owner (operation). */
+export function businessEarner(business: Business): string | undefined {
+  return business.kind === 'front' ? business.extortedBy : business.ownerFamily;
+}
+
 /** Per-tick income a family earns from fronts it is currently extorting. */
 export function extortionIncome(state: GameState, familyId: string): number {
   let total = 0;

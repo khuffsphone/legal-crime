@@ -56,16 +56,20 @@ describe('establishOperation — cost & creation', () => {
 });
 
 describe('establishOperation — income over ticks', () => {
-  it('an established operation yields its income each tick', () => {
+  it('an established operation accrues its income each tick as uncollected takings', () => {
     const s = createInitialState(1);
     s.player.cash = 5000;
     applyCommand(s, establish('player', 'district-0', 'speakeasy'));
     const cash0 = s.player.cash;
+    const op = s.districts[0].businesses.at(-1)!;
 
+    // Operation income piles up uncollected; cash is realized only by collecting.
     tick(s);
-    expect(s.player.cash).toBe(cash0 + OPERATION_INCOME.speakeasy);
+    expect(op.uncollected).toBe(OPERATION_INCOME.speakeasy);
+    expect(s.player.cash).toBe(cash0);
     tick(s);
-    expect(s.player.cash).toBe(cash0 + 2 * OPERATION_INCOME.speakeasy);
+    expect(op.uncollected).toBe(2 * OPERATION_INCOME.speakeasy);
+    // The per-tick accrual rate helper still reports the operation's potential income.
     expect(operationIncome(s, 'player')).toBe(OPERATION_INCOME.speakeasy);
   });
 });

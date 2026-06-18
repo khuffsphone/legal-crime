@@ -48,6 +48,10 @@ export interface Business {
   extortedBy?: string; // familyId currently extorting (fronts only)
   ownerFamily?: string; // familyId running this illegal operation
   districtId: string;
+  /** Takings that have piled up and not yet been collected (Phase 12 / S2). Income accrues
+   * here each tick and is realized only when a Collector run gathers it. Optional/absent is
+   * treated as 0; real construction paths initialize it. */
+  uncollected?: number;
 }
 
 export interface District {

@@ -159,13 +159,18 @@ describe('launder command', () => {
 });
 
 describe('tick integration — dual economy', () => {
-  it('classes crime income as dirty as it arrives', () => {
+  it('classes collected crime income as dirty when it is realized', () => {
+    // Under Collectors (Phase 12) income arrives via collection, not the tick; collected
+    // takings land as dirty cash.
     const s = createInitialState(1);
-    s.districts[0].control = { player: 100 };
-    s.districts[0].businesses = [front('f1', 100, 'player')]; // extortionIncome 30/tick
-    const dirty0 = s.player.dirtyCash;
+    s.districts[0].businesses = [front('f1', 100, 'player')]; // accrues 30/tick uncollected
     tick(s);
-    expect(s.player.dirtyCash).toBe(dirty0 + 30);
+    const cashBefore = s.player.cash;
+    expect(s.player.dirtyCash).toBe(0); // nothing collected yet
+    applyCommand(s, { type: 'collect', familyId: 'player', districtId: 'district-0' });
+    const collected = s.player.cash - cashBefore;
+    expect(collected).toBeGreaterThan(0);
+    expect(s.player.dirtyCash).toBe(collected); // the take is dirty money
   });
 
   it('a standing dirty hoard radiates heat each tick (then decays)', () => {

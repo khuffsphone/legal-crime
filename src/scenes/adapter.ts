@@ -13,6 +13,8 @@ import {
   familyStrength,
   isGameOver,
   launderCapacity,
+  pendingCollection,
+  totalUncollected,
   districtsNeededToWin,
   type Command,
   type Family,
@@ -25,6 +27,7 @@ export interface PlayerView {
   cleanCash: number;
   dirtyCash: number;
   launderCapacity: number;
+  uncollected: number;
   heat: number;
   bribeLevel: number;
   gangsterCount: number;
@@ -41,6 +44,7 @@ export interface DistrictView {
   playerControl: number;
   businessCount: number;
   operationCount: number;
+  playerUncollected: number;
 }
 
 export interface RivalView {
@@ -82,6 +86,7 @@ export function playerView(state: GameState): PlayerView {
     cleanCash: cleanCash(p),
     dirtyCash: p.dirtyCash,
     launderCapacity: launderCapacity(state, p.id),
+    uncollected: totalUncollected(state, p.id),
     heat: p.heat,
     bribeLevel: p.bribeLevel,
     gangsterCount: p.gangsters.length,
@@ -103,6 +108,7 @@ export function districtViews(state: GameState): DistrictView[] {
       playerControl: d.control[state.player.id] ?? 0,
       businessCount: d.businesses.length,
       operationCount: d.businesses.filter((b) => b.kind !== 'front').length,
+      playerUncollected: pendingCollection(state, state.player.id, d.id),
     };
   });
 }

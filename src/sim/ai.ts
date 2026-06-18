@@ -5,6 +5,7 @@
 import {
   AI_BRIBE_AMOUNT,
   AI_BRIBE_HEAT_THRESHOLD,
+  AI_COLLECT_BASE,
   AI_EXPAND_BASE,
   AI_JITTER,
   AI_OP_BASE,
@@ -16,11 +17,27 @@ import {
   OPERATION_COST,
   RECRUIT_COST,
 } from './constants';
+import { pendingCollection } from './collection';
 import type { Command } from './commands';
 import { applyCommand } from './commands';
 import { Rng } from './rng';
 import { controlOf } from './territory';
 import type { District, Family, GameState, OperationKind } from './types';
+
+/** The district where a family has the most uncollected takings waiting, if any. */
+function richestPendingDistrict(
+  state: GameState,
+  familyId: string,
+): { districtId: string; pending: number } | undefined {
+  let best: { districtId: string; pending: number } | undefined;
+  for (const d of state.districts) {
+    const pending = pendingCollection(state, familyId, d.id);
+    if (pending > 0 && (!best || pending > best.pending)) {
+      best = { districtId: d.id, pending };
+    }
+  }
+  return best;
+}
 
 /** Count of illegal operations a family owns. */
 function ownedOperationCount(state: GameState, familyId: string): number {
@@ -68,6 +85,16 @@ export function rivalCandidates(state: GameState, rival: Family): ScoredAction[]
   const out: ScoredAction[] = [];
   const nGang = rival.gangsters.length;
   const nOps = ownedOperationCount(state, rival.id);
+
+  // Collect waiting takings — high priority, scaled by how big the pile is. Only a
+  // candidate when there is something to collect (so it never appears in a fresh state).
+  const rich = richestPendingDistrict(state, rival.id);
+  if (rich) {
+    out.push({
+      command: { type: 'collect', familyId: rival.id, districtId: rich.districtId },
+      base: AI_COLLECT_BASE + Math.min(40, Math.floor(rich.pending / 50)),
+    });
+  }
 
   // Bribe when heat is high enough and affordable.
   if (rival.heat > AI_BRIBE_HEAT_THRESHOLD && rival.cash >= AI_BRIBE_AMOUNT) {

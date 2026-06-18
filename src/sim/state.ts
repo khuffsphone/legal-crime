@@ -34,6 +34,7 @@ function makeFront(rng: Rng, districtId: string, index: number, namePool: Rng): 
     baseIncome,
     heatPerTick: 0,
     districtId,
+    uncollected: 0,
   };
 }
 

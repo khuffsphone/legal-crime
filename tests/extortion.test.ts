@@ -123,18 +123,22 @@ describe('extort command — resolution', () => {
 });
 
 describe('extortion income & heat over ticks', () => {
-  it('a successfully extorted front pays the extorter EXTORT_RATE each tick', () => {
+  it('a successfully extorted front accrues EXTORT_RATE of takings each tick (uncollected)', () => {
     const s = createInitialState(1);
     s.districts[0].businesses = [front('f1', 100)];
     s.districts[0].control.player = 100;
     applyCommand(s, extort('player', 'f1'));
     const cash0 = s.player.cash;
+    const f = s.districts[0].businesses[0];
     const expected = Math.floor(100 * EXTORT_RATE); // 30
 
+    // Income now piles up at the business; the player does not auto-collect.
     tick(s);
-    expect(s.player.cash).toBe(cash0 + expected);
+    expect(f.uncollected).toBe(expected);
+    expect(s.player.cash).toBe(cash0);
     tick(s);
-    expect(s.player.cash).toBe(cash0 + 2 * expected);
+    expect(f.uncollected).toBe(2 * expected);
+    expect(s.player.cash).toBe(cash0);
   });
 
   it('an extorted front adds EXTORT_HEAT to the extorter each tick', () => {

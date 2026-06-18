@@ -6,6 +6,7 @@
 // Pure — no Phaser, no browser globals.
 
 import {
+  COLLECT_HEAT,
   CONTEST_REDUCTION,
   CONTROL_MAX,
   EXPAND_BASE_GAIN,
@@ -23,8 +24,14 @@ import {
   RECRUIT_SKILL_MAX,
   RECRUIT_SKILL_MIN,
 } from './constants';
+import {
+  collectibleBusinesses,
+  collectionFraction,
+  collectionSafety,
+  uncollectedOf,
+} from './collection';
 import { GANGSTER_NAMES } from './gangsters';
-import { cleanCash, clampDirty, launderCapacity, launderFee } from './laundering';
+import { cleanCash, clampDirty, creditCrimeIncome, launderCapacity, launderFee } from './laundering';
 import { Rng } from './rng';
 import { controlOf, topRivalControl } from './territory';
 import {
@@ -94,6 +101,13 @@ export interface LaunderCommand {
   amount: number;
 }
 
+/** Phase 12: send Collectors on a run to gather a family's uncollected takings in a district. */
+export interface CollectCommand {
+  type: 'collect';
+  familyId: string;
+  districtId: string;
+}
+
 /** Union of all commands. Extended in later phases. */
 export type Command =
   | ExtortCommand
@@ -103,7 +117,8 @@ export type Command =
   | ExpandControlCommand
   | BribeCommand
   | OrderHitCommand
-  | LaunderCommand;
+  | LaunderCommand
+  | CollectCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -272,6 +287,7 @@ function applyEstablishOperation(
     heatPerTick: OPERATION_HEAT[cmd.kind],
     ownerFamily: family.id,
     districtId: district.id,
+    uncollected: 0,
   };
   district.businesses.push(operation);
 
@@ -600,6 +616,65 @@ function applyLaunder(state: GameState, cmd: LaunderCommand): GameState {
   return state;
 }
 
+function applyCollect(state: GameState, cmd: CollectCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  const district = state.districts.find((d) => d.id === cmd.districtId);
+
+  if (!family || !district) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'collect-invalid',
+      message: `Invalid collect: family ${cmd.familyId} or district ${cmd.districtId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  const targets = collectibleBusinesses(state, family.id, district.id);
+  const pending = targets.reduce((sum, b) => sum + uncollectedOf(b), 0);
+  if (pending <= 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'collect-empty',
+      message: `${family.name} has nothing to collect in ${district.name}`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  // Risk: a seeded skim off the deterministic safe fraction (presence/heat vs. muscle).
+  const muscle = muscleInDistrict(family, district.id);
+  const safety = collectionSafety(district.policePresence, family.heat, muscle);
+  const rng = new Rng(state.rngState);
+  const roll = rng.nextFloat();
+  state.rngState = rng.state;
+
+  const fraction = collectionFraction(safety, roll);
+  const collected = Math.floor(pending * fraction);
+  const lost = pending - collected;
+
+  // The run picks the businesses clean — what isn't collected is skimmed/robbed/gone.
+  for (const b of targets) b.uncollected = 0;
+
+  creditCrimeIncome(family, collected); // the take is dirty money
+  addHeat(family, COLLECT_HEAT);
+
+  state.log.push({
+    tick: state.tick,
+    kind: 'collect',
+    message: `${family.name} collected $${collected} of $${pending} in ${district.name} (lost $${lost})`,
+    data: {
+      familyId: family.id,
+      districtId: district.id,
+      pending,
+      collected,
+      lost,
+      safety,
+    },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -619,6 +694,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyOrderHit(state, cmd);
     case 'launder':
       return applyLaunder(state, cmd);
+    case 'collect':
+      return applyCollect(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);

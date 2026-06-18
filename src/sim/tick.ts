@@ -7,7 +7,8 @@
 // steps at the documented positions without reordering earlier ones.
 
 import { EXTORT_HEAT, HEAT_MAX } from './constants';
-import { allBusinesses, familyExpenses, familyIncome, operationHeat } from './economy';
+import { allBusinesses, familyExpenses, operationHeat } from './economy';
+import { accrueUncollected } from './collection';
 import { clampDirty, heatFromDirty } from './laundering';
 import { resolveRivalAI } from './ai';
 import { resolveConflict } from './conflict';
@@ -16,24 +17,21 @@ import { resolveLoyalty } from './gangsters';
 import { resolveLaw } from './law';
 import { allFamilies, findFamily, type Family, type GameState } from './types';
 
-/** Apply one tick's economy to a single family: cash += income - expenses. Crime income
- * is classed dirty (cash already rose by it); expenses spend clean money first, which the
- * dirty clamp realizes. */
-function resolveFamilyEconomy(state: GameState, family: Family): void {
-  const income = familyIncome(state, family.id);
+/** Apply one tick's expenses to a family: cash -= upkeep + bribe retainer. Income is no
+ * longer credited here — under the Collector mechanic (S2) it accrues at businesses and is
+ * realized only when collected. Expenses spend clean money first, which the dirty clamp
+ * realizes. */
+function resolveFamilyExpenses(state: GameState, family: Family): void {
   const expenses = familyExpenses(family);
-  const net = income - expenses;
-  family.cash += net;
-  family.dirtyCash += income; // all current income is proceeds of crime
+  if (expenses === 0) return;
+  family.cash -= expenses;
   clampDirty(family);
-  if (net !== 0) {
-    state.log.push({
-      tick: state.tick,
-      kind: 'economy',
-      message: `${family.name}: ${net >= 0 ? '+' : ''}${net} (income ${income}, expenses ${expenses})`,
-      data: { familyId: family.id, income, expenses, net },
-    });
-  }
+  state.log.push({
+    tick: state.tick,
+    kind: 'economy',
+    message: `${family.name}: -${expenses} (upkeep + bribes)`,
+    data: { familyId: family.id, income: 0, expenses, net: -expenses },
+  });
 }
 
 /** Step 3.5 (heat): a standing hoard of dirty cash radiates per-tick heat for its owner. */
@@ -78,9 +76,13 @@ export function tick(state: GameState): GameState {
   // A decided game does not advance — its final state is preserved.
   if (state.status !== 'playing') return state;
 
-  // Step 1–3 (economy): passive income + extortion + operations, minus expenses.
+  // Step 1a (accrual): takings pile up at each earning business as uncollected funds.
+  accrueUncollected(state);
+
+  // Step 1b (expenses): families pay upkeep + bribe retainers. Income is realized only by
+  // collecting (S2), not here.
   for (const family of allFamilies(state)) {
-    resolveFamilyEconomy(state, family);
+    resolveFamilyExpenses(state, family);
   }
 
   // Step 2 (heat from illegal operations).

@@ -87,6 +87,18 @@ export const DIRTY_HEAT_MAX_PER_TICK = 15; // cap on per-tick dirty-cash heat
 export const LAUNDER_FEE_RATE = 0.15; // fee fraction to convert dirty -> clean
 export const LAUNDER_CAP_PER_FRONT = 200; // launder capacity granted per extorted front
 
+// Collector units (Phase 12 / S2). Income accrues at businesses as "uncollected" takings;
+// a collection run gathers it with a risk — police presence and heat skim/steal the take,
+// guarding muscle protects it. The collected fraction = safety * (1 - random skim).
+export const COLLECT_BASE_YIELD = 1.0; // collectible fraction in ideal conditions
+export const COLLECT_PRESENCE_PENALTY = 0.004; // safety lost per police-presence point
+export const COLLECT_HEAT_PENALTY = 0.003; // safety lost per heat point
+export const COLLECT_MUSCLE_BONUS = 0.05; // safety gained per guard skill point in district
+export const COLLECT_MIN_YIELD = 0.1; // floor on the deterministic safe fraction
+export const COLLECT_SKIM_MAX = 0.3; // max random skim taken off the safe fraction
+export const COLLECT_HEAT = 2; // heat from running a collection
+export const AI_COLLECT_BASE = 55; // rival priority to collect a pending pile
+
 // Rival AI scoring heuristic (Phase 7). Base scores are deterministic; a small seeded
 // jitter breaks ties and adds variety.
 export const AI_RECRUIT_BASE = 60;

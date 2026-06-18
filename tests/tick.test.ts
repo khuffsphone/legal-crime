@@ -35,14 +35,19 @@ describe('tick — economy', () => {
     expect(s.player.cash).toBe(cash0);
   });
 
-  it('adds extortion income to the extorting family each tick', () => {
+  it('accrues extortion takings at the business each tick (not auto-credited to cash)', () => {
+    // Under the Collector mechanic (S2) income piles up uncollected and is realized only
+    // when collected — it no longer auto-credits cash.
     const s = createInitialState(1);
     const cash0 = s.player.cash;
-    s.districts[0].businesses = [front('f1', 100, 'player')]; // +30/tick
+    const f = front('f1', 100, 'player'); // accrues floor(100 * 0.3) = 30/tick
+    s.districts[0].businesses = [f];
     tick(s);
-    expect(s.player.cash).toBe(cash0 + 30);
+    expect(f.uncollected).toBe(30);
+    expect(s.player.cash).toBe(cash0); // unchanged until collected
     tick(s);
-    expect(s.player.cash).toBe(cash0 + 60);
+    expect(f.uncollected).toBe(60);
+    expect(s.player.cash).toBe(cash0);
   });
 
   it('subtracts gangster upkeep each tick', () => {
@@ -53,33 +58,38 @@ describe('tick — economy', () => {
     expect(s.player.cash).toBe(cash0 - 50);
   });
 
-  it('nets income against expenses over multiple ticks', () => {
+  it('over multiple ticks only expenses hit cash while takings pile up uncollected', () => {
     const s = createInitialState(1);
     const cash0 = s.player.cash;
-    s.districts[0].businesses = [front('f1', 100, 'player')]; // +30
-    s.player.gangsters = [gangster('g1', 10)]; // -10
+    const f = front('f1', 100, 'player'); // accrues 30/tick
+    s.districts[0].businesses = [f];
+    s.player.gangsters = [gangster('g1', 10)]; // -10/tick
     tickN(s, 5);
-    expect(s.player.cash).toBe(cash0 + 5 * 20);
+    expect(s.player.cash).toBe(cash0 - 5 * 10); // only upkeep leaves cash
+    expect(f.uncollected).toBe(5 * 30); // five weeks of takings waiting
     expect(s.tick).toBe(5);
   });
 
-  it('records an economy event only when net is non-zero', () => {
+  it('records an economy event when expenses are paid', () => {
     const s = createInitialState(1);
-    s.districts[0].businesses = [front('f1', 100, 'player')];
+    s.player.gangsters = [gangster('g1', 25)];
     tick(s);
     const econEvents = s.log.filter((e) => e.kind === 'economy' && e.data?.familyId === 'player');
     expect(econEvents).toHaveLength(1);
-    expect(econEvents[0].data?.net).toBe(30);
+    expect(econEvents[0].data?.net).toBe(-25);
+    expect(econEvents[0].data?.expenses).toBe(25);
   });
 
-  it('resolves income independently for rivals', () => {
+  it('a rival accrues takings and its AI collects them', () => {
     const s = createInitialState(1);
-    // Keep rival cash below the cheapest AI action (expand = 300) so the rival AI takes
-    // no action this tick and we can isolate the extortion income credit.
-    s.rivals[0].cash = 100;
-    s.districts[0].businesses = [front('f1', 200, 'rival-a')]; // +60/tick to rival-a
+    s.rivals[0].cash = 100; // too poor for any action except collecting
+    const f = front('f1', 200, 'rival-a'); // accrues 60/tick to rival-a
+    s.districts[0].businesses = [f];
     tick(s);
-    expect(s.rivals[0].cash).toBe(100 + 60);
+    // The rival's AI ran a collection: the pile is swept and some cash banked.
+    expect(f.uncollected).toBe(0);
+    expect(s.rivals[0].cash).toBeGreaterThan(100);
+    expect(s.rivals[0].cash).toBeLessThanOrEqual(160); // cannot exceed the full take
   });
 });
 

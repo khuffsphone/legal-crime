@@ -288,3 +288,36 @@
   with exact clean-cash deltas, dirty income classification, dirty-hoard heat in tick,
   clean-spent-first clamp, and determinism). Phaser-free invariant test green.
 - Commit: phase11: Dual Economy — green
+
+## Phase 12 — Collector Units (S2, THE signature mechanic) — GREEN  (2026-06-18)
+- Summary: Income no longer auto-credits families — it accrues at each earning business as
+  `uncollected` takings (new optional Business field; tick step 1a `accrueUncollected`),
+  and must be physically gathered by a Collector run. New pure module `src/sim/collection.ts`:
+  businessAccrual/businessEarner (in economy.ts), accrueUncollected, collectibleBusinesses,
+  pendingCollection, totalUncollected, collectionSafety (deterministic: 1 − presence·0.004 −
+  heat·0.003 + muscle·0.05, clamped [0.1,1]) and collectionFraction (safety·(1 − roll·0.3)).
+  New `collect{familyId,districtId}` command: gathers the family's pending takings there,
+  applies one seeded skim roll, banks the take as DIRTY cash (creditCrimeIncome, reused from
+  Phase 11), sweeps the piles (uncollected lost beyond the take), and adds COLLECT_HEAT. The
+  tick economy is now expenses-only (`resolveFamilyExpenses`). Rival AI gained a high-priority
+  `collect` candidate (only when a pile is pending) so rivals fund themselves under the new
+  model. Adapter exposes per-district `playerUncollected` and total `uncollected`.
+- Files: src/sim/collection.ts (new), src/sim/economy.ts (businessAccrual/Earner), types.ts
+  (uncollected?), state.ts + commands.ts establishOperation (init 0), src/sim/tick.ts
+  (accrual step + expenses-only economy), src/sim/commands.ts (collect), src/sim/ai.ts
+  (collect candidate), index.ts, adapter.ts; updated income-timing assertions in
+  tests/{tick,extortion,operations,dualEconomy}.test.ts; new tests/collectors.test.ts.
+- Decisions: This is THE signature mechanic, so income realization legitimately changes from
+  passive to active collection — the 7 earlier per-tick cash/dirty assertions were updated
+  (documented here and in-test) to assert accrual-at-business + cash-on-collection; all other
+  151 prior assertions untouched and green. `uncollected` is OPTIONAL (absent⇒0) so existing
+  Business literals in tests didn't need editing. Risk model is split into a pure,
+  exactly-testable deterministic safety fraction plus one seeded skim roll (so an exact
+  collected amount is asserted by mirroring the single RNG draw). The skimmed/lost remainder
+  is gone (no second chance) — that is the teeth. Rivals collect via AI (collect candidate
+  gated on pending>0, so fresh-state ai.test behavior is unchanged — verified).
+- Gate: typecheck ✅  build ✅  test ✅ (186 total; +14 collectors asserting accrual math,
+  pending/total sums, exact collectionSafety/Fraction, exact collected take at safety 1 via
+  RNG mirror, presence/heat slashing the take, muscle monotonicity, own-businesses-only
+  sweep, empty no-op, determinism, and rival AI collection). Phaser-free invariant green.
+- Commit: phase12: Collector Units — green
