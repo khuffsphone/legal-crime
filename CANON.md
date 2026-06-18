@@ -83,3 +83,25 @@ deterministic, time-boxed, and they stress every signature mechanic at once.
   changes a number an earlier test asserted (e.g., income realization under Collectors),
   the affected earlier assertions are updated in the owning phase and the change is
   recorded in the receipt — never silently.
+
+## ============ REPO SYNC & CONCURRENCY RULES (ALL AGENTS READ) ============
+A local Windows scheduled task ("LegalCrimeSync") auto-commits brain/docs files to
+GitHub every 10 minutes. To prevent two processes pushing to the same branch at once:
+
+1. BRANCH SEPARATION IS THE LAW. The auto-sync and human local edits commit ONLY to
+   brain/docs files. Claude Code owns ALL commits under /src and its working branch.
+2. The auto-sync script is SCOPED to CANON.md, ENHANCEMENT_PLAN.md, ASSET_SPEC.md,
+   RUN_LOG.md, docs/. It cannot push /src changes.
+3. LOCK FILE: if ".sync-lock" exists in the repo root, the auto-sync skips its cycle.
+   Before a local unattended Code run, create it; delete it when done. (Sandbox/
+   desktop-app runs are unaffected — separate filesystem.)
+4. NEVER run a competing auto-committer against Code's live working branch mid-run.
+
+## ============ ASSET & WORKSTREAM LOCATIONS ============
+- Code: github.com/khuffsphone/legal-crime (branches + RUN_LOG.md)
+- Visual assets (reference art, pre-processing): Drive "Legal Crime Remake - Brain/assets-visual"
+  (curated finals in /selected-finals; filenames follow LCR_<category>_<name>_v<N>)
+- Audio: Drive "Legal Crime Remake - Brain/assets-audio"
+- Writing/content (districts, families, strings, events): Drive "Legal Crime Remake - Brain/writing"
+- NOTE: Bribery channels in code are: The Beat (police), The Bench (judges),
+  City Hall (politicians), The Bureau (feds). This is canonical — content must use these names.
