@@ -48,3 +48,21 @@
   cash deltas, floored extortion, multi-tick accumulation, per-family isolation, and
   deep-equal determinism across two runs).
 - Commit: phase1: Economy & Tick Engine — green
+
+## Phase 2 — Extortion — GREEN  (2026-06-18)
+- Summary: Introduced the command system (`src/sim/commands.ts`) with the deterministic
+  `applyCommand`/`applyCommands` entry point and the `extort` command. Extortion is gated
+  by EXTORT_MIN_CONTROL, rolls success via the seeded RNG (chance = control/100 + 0.04·
+  muscle, clamped), sets `extortedBy` on success, and adds one-off heat either way. The
+  tick engine now applies per-tick extortion heat (step 3). Helpers: findBusiness,
+  controlOf, muscleInDistrict, extortSuccessChance.
+- Files: src/sim/commands.ts, src/sim/tick.ts (extortion heat), src/sim/index.ts,
+  tsconfig.json (lib ES2022 for Array.at), tests/extortion.test.ts.
+- Decisions: Success probability is a pure helper so it can be asserted exactly; the
+  control gate is checked before any RNG draw so a blocked attempt leaves the cursor
+  untouched (verified by test). Failure adds the same one-off heat as success. Per-tick
+  extortion income reuses Phase 1 economy; per-tick heat added in tick step 3.
+- Gate: typecheck ✅  build ✅  test ✅ (45 total; +11 asserting exact success chances,
+  blocked-without-RNG-draw, guaranteed success at full control, seed-scan success/failure
+  split, determinism, and per-tick income+heat).
+- Commit: phase2: Extortion — green

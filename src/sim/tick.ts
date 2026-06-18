@@ -6,8 +6,9 @@
 // Phase 1 implements the economy steps and the tick counter. Later phases insert their
 // steps at the documented positions without reordering earlier ones.
 
-import { familyExpenses, familyIncome } from './economy';
-import { allFamilies, type Family, type GameState } from './types';
+import { EXTORT_HEAT, HEAT_MAX } from './constants';
+import { allBusinesses, familyExpenses, familyIncome } from './economy';
+import { allFamilies, findFamily, type Family, type GameState } from './types';
 
 /** Apply one tick's economy to a single family: cash += income - expenses. */
 function resolveFamilyEconomy(state: GameState, family: Family): void {
@@ -25,15 +26,29 @@ function resolveFamilyEconomy(state: GameState, family: Family): void {
   }
 }
 
+/** Step 3 (heat): each extorted front generates per-tick heat for its extorter. */
+function resolveExtortionHeat(state: GameState): void {
+  for (const business of allBusinesses(state)) {
+    if (business.kind === 'front' && business.extortedBy) {
+      const fam = findFamily(state, business.extortedBy);
+      if (fam) fam.heat = Math.min(HEAT_MAX, fam.heat + EXTORT_HEAT);
+    }
+  }
+}
+
 /**
- * Advance the simulation by one tick. Resolves the economy for every family, then
- * increments the tick counter. Returns the same state object for convenience.
+ * Advance the simulation by one tick. Resolves the economy for every family, applies
+ * per-tick extortion heat, then increments the tick counter. Returns the same state
+ * object for convenience.
  */
 export function tick(state: GameState): GameState {
   // Step 1–3 (economy): passive income + extortion + operations, minus expenses.
   for (const family of allFamilies(state)) {
     resolveFamilyEconomy(state, family);
   }
+
+  // Step 3 (heat from extortion).
+  resolveExtortionHeat(state);
 
   // Step 9: advance the clock. (Steps 4–8 are filled in by later phases.)
   state.tick += 1;
