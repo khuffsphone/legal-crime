@@ -73,3 +73,14 @@ export const BRIBE_DECAY_PER_LEVEL = 0.05; // extra heat decay per bribe point
 
 export const BANKRUPT_FLOOR = -1000;
 export const WIN_DISTRICTS = 0.6; // fraction of districts the player must hold to win
+
+// Rival AI scoring heuristic (Phase 7). Base scores are deterministic; a small seeded
+// jitter breaks ties and adds variety.
+export const AI_RECRUIT_BASE = 60;
+export const AI_RECRUIT_PER_GANGSTER = 15; // recruit score falls as the roster grows
+export const AI_OP_BASE = 45;
+export const AI_OP_PER_OP = 12; // operation score falls as a family owns more
+export const AI_EXPAND_BASE = 30;
+export const AI_BRIBE_AMOUNT = 20; // standing bribe a rival buys when heat is high
+export const AI_BRIBE_HEAT_THRESHOLD = 40; // rivals only bribe above this heat
+export const AI_JITTER = 8; // max additive random jitter on a candidate score

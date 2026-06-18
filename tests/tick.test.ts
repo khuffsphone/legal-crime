@@ -74,10 +74,12 @@ describe('tick — economy', () => {
 
   it('resolves income independently for rivals', () => {
     const s = createInitialState(1);
-    const rivalCash0 = s.rivals[0].cash;
+    // Keep rival cash below the cheapest AI action (expand = 300) so the rival AI takes
+    // no action this tick and we can isolate the extortion income credit.
+    s.rivals[0].cash = 100;
     s.districts[0].businesses = [front('f1', 200, 'rival-a')]; // +60/tick to rival-a
     tick(s);
-    expect(s.rivals[0].cash).toBe(rivalCash0 + 60);
+    expect(s.rivals[0].cash).toBe(100 + 60);
   });
 });
 

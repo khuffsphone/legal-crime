@@ -51,3 +51,11 @@ export {
   districtsHeldCount,
   topRivalControl,
 } from './territory';
+export {
+  rivalCandidates,
+  chooseRivalAction,
+  resolveRivalAI,
+  strongholdDistrict,
+  affordableOperation,
+  type ScoredAction,
+} from './ai';

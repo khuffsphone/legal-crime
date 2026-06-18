@@ -143,3 +143,24 @@
   decay math, no-draw-below-threshold, bust path → player loss, both non-bust raid
   outcomes via seed-scan, exact 30% seizure, and bribe command behavior + per-tick cost).
 - Commit: phase6: Heat, Bribery & Law — green
+
+## Phase 7 — Rival AI — GREEN  (2026-06-18)
+- Summary: Added pure AI module `src/sim/ai.ts`. `rivalCandidates` builds the affordable/
+  valid action set with deterministic base scores (bribe = heat when heat>threshold;
+  recruit = 60 − 15·roster; operation = 45 − 12·ownedOps for the most expensive affordable
+  kind; expand = 30 (+10 if stronghold unheld)). `chooseRivalAction` adds a seeded jitter
+  (≤8) and picks the max, or null if nothing is affordable. `resolveRivalAI` (tick step 5)
+  runs each living rival's choice and applies it, sharing the single RNG cursor. Helpers
+  strongholdDistrict and affordableOperation exported.
+- Files: src/sim/ai.ts, src/sim/tick.ts (step 5), src/sim/index.ts, tests/ai.test.ts;
+  updated one Phase 1 rival-income test to keep rival cash below the cheapest AI action so
+  the income credit can be isolated now that rivals act each tick.
+- Decisions: Rivals never extort (per the brief's listed action set: recruit / expand /
+  establish / bribe). Base scores are a separate pure function from the jittered choice so
+  scores are asserted exactly; constructed test scenarios keep the score gap above the
+  jitter range for deterministic action selection. Each rival uses its own Rng snapshot of
+  the shared cursor so the stream stays coherent through any command randomness.
+- Gate: typecheck ✅  build ✅  test ✅ (116 total; +14 asserting exact base scores per
+  situation, candidate availability gates, dominant-action selection, null on broke,
+  real action application (roster/cash), RNG advance, determinism, dead-rival skip).
+- Commit: phase7: Rival AI — green
