@@ -9,6 +9,7 @@
 import { EXTORT_HEAT, HEAT_MAX } from './constants';
 import { allBusinesses, familyExpenses, familyIncome, operationHeat } from './economy';
 import { resolveRivalAI } from './ai';
+import { resolveConflict } from './conflict';
 import { resolveLoyalty } from './gangsters';
 import { resolveLaw } from './law';
 import { allFamilies, findFamily, type Family, type GameState } from './types';
@@ -77,10 +78,13 @@ export function tick(state: GameState): GameState {
   // Step 5 (rival AI actions).
   resolveRivalAI(state);
 
-  // Step 7 (heat decay + raid checks). Step 6 (conflict) comes in a later phase.
+  // Step 6 (conflict resolution — pending hits).
+  resolveConflict(state);
+
+  // Step 7 (heat decay + raid checks).
   resolveLaw(state);
 
-  // Step 9: advance the clock. (Steps 6, 8 are filled in by later phases.)
+  // Step 9: advance the clock. (Step 8 win/loss is filled in by Phase 9.)
   state.tick += 1;
   return state;
 }

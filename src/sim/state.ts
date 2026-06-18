@@ -91,6 +91,7 @@ export function createInitialState(seed: number): GameState {
     player,
     rivals: [rivalA, rivalB],
     districts,
+    pendingHits: [],
     log: [],
   };
 }

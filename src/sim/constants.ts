@@ -71,6 +71,12 @@ export const BRIBE_MITIGATION_PER_LEVEL = 0.01; // raid-chance reduction per bri
 export const BRIBE_MAX_MITIGATION = 0.9; // cap on raid-chance reduction
 export const BRIBE_DECAY_PER_LEVEL = 0.05; // extra heat decay per bribe point
 
+// Hits & conflict (Phase 8).
+export const HIT_HEAT = 25; // heat the attacker draws for ordering a hit
+export const HIT_VARIANCE_MIN = 0.5; // effective strength = strength * [MIN, MIN+1)
+export const HIT_CLOSE_MARGIN = 0.25; // below this margin the winner also takes a loss
+export const HIT_ROUT_MARGIN = 0.5; // above this margin the loser takes an extra loss
+
 export const BANKRUPT_FLOOR = -1000;
 export const WIN_DISTRICTS = 0.6; // fraction of districts the player must hold to win
 

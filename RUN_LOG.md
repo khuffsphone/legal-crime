@@ -164,3 +164,26 @@
   situation, candidate availability gates, dominant-action selection, null on broke,
   real action application (roster/cash), RNG advance, determinism, dead-rival skip).
 - Commit: phase7: Rival AI — green
+
+## Phase 8 — Hits & Conflict — GREEN  (2026-06-18)
+- Summary: Added the `orderHit` command (validates both families alive, no self-hit,
+  attacker has muscle; queues a HitOrder on the new GameState.pendingHits) and pure
+  conflict module `src/sim/conflict.ts`: `familyStrength` (sum of skill), `decideCasualties`
+  (deterministic from the two effective strengths — attacker wins ties, loser loses 1 or 2
+  in a rout, winner loses 1 in a close fight, clamped to roster), and `resolveConflict`
+  (tick step 6) applying seeded variance (strength·[0.5,1.5)), removing the weakest
+  gangsters first, adding HIT_HEAT to the attacker, and killing the boss of any family left
+  with no muscle (player boss death → loss 'dead'). Queue cleared each resolution.
+- Files: src/sim/conflict.ts, src/sim/commands.ts (orderHit), src/sim/tick.ts (step 6),
+  src/sim/types.ts (HitOrder + pendingHits), src/sim/state.ts (pendingHits: []),
+  src/sim/constants.ts, src/sim/index.ts, tests/conflict.test.ts.
+- Decisions: Hits are queued (per design "pending hits" in tick step 6) and resolved at
+  the next tick, so added pendingHits to GameState (additive — initialized [] so all prior
+  deep-equal determinism tests still pass). Both sides can lose their boss; the boss of any
+  family reduced to zero muscle after losing is killed. resolveConflict draws RNG only when
+  hits are queued, preserving prior determinism.
+- Gate: typecheck ✅  build ✅  test ✅ (131 total; +15 asserting exact strength/casualty
+  math across win/rout/loss/close/clamp, order-hit validation, stronger-attacker-always-
+  wins over 40 seeds → boss kill, weakest-first removal, player-death loss, queue clear,
+  dead-target skip without RNG draw, and determinism).
+- Commit: phase8: Hits & Conflict — green

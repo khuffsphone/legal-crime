@@ -56,6 +56,13 @@ export interface District {
   businesses: Business[];
 }
 
+/** A queued hit, ordered by one family against another, resolved at the next tick. */
+export interface HitOrder {
+  attackerId: string;
+  targetId: string;
+  orderedTick: number;
+}
+
 /** Structured, append-only event for UI/debug. */
 export interface GameEvent {
   tick: number;
@@ -73,6 +80,7 @@ export interface GameState {
   player: Family;
   rivals: Family[];
   districts: District[];
+  pendingHits: HitOrder[];
   log: GameEvent[];
 }
 

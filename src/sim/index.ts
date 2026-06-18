@@ -28,6 +28,7 @@ export {
   type AssignGangsterCommand,
   type ExpandControlCommand,
   type BribeCommand,
+  type OrderHitCommand,
 } from './commands';
 export {
   raidBaseChance,
@@ -59,3 +60,9 @@ export {
   affordableOperation,
   type ScoredAction,
 } from './ai';
+export {
+  familyStrength,
+  decideCasualties,
+  resolveConflict,
+  type CasualtyOutcome,
+} from './conflict';

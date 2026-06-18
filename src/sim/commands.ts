@@ -79,6 +79,13 @@ export interface BribeCommand {
   amount: number;
 }
 
+/** Phase 8: order a hit; queued and resolved at the next tick (conflict step). */
+export interface OrderHitCommand {
+  type: 'orderHit';
+  attackerFamilyId: string;
+  targetFamilyId: string;
+}
+
 /** Union of all commands. Extended in later phases. */
 export type Command =
   | ExtortCommand
@@ -86,7 +93,8 @@ export type Command =
   | RecruitGangsterCommand
   | AssignGangsterCommand
   | ExpandControlCommand
-  | BribeCommand;
+  | BribeCommand
+  | OrderHitCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -461,6 +469,64 @@ function applyBribe(state: GameState, cmd: BribeCommand): GameState {
   return state;
 }
 
+function applyOrderHit(state: GameState, cmd: OrderHitCommand): GameState {
+  const attacker = findFamily(state, cmd.attackerFamilyId);
+  const target = findFamily(state, cmd.targetFamilyId);
+
+  if (!attacker || !target) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'hit-invalid',
+      message: `Invalid hit: attacker ${cmd.attackerFamilyId} or target ${cmd.targetFamilyId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (attacker.id === target.id) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'hit-invalid',
+      message: `${attacker.name} cannot hit itself`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (!attacker.alive || !target.alive) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'hit-invalid',
+      message: `Hit requires both families alive`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (attacker.gangsters.length === 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'hit-denied',
+      message: `${attacker.name} has no muscle to send`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  state.pendingHits.push({
+    attackerId: attacker.id,
+    targetId: target.id,
+    orderedTick: state.tick,
+  });
+  state.log.push({
+    tick: state.tick,
+    kind: 'hit-ordered',
+    message: `${attacker.name} ordered a hit on ${target.name}`,
+    data: { attackerId: attacker.id, targetId: target.id },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -476,6 +542,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyExpandControl(state, cmd);
     case 'bribe':
       return applyBribe(state, cmd);
+    case 'orderHit':
+      return applyOrderHit(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);
