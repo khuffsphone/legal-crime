@@ -107,6 +107,13 @@ export interface UpgradeOperationCommand {
   businessId: string;
 }
 
+/** Phase 15: pay down loan-shark debt with cash. */
+export interface RepayLoanCommand {
+  type: 'repayLoan';
+  familyId: string;
+  amount: number;
+}
+
 /** Phase 8: order a hit; queued and resolved at the next tick (conflict step). */
 export interface OrderHitCommand {
   type: 'orderHit';
@@ -140,7 +147,8 @@ export type Command =
   | LaunderCommand
   | CollectCommand
   | SetBribeCommand
-  | UpgradeOperationCommand;
+  | UpgradeOperationCommand
+  | RepayLoanCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -806,6 +814,51 @@ function applyUpgradeOperation(state: GameState, cmd: UpgradeOperationCommand): 
   return state;
 }
 
+function applyRepayLoan(state: GameState, cmd: RepayLoanCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  if (!family) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'repay-invalid',
+      message: `Invalid repayLoan: family ${cmd.familyId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (cmd.amount <= 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'repay-invalid',
+      message: `Repay amount must be positive (got ${cmd.amount})`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  const pay = Math.min(cmd.amount, family.debt, Math.max(0, family.cash));
+  if (pay <= 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'repay-denied',
+      message: `${family.name} cannot repay (debt $${family.debt}, cash $${family.cash})`,
+      data: { ...cmd, debt: family.debt },
+    });
+    return state;
+  }
+
+  family.cash -= pay;
+  family.debt -= pay;
+  clampDirty(family);
+  state.log.push({
+    tick: state.tick,
+    kind: 'repay',
+    message: `${family.name} repaid $${pay} of debt (remaining ${family.debt})`,
+    data: { familyId: family.id, repaid: pay, debt: family.debt },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -831,6 +884,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applySetBribe(state, cmd);
     case 'upgradeOperation':
       return applyUpgradeOperation(state, cmd);
+    case 'repayLoan':
+      return applyRepayLoan(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);

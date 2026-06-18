@@ -52,6 +52,7 @@ export {
   type CollectCommand,
   type SetBribeCommand,
   type UpgradeOperationCommand,
+  type RepayLoanCommand,
 } from './commands';
 export {
   raidBaseChance,
@@ -77,6 +78,8 @@ export {
   loyaltyDelta,
   desertionChance,
   resolveLoyalty,
+  atRiskCount,
+  mutinyConditionMet,
   GANGSTER_NAMES,
 } from './gangsters';
 export {

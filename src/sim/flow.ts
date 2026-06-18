@@ -1,6 +1,6 @@
 // Win/loss evaluation and the turn flow. Pure & deterministic.
 
-import { BANKRUPT_FLOOR, WIN_DISTRICTS } from './constants';
+import { DEBT_CEILING, WIN_DISTRICTS } from './constants';
 import type { Command } from './commands';
 import { applyCommands } from './commands';
 import { districtsHeldCount } from './territory';
@@ -31,15 +31,15 @@ export function isGameOver(state: GameState): boolean {
 export function resolveWinLoss(state: GameState): void {
   if (state.status !== 'playing') return;
 
-  // Loss: bankruptcy.
-  if (state.player.cash < BANKRUPT_FLOOR) {
+  // Loss: bankruptcy — debt has spiraled past what the loan shark will carry (Phase 15).
+  if (state.player.debt > DEBT_CEILING) {
     state.status = 'lost';
     state.lossReason = 'bankrupt';
     state.log.push({
       tick: state.tick,
       kind: 'game-over',
-      message: `${state.player.name} went bankrupt (cash $${state.player.cash})`,
-      data: { reason: 'bankrupt', cash: state.player.cash },
+      message: `${state.player.name} went bankrupt (debt $${state.player.debt})`,
+      data: { reason: 'bankrupt', debt: state.player.debt },
     });
     return;
   }

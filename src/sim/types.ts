@@ -43,6 +43,9 @@ export interface Family {
   bribeLevel: number;
   /** Standing bribe allocated per channel (Phase 13 / S3). */
   bribes: Record<BribeChannel, number>;
+  /** Outstanding loan-shark debt (Phase 15 / S5). A cash shortfall is auto-loaned into
+   * debt, which compounds interest each tick; too much debt is bankruptcy. */
+  debt: number;
   alive: boolean; // boss alive; false => family eliminated
   gangsters: Gangster[];
 }

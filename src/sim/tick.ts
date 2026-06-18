@@ -6,7 +6,7 @@
 // Phase 1 implements the economy steps and the tick counter. Later phases insert their
 // steps at the documented positions without reordering earlier ones.
 
-import { EXTORT_HEAT, HEAT_MAX } from './constants';
+import { EXTORT_HEAT, HEAT_MAX, LOAN_INTEREST_RATE } from './constants';
 import { allBusinesses, familyExpenses, operationHeat } from './economy';
 import { accrueUncollected } from './collection';
 import { clampDirty, heatFromDirty } from './laundering';
@@ -17,21 +17,39 @@ import { resolveLoyalty } from './gangsters';
 import { resolveLaw } from './law';
 import { allFamilies, findFamily, type Family, type GameState } from './types';
 
-/** Apply one tick's expenses to a family: cash -= upkeep + bribe retainer. Income is no
- * longer credited here — under the Collector mechanic (S2) it accrues at businesses and is
- * realized only when collected. Expenses spend clean money first, which the dirty clamp
- * realizes. */
-function resolveFamilyExpenses(state: GameState, family: Family): void {
+/** Apply one tick's finances to a family (Phase 15 / S5): compound interest on any carried
+ * loan-shark debt, pay expenses (upkeep + bribe retainer), and auto-loan any cash shortfall
+ * into debt so cash never sits negative. Income is realized elsewhere (collection). */
+function resolveFamilyFinances(state: GameState, family: Family): void {
+  // Interest compounds on debt carried from prior ticks (before any new borrowing).
+  if (family.debt > 0) {
+    family.debt = Math.floor(family.debt * (1 + LOAN_INTEREST_RATE));
+  }
+
   const expenses = familyExpenses(family);
-  if (expenses === 0) return;
-  family.cash -= expenses;
-  clampDirty(family);
-  state.log.push({
-    tick: state.tick,
-    kind: 'economy',
-    message: `${family.name}: -${expenses} (upkeep + bribes)`,
-    data: { familyId: family.id, income: 0, expenses, net: -expenses },
-  });
+  if (expenses > 0) {
+    family.cash -= expenses;
+    clampDirty(family);
+    state.log.push({
+      tick: state.tick,
+      kind: 'economy',
+      message: `${family.name}: -${expenses} (upkeep + bribes)`,
+      data: { familyId: family.id, income: 0, expenses, net: -expenses },
+    });
+  }
+
+  // A loan shark floats any shortfall: cash never goes negative; debt grows instead.
+  if (family.cash < 0) {
+    const shortfall = -family.cash;
+    family.debt += shortfall;
+    family.cash = 0;
+    state.log.push({
+      tick: state.tick,
+      kind: 'auto-loan',
+      message: `${family.name} borrowed $${shortfall} from a loan shark (debt ${family.debt})`,
+      data: { familyId: family.id, shortfall, debt: family.debt },
+    });
+  }
 }
 
 /** Step 3.5 (heat): a standing hoard of dirty cash radiates per-tick heat for its owner. */
@@ -79,10 +97,10 @@ export function tick(state: GameState): GameState {
   // Step 1a (accrual): takings pile up at each earning business as uncollected funds.
   accrueUncollected(state);
 
-  // Step 1b (expenses): families pay upkeep + bribe retainers. Income is realized only by
+  // Step 1b (finances): debt interest, expenses, and auto-loan. Income is realized only by
   // collecting (S2), not here.
   for (const family of allFamilies(state)) {
-    resolveFamilyExpenses(state, family);
+    resolveFamilyFinances(state, family);
   }
 
   // Step 2 (heat from illegal operations).

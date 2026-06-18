@@ -8,7 +8,7 @@ import {
   allRivalsEliminated,
 } from '../src/sim/flow';
 import { tick } from '../src/sim/tick';
-import { BANKRUPT_FLOOR } from '../src/sim/constants';
+import { DEBT_CEILING } from '../src/sim/constants';
 import type { GameState } from '../src/sim/types';
 
 /** Put the player on the brink of victory: every rival dead, holding enough districts. */
@@ -36,17 +36,17 @@ describe('win/loss helpers', () => {
 });
 
 describe('resolveWinLoss — loss', () => {
-  it('declares bankruptcy below the floor', () => {
+  it('declares bankruptcy when debt exceeds the ceiling', () => {
     const s = createInitialState(1);
-    s.player.cash = BANKRUPT_FLOOR - 1;
+    s.player.debt = DEBT_CEILING + 1; // Phase 15: bankruptcy is debt-based, not cash floor
     resolveWinLoss(s);
     expect(s.status).toBe('lost');
     expect(s.lossReason).toBe('bankrupt');
   });
 
-  it('does not declare bankruptcy exactly at the floor', () => {
+  it('does not declare bankruptcy at exactly the ceiling', () => {
     const s = createInitialState(1);
-    s.player.cash = BANKRUPT_FLOOR;
+    s.player.debt = DEBT_CEILING;
     resolveWinLoss(s);
     expect(s.status).toBe('playing');
   });
@@ -63,7 +63,7 @@ describe('resolveWinLoss — loss', () => {
     const s = createInitialState(1);
     s.status = 'lost';
     s.lossReason = 'busted';
-    s.player.cash = BANKRUPT_FLOOR - 1000; // would otherwise be bankrupt
+    s.player.debt = DEBT_CEILING + 5000; // would otherwise be bankrupt
     resolveWinLoss(s);
     expect(s.lossReason).toBe('busted'); // not overwritten
   });
@@ -132,14 +132,16 @@ describe('tick integrates win/loss (step 8) and freezes a decided game', () => {
     expect(s.status).toBe('won');
   });
 
-  it('a tick declares bankruptcy when expenses sink the player', () => {
+  it('a tick declares bankruptcy when an unpayable expense spirals debt past the ceiling', () => {
     const s = createInitialState(1);
-    s.player.cash = BANKRUPT_FLOOR + 10;
-    // heavy upkeep drives cash below the floor this tick
+    s.player.cash = 0;
+    // upkeep beyond the debt ceiling is auto-loaned into debt this tick, busting the ceiling
     s.player.gangsters = [
-      { id: 'g1', name: 'g1', skill: 5, loyalty: 60, upkeep: 100, assignment: { type: 'idle' } },
+      { id: 'g1', name: 'g1', skill: 5, loyalty: 80, upkeep: DEBT_CEILING + 1000, assignment: { type: 'idle' } },
     ];
     tick(s);
+    expect(s.player.cash).toBe(0); // loan covered the shortfall
+    expect(s.player.debt).toBeGreaterThan(DEBT_CEILING);
     expect(s.status).toBe('lost');
     expect(s.lossReason).toBe('bankrupt');
   });

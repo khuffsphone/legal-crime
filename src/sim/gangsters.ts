@@ -9,7 +9,12 @@ import {
   LOYALTY_MAX,
   LOYALTY_MIN,
   MAX_DESERT_CHANCE,
+  MUTINY_CHANCE,
+  MUTINY_MIN_CREW,
+  MUTINY_SKIM,
+  MUTINY_THRESHOLD_FRACTION,
 } from './constants';
+import { clampDirty } from './laundering';
 import { Rng } from './rng';
 import { allFamilies, type Family, type GameState } from './types';
 
@@ -54,10 +59,26 @@ function clampLoyalty(v: number): number {
   return v < LOYALTY_MIN ? LOYALTY_MIN : v > LOYALTY_MAX ? LOYALTY_MAX : v;
 }
 
+/** Number of a family's gangsters below the desertion-loyalty threshold. */
+export function atRiskCount(family: Family): number {
+  return family.gangsters.filter((g) => g.loyalty < DESERT_LOYALTY).length;
+}
+
 /**
- * Step 4 of the tick: drift every gangster's loyalty, then roll desertion for any whose
- * loyalty fell below the threshold. Deserters are removed from their family. Draws from
- * the shared RNG only for at-risk gangsters, in family-then-roster order.
+ * Whether a coordinated mutiny is possible: the crew is at least MUTINY_MIN_CREW strong and
+ * at least MUTINY_THRESHOLD_FRACTION of it is below desertion loyalty. Pure.
+ */
+export function mutinyConditionMet(family: Family): boolean {
+  const crew = family.gangsters.length;
+  if (crew < MUTINY_MIN_CREW) return false;
+  return atRiskCount(family) / crew >= MUTINY_THRESHOLD_FRACTION;
+}
+
+/**
+ * Step 4 of the tick: drift every gangster's loyalty, then either a coordinated MUTINY (the
+ * whole disloyal cohort walks out at once and skims cash) when the crew has soured, or the
+ * usual per-gangster desertion rolls. Draws from the shared RNG only when a family can
+ * mutiny (one roll) or for its at-risk gangsters, in family-then-roster order.
  */
 export function resolveLoyalty(state: GameState): void {
   const rng = new Rng(state.rngState);
@@ -66,10 +87,28 @@ export function resolveLoyalty(state: GameState): void {
     const cashPositive = family.cash >= 0;
     const delta = loyaltyDelta(cashPositive, family.heat);
 
+    // 1. Drift loyalties (no RNG).
+    for (const g of family.gangsters) g.loyalty = clampLoyalty(g.loyalty + delta);
+
+    // 2. Coordinated mutiny takes precedence over solo desertion.
+    if (mutinyConditionMet(family) && rng.chance(MUTINY_CHANCE)) {
+      const mutineers = family.gangsters.filter((g) => g.loyalty < DESERT_LOYALTY);
+      const skim = family.cash > 0 ? Math.floor(family.cash * MUTINY_SKIM) : 0;
+      family.cash -= skim;
+      clampDirty(family);
+      family.gangsters = family.gangsters.filter((g) => g.loyalty >= DESERT_LOYALTY);
+      state.log.push({
+        tick: state.tick,
+        kind: 'mutiny',
+        message: `${mutineers.length} of ${family.name}'s crew mutinied and skimmed $${skim}`,
+        data: { familyId: family.id, count: mutineers.length, skim },
+      });
+      continue;
+    }
+
+    // 3. Per-gangster desertion.
     const survivors: Family['gangsters'] = [];
     for (const g of family.gangsters) {
-      g.loyalty = clampLoyalty(g.loyalty + delta);
-
       const chance = desertionChance(g.loyalty);
       if (chance > 0 && rng.chance(chance)) {
         state.log.push({

@@ -374,3 +374,33 @@
   tier-3 ×3 accrual over a tick, upgrade cost/cap/deny/ownership, determinism). Phaser-free
   invariant green.
 - Commit: phase14: Illegal Business Tiers — green
+
+## Phase 15 — Mutiny & Auto-Loan (S5) — GREEN  (2026-06-18)
+- Summary: MUTINY — `resolveLoyalty` now drifts loyalty, then (when a crew of ≥
+  MUTINY_MIN_CREW is ≥ MUTINY_THRESHOLD_FRACTION below desertion loyalty) rolls a single
+  seeded MUTINY_CHANCE: on a mutiny the whole disloyal cohort walks out at once and skims
+  MUTINY_SKIM of cash, superseding individual desertion that tick. Pure helpers atRiskCount/
+  mutinyConditionMet exported. AUTO-LOAN — new `debt` field on Family; tick finances step
+  now compounds LOAN_INTEREST_RATE on carried debt, pays expenses, and auto-loans any cash
+  shortfall into debt (cash never goes negative). Bankruptcy redefined: player debt >
+  DEBT_CEILING (replaces the cash floor) in resolveWinLoss. New `repayLoan{amount}` command
+  (pay debt from cash, capped by both). Adapter exposes debt (player + rivals).
+- Files: src/sim/gangsters.ts (mutiny + drift/desert split), src/sim/tick.ts
+  (resolveFamilyFinances: interest + auto-loan), src/sim/flow.ts (debt-ceiling bankruptcy),
+  src/sim/commands.ts (repayLoan), types.ts (debt), state.ts (init 0), constants.ts, index.ts,
+  adapter.ts; updated the 3 Phase-9 bankruptcy assertions in flow.test.ts to the debt model;
+  new tests/mutinyLoan.test.ts.
+- Decisions: Loyalty drift and desertion were split into two passes so the per-gangster
+  desertion RNG draws stay in the exact same order as before — the mutiny roll is drawn ONLY
+  when mutinyConditionMet (≥3 crew, ≥50% disloyal), which no existing gangsters.test scenario
+  hits, so all prior desertion/determinism tests pass unchanged (verified). Auto-loan applies
+  to all families uniformly; debt-bankruptcy elimination is player-only (matches the prior
+  player-only cash-floor scope; rival debt is harmless for now). Interest compounds on
+  PRIOR debt before new borrowing, so a fresh shortfall isn't double-charged the same tick.
+  Debt must be actively repaid (no auto-repay) — that is the spiral. The 3 flow bankruptcy
+  tests legitimately changed from cash-floor to debt-ceiling (documented).
+- Gate: typecheck ✅  build ✅  test ✅ (219 total; +11 asserting atRiskCount/mutinyCondition,
+  mutiny seed-scan (cohort removal + exact 25% skim), no-mutiny under min crew, auto-loan
+  shortfall→debt with cash floored at 0, exact interest compounding, repay cap by cash/debt,
+  repay denial, debt-ceiling bankruptcy via tick, determinism). Phaser-free invariant green.
+- Commit: phase15: Mutiny & Auto-Loan — green

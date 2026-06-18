@@ -33,6 +33,7 @@ export interface PlayerView {
   heat: number;
   bribeLevel: number;
   bribes: Record<BribeChannel, number>;
+  debt: number;
   gangsterCount: number;
   strength: number;
   districtsHeld: number;
@@ -57,6 +58,7 @@ export interface RivalView {
   alive: boolean;
   cash: number;
   dirtyCash: number;
+  debt: number;
   heat: number;
   gangsterCount: number;
   strength: number;
@@ -94,6 +96,7 @@ export function playerView(state: GameState): PlayerView {
     heat: p.heat,
     bribeLevel: p.bribeLevel,
     bribes: { ...p.bribes },
+    debt: p.debt,
     gangsterCount: p.gangsters.length,
     strength: familyStrength(p),
     districtsHeld: districtsHeldCount(state, p.id),
@@ -128,6 +131,7 @@ export function rivalViews(state: GameState): RivalView[] {
     alive: r.alive,
     cash: r.cash,
     dirtyCash: r.dirtyCash,
+    debt: r.debt,
     heat: r.heat,
     gangsterCount: r.gangsters.length,
     strength: familyStrength(r),

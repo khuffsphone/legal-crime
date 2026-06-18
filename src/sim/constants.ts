@@ -87,8 +87,18 @@ export const HIT_VARIANCE_MIN = 0.5; // effective strength = strength * [MIN, MI
 export const HIT_CLOSE_MARGIN = 0.25; // below this margin the winner also takes a loss
 export const HIT_ROUT_MARGIN = 0.5; // above this margin the loser takes an extra loss
 
-export const BANKRUPT_FLOOR = -1000;
+export const BANKRUPT_FLOOR = -1000; // legacy cash floor (superseded by DEBT_CEILING in P15)
 export const WIN_DISTRICTS = 0.6; // fraction of districts the player must hold to win
+
+// Mutiny (Phase 15 / S5): a disloyal crew can walk out together rather than one at a time.
+export const MUTINY_MIN_CREW = 3; // mutiny needs at least this many gangsters
+export const MUTINY_THRESHOLD_FRACTION = 0.5; // ...at least half below desertion loyalty
+export const MUTINY_CHANCE = 0.5; // chance a coordinated mutiny fires when the condition holds
+export const MUTINY_SKIM = 0.25; // fraction of cash the mutineers steal on the way out
+
+// Auto-loan / debt (Phase 15 / S5): a cash shortfall is floated by a loan shark.
+export const LOAN_INTEREST_RATE = 0.1; // per-tick compounding interest on outstanding debt
+export const DEBT_CEILING = 5000; // bankrupt when debt exceeds this
 
 // Dual economy (Phase 11 / S1). Crime income is dirty; a hoard of dirty cash radiates
 // heat, and laundering converts dirty -> clean (safe) through extorted fronts for a fee.
