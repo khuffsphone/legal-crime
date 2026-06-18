@@ -15,6 +15,7 @@ import {
   launderCapacity,
   pendingCollection,
   totalUncollected,
+  tierOf,
   districtsNeededToWin,
   type BribeChannel,
   type Command,
@@ -47,6 +48,7 @@ export interface DistrictView {
   businessCount: number;
   operationCount: number;
   playerUncollected: number;
+  playerOperationTiers: number[];
 }
 
 export interface RivalView {
@@ -112,6 +114,9 @@ export function districtViews(state: GameState): DistrictView[] {
       businessCount: d.businesses.length,
       operationCount: d.businesses.filter((b) => b.kind !== 'front').length,
       playerUncollected: pendingCollection(state, state.player.id, d.id),
+      playerOperationTiers: d.businesses
+        .filter((b) => b.kind !== 'front' && b.ownerFamily === state.player.id)
+        .map((b) => tierOf(b)),
     };
   });
 }

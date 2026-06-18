@@ -60,6 +60,9 @@ export interface Business {
    * here each tick and is realized only when a Collector run gathers it. Optional/absent is
    * treated as 0; real construction paths initialize it. */
   uncollected?: number;
+  /** Upgrade tier of an illegal operation (Phase 14 / S4). Absent ⇒ tier 1. Higher tiers
+   * multiply income AND heat. Fronts ignore this. */
+  tier?: number;
 }
 
 export interface District {

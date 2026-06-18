@@ -23,6 +23,7 @@ import {
   RECRUIT_LOYALTY_MIN,
   RECRUIT_SKILL_MAX,
   RECRUIT_SKILL_MIN,
+  TIER_MAX,
 } from './constants';
 import {
   collectibleBusinesses,
@@ -31,6 +32,7 @@ import {
   uncollectedOf,
 } from './collection';
 import { recomputeBribeLevel, sumBribes } from './bribery';
+import { tierOf, upgradeCost } from './tiers';
 import { GANGSTER_NAMES } from './gangsters';
 import { cleanCash, clampDirty, creditCrimeIncome, launderCapacity, launderFee } from './laundering';
 import { Rng } from './rng';
@@ -98,6 +100,13 @@ export interface SetBribeCommand {
   amount: number;
 }
 
+/** Phase 14: upgrade one of a family's illegal operations to the next tier. */
+export interface UpgradeOperationCommand {
+  type: 'upgradeOperation';
+  familyId: string;
+  businessId: string;
+}
+
 /** Phase 8: order a hit; queued and resolved at the next tick (conflict step). */
 export interface OrderHitCommand {
   type: 'orderHit';
@@ -130,7 +139,8 @@ export type Command =
   | OrderHitCommand
   | LaunderCommand
   | CollectCommand
-  | SetBribeCommand;
+  | SetBribeCommand
+  | UpgradeOperationCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -300,6 +310,7 @@ function applyEstablishOperation(
     ownerFamily: family.id,
     districtId: district.id,
     uncollected: 0,
+    tier: 1,
   };
   district.businesses.push(operation);
 
@@ -736,6 +747,65 @@ function applyCollect(state: GameState, cmd: CollectCommand): GameState {
   return state;
 }
 
+function applyUpgradeOperation(state: GameState, cmd: UpgradeOperationCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  const found = findBusiness(state, cmd.businessId);
+
+  if (!family || !found) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'upgrade-invalid',
+      message: `Invalid upgrade: family ${cmd.familyId} or business ${cmd.businessId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  const { business } = found;
+  if (business.kind === 'front' || business.ownerFamily !== family.id) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'upgrade-invalid',
+      message: `${business.name} is not an operation owned by ${family.name}`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  const tier = tierOf(business);
+  if (tier >= TIER_MAX) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'upgrade-maxed',
+      message: `${business.name} is already at the maximum tier (${TIER_MAX})`,
+      data: { ...cmd, tier },
+    });
+    return state;
+  }
+
+  const cost = upgradeCost(business.kind, tier);
+  if (family.cash < cost) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'upgrade-denied',
+      message: `${family.name} cannot afford to upgrade ${business.name} ($${family.cash} < $${cost})`,
+      data: { ...cmd, cost, tier },
+    });
+    return state;
+  }
+
+  family.cash -= cost;
+  clampDirty(family); // spending clean money first is realized by the clamp
+  business.tier = tier + 1;
+  state.log.push({
+    tick: state.tick,
+    kind: 'upgrade',
+    message: `${family.name} upgraded ${business.name} to tier ${business.tier} for $${cost}`,
+    data: { familyId: family.id, businessId: business.id, tier: business.tier, cost },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -759,6 +829,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyCollect(state, cmd);
     case 'setBribe':
       return applySetBribe(state, cmd);
+    case 'upgradeOperation':
+      return applyUpgradeOperation(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);

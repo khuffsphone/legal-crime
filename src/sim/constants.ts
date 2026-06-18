@@ -75,6 +75,12 @@ export const BRIBE_DECAY_PER_LEVEL = 0.05; // extra heat decay per politicians-b
 export const JUDGE_BUST_MITIGATION_PER_LEVEL = 0.01; // bust-avoidance per judges point
 export const JUDGE_MAX_BUST_MITIGATION = 0.8; // cap on bust avoidance from judges
 
+// Illegal business tiers (Phase 14 / S4). A tier-N operation earns and throws heat ×N;
+// tier 1 is the baseline (×1) so prior operation values are unchanged. Upgrading costs the
+// operation kind's base cost times the current tier.
+export const TIER_MAX = 3;
+export const TIER_UPGRADE_FACTOR = 1.0; // upgrade cost = OPERATION_COST[kind] * factor * tier
+
 // Hits & conflict (Phase 8).
 export const HIT_HEAT = 25; // heat the attacker draws for ordering a hit
 export const HIT_VARIANCE_MIN = 0.5; // effective strength = strength * [MIN, MIN+1)

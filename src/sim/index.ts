@@ -51,6 +51,7 @@ export {
   type LaunderCommand,
   type CollectCommand,
   type SetBribeCommand,
+  type UpgradeOperationCommand,
 } from './commands';
 export {
   raidBaseChance,
@@ -66,6 +67,12 @@ export {
   recomputeBribeLevel,
   bustAvoidChance,
 } from './bribery';
+export {
+  tierOf,
+  tierMultiplier,
+  effectiveOperationIncome,
+  upgradeCost,
+} from './tiers';
 export {
   loyaltyDelta,
   desertionChance,

@@ -350,3 +350,27 @@
   total-charged-each-tick, judges seed-scan (averted>0, busts reduced vs none), determinism).
   Phaser-free invariant green.
 - Commit: phase13: Bribery Sliders — green
+
+## Phase 14 — Illegal Business Tiers (S4) — GREEN  (2026-06-18)
+- Summary: Operations gained an upgradeable `tier` (optional Business field, absent⇒1, max
+  TIER_MAX=3). New pure module `src/sim/tiers.ts`: tierOf, tierMultiplier (linear ×tier,
+  floored at 1), effectiveOperationIncome (baseIncome × tier), upgradeCost (OPERATION_COST
+  [kind] × current tier). economy.businessAccrual/operationIncome now use the tier-scaled
+  income, and operationHeat scales heatPerTick by tier before police amplification. New
+  `upgradeOperation{businessId}` command (own-operation only, costs cash, caps at TIER_MAX).
+  Operations are created at tier 1. Adapter exposes per-district playerOperationTiers.
+- Files: src/sim/tiers.ts (new), types.ts (tier?), constants.ts (TIER_MAX/factor),
+  economy.ts (tier-scaled accrual/income/heat), commands.ts (upgradeOperation + tier:1 on
+  establish), index.ts, adapter.ts; new tests/tiers.test.ts.
+- Decisions: tierMultiplier is linear (tier N ⇒ ×N income AND ×N heat) so higher tiers are
+  pure risk/reward; tier 1 = ×1 leaves every prior operation value intact (verified: the
+  Phase 3 operation income/heat tests pass unchanged). `tier` is optional (absent⇒1) so
+  existing Business literals in tests needed no edits. "Raid loss scales with tier" is
+  honored inherently — a higher-tier op piles up proportionally more uncollected takings, so
+  losing it (or its uncollected) in a raid costs more — without touching law.ts. Rival AI
+  does not yet upgrade (deferred; rivals operate at tier 1) — noted, no test impact.
+- Gate: typecheck ✅  build ✅  test ✅ (208 total; +11 asserting tierOf default, multiplier,
+  effective income, upgrade cost, tier-1 baseline unchanged, tier-2 double accrual+heat,
+  tier-3 ×3 accrual over a tick, upgrade cost/cap/deny/ownership, determinism). Phaser-free
+  invariant green.
+- Commit: phase14: Illegal Business Tiers — green

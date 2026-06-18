@@ -2,6 +2,7 @@
 // (income/expense math is fully deterministic given the state).
 
 import { EXTORT_RATE } from './constants';
+import { effectiveOperationIncome, tierMultiplier, tierOf } from './tiers';
 import type { Business, District, Family, GameState } from './types';
 
 /** Every business across every district. */
@@ -15,7 +16,8 @@ export function allBusinesses(state: GameState): Business[] {
  */
 export function operationHeat(business: Business, district: District): number {
   if (business.kind === 'front') return 0;
-  return Math.round(business.heatPerTick * (1 + district.policePresence / 100));
+  const scaled = business.heatPerTick * tierMultiplier(tierOf(business));
+  return Math.round(scaled * (1 + district.policePresence / 100));
 }
 
 /**
@@ -28,7 +30,7 @@ export function businessAccrual(business: Business): number {
   if (business.kind === 'front') {
     return business.extortedBy ? Math.floor(business.baseIncome * EXTORT_RATE) : 0;
   }
-  return business.ownerFamily ? business.baseIncome : 0;
+  return business.ownerFamily ? effectiveOperationIncome(business) : 0;
 }
 
 /** The family that earns from a business: its extorter (front) or owner (operation). */
@@ -52,7 +54,7 @@ export function operationIncome(state: GameState, familyId: string): number {
   let total = 0;
   for (const b of allBusinesses(state)) {
     if (b.kind !== 'front' && b.ownerFamily === familyId) {
-      total += b.baseIncome;
+      total += effectiveOperationIncome(b);
     }
   }
   return total;
