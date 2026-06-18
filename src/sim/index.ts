@@ -19,7 +19,6 @@ export {
   applyCommand,
   applyCommands,
   findBusiness,
-  controlOf,
   muscleInDistrict,
   extortSuccessChance,
   type Command,
@@ -27,6 +26,7 @@ export {
   type EstablishOperationCommand,
   type RecruitGangsterCommand,
   type AssignGangsterCommand,
+  type ExpandControlCommand,
 } from './commands';
 export {
   loyaltyDelta,
@@ -34,3 +34,11 @@ export {
   resolveLoyalty,
   GANGSTER_NAMES,
 } from './gangsters';
+export {
+  controlOf,
+  districtHolder,
+  holdsDistrict,
+  districtsHeldBy,
+  districtsHeldCount,
+  topRivalControl,
+} from './territory';

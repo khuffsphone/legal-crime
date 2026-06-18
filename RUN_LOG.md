@@ -101,3 +101,21 @@
   bounds, recruit determinism, assignment validation, exact loyalty deltas & chances,
   desertion seed-scan split, and loyal-gangster persistence over 30 ticks).
 - Commit: phase4: Gangster Management — green
+
+## Phase 5 — Territory Control — GREEN  (2026-06-18)
+- Summary: Added pure territory module `src/sim/territory.ts` (controlOf, districtHolder,
+  holdsDistrict, districtsHeldBy/Count, topRivalControl) and the `expandControl` command:
+  spends EXPAND_COST, adds EXPAND_BASE_GAIN + guarding-muscle control (capped at
+  CONTROL_MAX), and contests the strongest rival by floor(gain·CONTEST_REDUCTION) without
+  going below zero. A family holds a district when its control is the strict max and ≥
+  CONTROL_HOLD (ties = contested = no holder).
+- Files: src/sim/territory.ts, src/sim/commands.ts (expandControl; controlOf moved to
+  territory), src/sim/constants.ts, src/sim/index.ts, tests/territory.test.ts,
+  tests/extortion.test.ts (controlOf import moved).
+- Decisions: Consolidated the duplicate controlOf into territory.ts as the single source.
+  expandControl is fully deterministic (no RNG). Holding requires a strict maximum so a
+  tie leaves a district contested.
+- Gate: typecheck ✅  build ✅  test ✅ (84 total; +15 asserting holder/tie/threshold
+  logic, held-district counting, exact gain with/without muscle, cap, rival contest math,
+  zero-floor, denial, hold-after-expansion, and determinism).
+- Commit: phase5: Territory Control — green

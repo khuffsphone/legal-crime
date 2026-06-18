@@ -6,6 +6,10 @@
 // Pure — no Phaser, no browser globals.
 
 import {
+  CONTEST_REDUCTION,
+  CONTROL_MAX,
+  EXPAND_BASE_GAIN,
+  EXPAND_COST,
   EXTORT_HEAT,
   EXTORT_MIN_CONTROL,
   GANGSTER_UPKEEP_PER_SKILL,
@@ -21,6 +25,7 @@ import {
 } from './constants';
 import { GANGSTER_NAMES } from './gangsters';
 import { Rng } from './rng';
+import { controlOf, topRivalControl } from './territory';
 import {
   findFamily,
   findGangster,
@@ -60,12 +65,20 @@ export interface AssignGangsterCommand {
   assignment: GangsterAssignment;
 }
 
+/** Phase 5: spend cash + muscle to expand a family's control of a district. */
+export interface ExpandControlCommand {
+  type: 'expandControl';
+  familyId: string;
+  districtId: string;
+}
+
 /** Union of all commands. Extended in later phases. */
 export type Command =
   | ExtortCommand
   | EstablishOperationCommand
   | RecruitGangsterCommand
-  | AssignGangsterCommand;
+  | AssignGangsterCommand
+  | ExpandControlCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -77,11 +90,6 @@ export function findBusiness(
     if (business) return { business, district };
   }
   return undefined;
-}
-
-/** A family's control points in a district (0 if none). */
-export function controlOf(district: District, familyId: string): number {
-  return district.control[familyId] ?? 0;
 }
 
 /** Sum of skill of a family's gangsters guarding a district. */
@@ -346,6 +354,60 @@ function applyAssignGangster(state: GameState, cmd: AssignGangsterCommand): Game
   return state;
 }
 
+function applyExpandControl(state: GameState, cmd: ExpandControlCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  const district = state.districts.find((d) => d.id === cmd.districtId);
+
+  if (!family || !district) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'expand-invalid',
+      message: `Invalid expand: family ${cmd.familyId} or district ${cmd.districtId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (family.cash < EXPAND_COST) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'expand-denied',
+      message: `${family.name} cannot afford to expand ($${family.cash} < $${EXPAND_COST})`,
+      data: { ...cmd, cost: EXPAND_COST },
+    });
+    return state;
+  }
+
+  family.cash -= EXPAND_COST;
+
+  const muscle = muscleInDistrict(family, district.id);
+  const gain = EXPAND_BASE_GAIN + muscle;
+  const current = controlOf(district, family.id);
+  district.control[family.id] = Math.min(CONTROL_MAX, current + gain);
+
+  // Contest: take a fraction of the gain from the strongest rival in the district.
+  const rival = topRivalControl(district, family.id);
+  let contested = 0;
+  if (rival) {
+    contested = Math.floor(gain * CONTEST_REDUCTION);
+    district.control[rival.id] = Math.max(0, rival.control - contested);
+  }
+
+  state.log.push({
+    tick: state.tick,
+    kind: 'expand',
+    message: `${family.name} expanded control in ${district.name} (+${gain}, -${contested} from rival)`,
+    data: {
+      ...cmd,
+      gain,
+      newControl: district.control[family.id],
+      contestedFrom: rival?.id,
+      contested,
+    },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -357,6 +419,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyRecruitGangster(state, cmd);
     case 'assignGangster':
       return applyAssignGangster(state, cmd);
+    case 'expandControl':
+      return applyExpandControl(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);

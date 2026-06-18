@@ -51,6 +51,11 @@ export const MAX_DESERT_CHANCE = 0.5;
 export const CONTROL_HOLD = 50; // control points needed to "hold" a district
 export const CONTROL_MAX = 100;
 
+// Territory expansion.
+export const EXPAND_COST = 300; // cash per expandControl action
+export const EXPAND_BASE_GAIN = 10; // control points gained before muscle bonus
+export const CONTEST_REDUCTION = 0.5; // fraction of the gain taken from the top rival
+
 export const HEAT_MAX = 100;
 export const HEAT_DECAY = 2; // heat lost per tick (before bribe effects)
 export const RAID_THRESHOLD = 60;

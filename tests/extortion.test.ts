@@ -4,9 +4,9 @@ import {
   applyCommand,
   extortSuccessChance,
   muscleInDistrict,
-  controlOf,
   type ExtortCommand,
 } from '../src/sim/commands';
+import { controlOf } from '../src/sim/territory';
 import { tick } from '../src/sim/tick';
 import { EXTORT_HEAT, EXTORT_MIN_CONTROL, EXTORT_RATE } from '../src/sim/constants';
 import type { Business, Gangster } from '../src/sim/types';
