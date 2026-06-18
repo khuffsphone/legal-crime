@@ -34,6 +34,7 @@ export {
   collectionFraction,
 } from './collection';
 export { tick, tickN } from './tick';
+export { advanceClock, weekProgress, secondsUntilNextWeek } from './clock';
 export {
   applyCommand,
   applyCommands,

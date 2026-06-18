@@ -605,3 +605,36 @@
   safety + every-key-placeholder-when-nothing-loaded, and the env/building/unit mappings).
   /src/sim Phaser-free invariant green; sim untouched.
 - Commit: phase20: Visual Reskin — green
+
+═══════════════════════════════════════════════════════════════════════════════
+RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
+═══════════════════════════════════════════════════════════════════════════════
+
+## RTS-0 — Continuous Loop & Week-Timer — GREEN  (2026-06-18)
+- Summary: Made the economy CONTINUOUS REAL-TIME by changing the settlement TRIGGER, not
+  the settlement. New pure, Phaser-free module `src/sim/clock.ts`: `advanceClock(state,
+  dtSeconds, weekDuration?)` accumulates real time on a new `state.weekElapsed` and fires the
+  EXISTING economic tick once per full WEEK_DURATION_SECONDS elapsed (returns weeks fired);
+  plus `weekProgress` and `secondsUntilNextWeek` for the future real-time countdown HUD. The
+  existing weekly tick logic runs exactly as before — only its trigger moves from keypress to
+  elapsed time. No rendering, no movement (RTS-0 scope).
+- Files: src/sim/clock.ts (new), src/sim/constants.ts (WEEK_DURATION_SECONDS = 120),
+  src/sim/types.ts (GameState.weekElapsed), src/sim/state.ts (init weekElapsed: 0),
+  src/sim/index.ts (exports); new tests/clock.test.ts. /src/sim stays Phaser-free.
+- Decisions: WRAPPED, NOT REWRITTEN — advanceClock calls the verified `tick()`. A deep-equal
+  test proves a clock settlement is byte-for-byte identical to a manual tick from the same
+  state (same economy + same seeded RNG cursor; weekElapsed returns to 0). The accumulator is
+  a single `weekElapsed` field the economic tick never reads or writes, so all 274 prior tests
+  pass unchanged (determinism deep-equals see weekElapsed 0 on both sides). Guards: non-positive
+  / NaN dt is a no-op; an invalid weekDuration (≤ 0) is a no-op (no infinite loop). A single
+  large dt fires multiple weeks (no per-call cap, as required by the multi-week test); the
+  renderer/game-loop should pass bounded dt — noted for a later render phase. WEEK_DURATION_
+  SECONDS is configurable per call and a tunable pacing knob (the Week-1047/engagement lever).
+- Gate: typecheck ✅  build ✅  test ✅ (289 total; +15 clock tests asserting: default 120s;
+  accumulation without firing early; ignore non-positive/NaN dt; exact firing at the interval
+  (boundary 119+1 and a single 120s dt); a settlement deep-equals the existing tick AND
+  produces the real income accrual; multi-week from one long dt (carries remainder) and from a
+  long sub-week sequence; configurable weekDuration (+ ≤0 no-op); determinism under a fixed dt
+  sequence AND across 1.0s vs 0.5s granularities; weekProgress / secondsUntilNextWeek).
+  /src/sim Phaser-free invariant green; 274-test economic sim untouched and all green.
+- Commit: rts0: Continuous Loop & Week-Timer — green

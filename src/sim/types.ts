@@ -125,6 +125,9 @@ export interface GameState {
   /** Whether the systemic-shock system rolls each tick. Off in isolated unit tests; on in
    * real games. */
   shocksEnabled: boolean;
+  /** Real-time seconds accumulated toward the next week settlement (RTS-0). Driven by
+   * advanceClock; the economic tick itself never touches it. */
+  weekElapsed: number;
   log: GameEvent[];
 }
 

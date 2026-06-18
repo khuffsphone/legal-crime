@@ -158,3 +158,7 @@ export const AI_EXPAND_BASE = 30;
 export const AI_BRIBE_AMOUNT = 20; // standing bribe a rival buys when heat is high
 export const AI_BRIBE_HEAT_THRESHOLD = 40; // rivals only bribe above this heat
 export const AI_JITTER = 8; // max additive random jitter on a candidate score
+
+// RTS-0 — continuous real-time loop. A "week" (the existing economic settlement) is now a
+// real-time interval rather than a keypress. Tunable for pacing/engagement (see plan).
+export const WEEK_DURATION_SECONDS = 120; // real seconds between week settlements (~2 min)

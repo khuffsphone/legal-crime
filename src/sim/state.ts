@@ -106,6 +106,7 @@ export function createInitialState(
     pendingHits: [],
     activeShocks: [],
     shocksEnabled: options?.shocks ?? false,
+    weekElapsed: 0,
     log: [],
   };
 }
