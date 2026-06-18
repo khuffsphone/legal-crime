@@ -7,6 +7,7 @@ export { Rng, mulberry32, seedToCursor } from './rng';
 export { createInitialState } from './state';
 export {
   allBusinesses,
+  operationHeat,
   extortionIncome,
   operationIncome,
   familyIncome,
@@ -23,4 +24,5 @@ export {
   extortSuccessChance,
   type Command,
   type ExtortCommand,
+  type EstablishOperationCommand,
 } from './commands';

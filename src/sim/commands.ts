@@ -5,7 +5,14 @@
 //
 // Pure — no Phaser, no browser globals.
 
-import { EXTORT_HEAT, EXTORT_MIN_CONTROL, HEAT_MAX } from './constants';
+import {
+  EXTORT_HEAT,
+  EXTORT_MIN_CONTROL,
+  HEAT_MAX,
+  OPERATION_COST,
+  OPERATION_HEAT,
+  OPERATION_INCOME,
+} from './constants';
 import { Rng } from './rng';
 import {
   findFamily,
@@ -13,6 +20,7 @@ import {
   type District,
   type Family,
   type GameState,
+  type OperationKind,
 } from './types';
 
 /** Phase 2: extort a front business on behalf of a family. */
@@ -22,8 +30,16 @@ export interface ExtortCommand {
   businessId: string;
 }
 
+/** Phase 3: establish an illegal operation in a district. */
+export interface EstablishOperationCommand {
+  type: 'establishOperation';
+  familyId: string;
+  districtId: string;
+  kind: OperationKind;
+}
+
 /** Union of all commands. Extended in later phases. */
-export type Command = ExtortCommand;
+export type Command = ExtortCommand | EstablishOperationCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -155,14 +171,70 @@ function applyExtort(state: GameState, cmd: ExtortCommand): GameState {
   return state;
 }
 
+function applyEstablishOperation(
+  state: GameState,
+  cmd: EstablishOperationCommand,
+): GameState {
+  const family = findFamily(state, cmd.familyId);
+  const district = state.districts.find((d) => d.id === cmd.districtId);
+
+  if (!family || !district) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'operation-invalid',
+      message: `Invalid operation: family ${cmd.familyId} or district ${cmd.districtId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  const cost = OPERATION_COST[cmd.kind];
+  if (family.cash < cost) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'operation-denied',
+      message: `${family.name} cannot afford a ${cmd.kind} operation ($${family.cash} < $${cost})`,
+      data: { ...cmd, cost },
+    });
+    return state;
+  }
+
+  family.cash -= cost;
+
+  // Deterministic unique id: district + kind + count of this family's existing ops here.
+  const existing = district.businesses.filter(
+    (b) => b.kind !== 'front' && b.ownerFamily === family.id,
+  ).length;
+  const operation: Business = {
+    id: `${district.id}-op-${family.id}-${cmd.kind}-${existing}`,
+    name: `${cmd.kind} operation`,
+    kind: cmd.kind,
+    baseIncome: OPERATION_INCOME[cmd.kind],
+    heatPerTick: OPERATION_HEAT[cmd.kind],
+    ownerFamily: family.id,
+    districtId: district.id,
+  };
+  district.businesses.push(operation);
+
+  state.log.push({
+    tick: state.tick,
+    kind: 'operation-established',
+    message: `${family.name} established a ${cmd.kind} operation in ${district.name} for $${cost}`,
+    data: { ...cmd, cost, businessId: operation.id },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
     case 'extort':
       return applyExtort(state, cmd);
+    case 'establishOperation':
+      return applyEstablishOperation(state, cmd);
     default: {
-      const _exhaustive: never = cmd.type;
-      throw new Error(`Unknown command: ${String(_exhaustive)}`);
+      const _exhaustive: never = cmd;
+      throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);
     }
   }
 }

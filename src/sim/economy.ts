@@ -2,11 +2,20 @@
 // (income/expense math is fully deterministic given the state).
 
 import { EXTORT_RATE } from './constants';
-import type { Business, Family, GameState } from './types';
+import type { Business, District, Family, GameState } from './types';
 
 /** Every business across every district. */
 export function allBusinesses(state: GameState): Business[] {
   return state.districts.flatMap((d) => d.businesses);
+}
+
+/**
+ * Effective per-tick heat an illegal operation generates, amplified by the district's
+ * police presence: base * (1 + presence/100), rounded. Fronts generate no operation heat.
+ */
+export function operationHeat(business: Business, district: District): number {
+  if (business.kind === 'front') return 0;
+  return Math.round(business.heatPerTick * (1 + district.policePresence / 100));
 }
 
 /** Per-tick income a family earns from fronts it is currently extorting. */

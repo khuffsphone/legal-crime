@@ -66,3 +66,21 @@
   blocked-without-RNG-draw, guaranteed success at full control, seed-scan success/failure
   split, determinism, and per-tick income+heat).
 - Commit: phase2: Extortion — green
+
+## Phase 3 — Illegal Businesses — GREEN  (2026-06-18)
+- Summary: Added the `establishOperation` command — spends OPERATION_COST[kind], creates
+  an illegal operation Business owned by the family in a district, with kind-specific
+  income (OPERATION_INCOME) and base heat (OPERATION_HEAT). The tick engine now applies
+  per-tick operation heat (step 2) via `operationHeat`, amplified by district police
+  presence as base·(1+presence/100) rounded. Income flows through the Phase 1 economy.
+- Files: src/sim/commands.ts (command + exhaustiveness fix), src/sim/economy.ts
+  (operationHeat), src/sim/tick.ts (operation-heat step), src/sim/index.ts,
+  tests/operations.test.ts.
+- Decisions: Establishing requires only sufficient cash (no control gate — design §4.3
+  specifies none); operations get deterministic ids from district+family+kind+count so
+  no RNG is consumed (determinism preserved). Police-presence amplification is computed
+  dynamically in the tick rather than baked at creation, so presence changes take effect.
+- Gate: typecheck ✅  build ✅  test ✅ (54 total; +9 asserting exact cost deduction,
+  denial on insufficient cash, unique ids, per-tick income, presence-amplified heat with
+  concrete numbers, and determinism).
+- Commit: phase3: Illegal Businesses — green
