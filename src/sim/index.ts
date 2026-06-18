@@ -5,3 +5,12 @@ export * from './types';
 export * from './constants';
 export { Rng, mulberry32, seedToCursor } from './rng';
 export { createInitialState } from './state';
+export {
+  allBusinesses,
+  extortionIncome,
+  operationIncome,
+  familyIncome,
+  familyExpenses,
+  familyNet,
+} from './economy';
+export { tick, tickN } from './tick';

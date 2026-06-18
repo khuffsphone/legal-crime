@@ -31,3 +31,20 @@
 - Gate: typecheck ✅  build ✅  test ✅ (16 tests; assert RNG determinism/resume/bounds
   and real initial-state values: district counts, control footholds, deep-equality).
 - Commit: phase0: Scaffold & Harness — green
+
+## Phase 1 — Economy & Tick Engine — GREEN  (2026-06-18)
+- Summary: Added the economy layer (`src/sim/economy.ts`) — extortion income (floored
+  EXTORT_RATE of front base income), operation income, gangster+bribe expenses, and net
+  cash flow helpers — and the deterministic tick engine (`src/sim/tick.ts`) resolving
+  per-family economy then advancing the clock, per the fixed tick order (DESIGN §5).
+  Exposed via `src/sim/index.ts`.
+- Files: src/sim/economy.ts, src/sim/tick.ts, src/sim/index.ts, tests/economy.test.ts,
+  tests/tick.test.ts.
+- Decisions: Income sources (extorted fronts, owned operations) and gangsters are read
+  from state directly so the economy is testable before the extort/establish/recruit
+  commands exist (Phases 2–4). bribeLevel doubles as a per-tick retainer cost. Economy
+  events are only logged when net != 0 to keep the log lean.
+- Gate: typecheck ✅  build ✅  test ✅ (34 tests total; +18 this phase asserting exact
+  cash deltas, floored extortion, multi-tick accumulation, per-family isolation, and
+  deep-equal determinism across two runs).
+- Commit: phase1: Economy & Tick Engine — green
