@@ -8,18 +8,27 @@
 import {
   EXTORT_HEAT,
   EXTORT_MIN_CONTROL,
+  GANGSTER_UPKEEP_PER_SKILL,
   HEAT_MAX,
   OPERATION_COST,
   OPERATION_HEAT,
   OPERATION_INCOME,
+  RECRUIT_COST,
+  RECRUIT_LOYALTY_MAX,
+  RECRUIT_LOYALTY_MIN,
+  RECRUIT_SKILL_MAX,
+  RECRUIT_SKILL_MIN,
 } from './constants';
+import { GANGSTER_NAMES } from './gangsters';
 import { Rng } from './rng';
 import {
   findFamily,
+  findGangster,
   type Business,
   type District,
   type Family,
   type GameState,
+  type GangsterAssignment,
   type OperationKind,
 } from './types';
 
@@ -38,8 +47,25 @@ export interface EstablishOperationCommand {
   kind: OperationKind;
 }
 
+/** Phase 4: recruit a new gangster into a family. */
+export interface RecruitGangsterCommand {
+  type: 'recruitGangster';
+  familyId: string;
+}
+
+/** Phase 4: (re)assign a gangster to idle / guard a district / run an operation. */
+export interface AssignGangsterCommand {
+  type: 'assignGangster';
+  gangsterId: string;
+  assignment: GangsterAssignment;
+}
+
 /** Union of all commands. Extended in later phases. */
-export type Command = ExtortCommand | EstablishOperationCommand;
+export type Command =
+  | ExtortCommand
+  | EstablishOperationCommand
+  | RecruitGangsterCommand
+  | AssignGangsterCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -225,6 +251,101 @@ function applyEstablishOperation(
   return state;
 }
 
+function applyRecruitGangster(state: GameState, cmd: RecruitGangsterCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  if (!family) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'recruit-invalid',
+      message: `Invalid recruit: family ${cmd.familyId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (family.cash < RECRUIT_COST) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'recruit-denied',
+      message: `${family.name} cannot afford to recruit ($${family.cash} < $${RECRUIT_COST})`,
+      data: { ...cmd, cost: RECRUIT_COST },
+    });
+    return state;
+  }
+
+  family.cash -= RECRUIT_COST;
+
+  const rng = new Rng(state.rngState);
+  const skill = rng.nextInt(RECRUIT_SKILL_MIN, RECRUIT_SKILL_MAX);
+  const loyalty = rng.nextInt(RECRUIT_LOYALTY_MIN, RECRUIT_LOYALTY_MAX);
+  const name = rng.pick(GANGSTER_NAMES);
+  state.rngState = rng.state;
+
+  const gangster = {
+    id: `${family.id}-g-${family.gangsters.length}`,
+    name,
+    skill,
+    loyalty,
+    upkeep: skill * GANGSTER_UPKEEP_PER_SKILL,
+    assignment: { type: 'idle' as const },
+  };
+  family.gangsters.push(gangster);
+
+  state.log.push({
+    tick: state.tick,
+    kind: 'recruit',
+    message: `${family.name} recruited ${name} (skill ${skill}, loyalty ${loyalty})`,
+    data: { familyId: family.id, gangsterId: gangster.id, skill, loyalty },
+  });
+  return state;
+}
+
+/** Validate that an assignment's target exists in the world. */
+function assignmentTargetValid(state: GameState, assignment: GangsterAssignment): boolean {
+  switch (assignment.type) {
+    case 'idle':
+      return true;
+    case 'guard':
+      return state.districts.some((d) => d.id === assignment.districtId);
+    case 'operation': {
+      const found = findBusiness(state, assignment.businessId);
+      return !!found && found.business.kind !== 'front';
+    }
+  }
+}
+
+function applyAssignGangster(state: GameState, cmd: AssignGangsterCommand): GameState {
+  const found = findGangster(state, cmd.gangsterId);
+  if (!found) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'assign-invalid',
+      message: `Invalid assign: gangster ${cmd.gangsterId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (!assignmentTargetValid(state, cmd.assignment)) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'assign-invalid',
+      message: `Invalid assignment target for ${cmd.gangsterId}`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  found.gangster.assignment = cmd.assignment;
+  state.log.push({
+    tick: state.tick,
+    kind: 'assign',
+    message: `${found.gangster.name} assigned to ${cmd.assignment.type}`,
+    data: { gangsterId: cmd.gangsterId, assignment: cmd.assignment },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -232,6 +353,10 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyExtort(state, cmd);
     case 'establishOperation':
       return applyEstablishOperation(state, cmd);
+    case 'recruitGangster':
+      return applyRecruitGangster(state, cmd);
+    case 'assignGangster':
+      return applyAssignGangster(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);

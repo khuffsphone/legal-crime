@@ -86,3 +86,15 @@ export function findFamily(state: GameState, id: string): Family | undefined {
   if (state.player.id === id) return state.player;
   return state.rivals.find((r) => r.id === id);
 }
+
+/** Find a gangster and its owning family by gangster id. */
+export function findGangster(
+  state: GameState,
+  gangsterId: string,
+): { family: Family; gangster: Gangster } | undefined {
+  for (const family of allFamilies(state)) {
+    const gangster = family.gangsters.find((g) => g.id === gangsterId);
+    if (gangster) return { family, gangster };
+  }
+  return undefined;
+}

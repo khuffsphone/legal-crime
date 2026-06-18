@@ -84,3 +84,20 @@
   denial on insufficient cash, unique ids, per-tick income, presence-amplified heat with
   concrete numbers, and determinism).
 - Commit: phase3: Illegal Businesses — green
+
+## Phase 4 — Gangster Management — GREEN  (2026-06-18)
+- Summary: Added `recruitGangster` (spends RECRUIT_COST, rolls seeded skill 1–10 /
+  loyalty 40–80 / name, upkeep = skill·10) and `assignGangster` (idle/guard/operation
+  with target validation). New pure module `src/sim/gangsters.ts` provides `loyaltyDelta`
+  (paid/unpaid base minus floor(heat/20)), `desertionChance` (linear to MAX_DESERT_CHANCE
+  below threshold), and `resolveLoyalty` — now wired as tick step 4 (drift then seeded
+  desertion roll for at-risk gangsters). Added `findGangster` to types.
+- Files: src/sim/gangsters.ts, src/sim/commands.ts, src/sim/tick.ts, src/sim/types.ts,
+  src/sim/constants.ts, src/sim/index.ts, tests/gangsters.test.ts.
+- Decisions: Recruit draws RNG in fixed order (skill, loyalty, name) for determinism.
+  resolveLoyalty only draws RNG for gangsters below the desertion threshold, so ticks
+  with no at-risk gangsters leave the cursor untouched and prior determinism holds.
+- Gate: typecheck ✅  build ✅  test ✅ (69 total; +15 asserting exact cost/upkeep, stat
+  bounds, recruit determinism, assignment validation, exact loyalty deltas & chances,
+  desertion seed-scan split, and loyal-gangster persistence over 30 ticks).
+- Commit: phase4: Gangster Management — green

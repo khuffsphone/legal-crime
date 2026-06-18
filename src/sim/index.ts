@@ -25,4 +25,12 @@ export {
   type Command,
   type ExtortCommand,
   type EstablishOperationCommand,
+  type RecruitGangsterCommand,
+  type AssignGangsterCommand,
 } from './commands';
+export {
+  loyaltyDelta,
+  desertionChance,
+  resolveLoyalty,
+  GANGSTER_NAMES,
+} from './gangsters';
