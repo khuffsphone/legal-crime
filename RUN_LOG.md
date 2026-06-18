@@ -208,3 +208,37 @@
   and district count, endTurn apply-then-tick and game-over no-op, tick-integrated win and
   bankruptcy, frozen-after-decision, and endTurn determinism).
 - Commit: phase9: Win/Loss & Game Flow — green
+
+## Phase 10 — Integration Scene — GREEN  (2026-06-18)
+- Summary: Added a pure, scene-agnostic adapter (`src/scenes/adapter.ts`, no Phaser) with
+  selectors (playerView, districtViews, rivalViews, statusView, statusBanner) building a
+  display view model from sim state, plus dispatch/advanceTurn/newGame wrappers over the
+  sim. Rewrote `src/scenes/BootScene.ts` to render entirely from the adapter's view model
+  and dispatch commands on input (SPACE = end week, E = extort home district), re-rendering
+  from fresh state — no game rules in the scene. The Vite build includes the scene.
+- Files: src/scenes/adapter.ts, src/scenes/BootScene.ts, tests/adapter.test.ts,
+  tsconfig.json (+node types), package.json (+@types/node dev dep).
+- Decisions: The adapter lives under /src/scenes but imports only the sim public surface,
+  so it is unit-tested in node. The "/src/sim is Phaser-free" architecture invariant is now
+  an enforced test that scans every sim file for a real phaser import (ignoring the word in
+  comments). Holder/operation/strength values are derived in selectors and asserted exactly.
+- Gate: typecheck ✅  build ✅  test ✅ (156 total; +9 asserting exact view-model values
+  (player stats, holder name resolution, op vs front counts, rival strength/alive, status
+  banners), dispatch-without-tick, advanceTurn apply-then-tick, a reproducible mini-game
+  through the adapter, and the enforced sim-Phaser-free invariant).
+- Commit: phase10: Integration Scene — green
+
+## FINAL SUMMARY — BUILD COMPLETE (2026-06-18)
+- All 11 phases (0–10) completed GREEN, in order, each behind the full gate
+  (typecheck + build + test). Final suite: 156 tests across 13 files, all green.
+- Architecture held throughout: /src/sim is pure and Phaser-free (now enforced by test);
+  /src/scenes renders via a pure adapter. The simulation is seeded-RNG deterministic —
+  every stochastic system (extortion, recruitment/desertion, raids, rival AI, conflict)
+  draws from a single serializable cursor, and determinism is asserted per phase.
+- Tick engine resolves systems in the fixed documented order: economy → operation heat →
+  extortion heat → loyalty/desertion → rival AI → conflict → law/raids → win/loss → clock.
+- Stack as installed (within the brief's majors; recorded, not upgraded): phaser 3.90.0,
+  vite 5.4.21, vitest 2.1.9, typescript 5.9.3; added @types/node for a node-fs invariant
+  test in Phase 10.
+- No blockers encountered. Worked around a tooling glitch that appended a stray
+  `</content>` tag to written files by stripping it post-write each phase.
