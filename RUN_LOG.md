@@ -434,3 +434,45 @@
   ongoing heat, shocks-fire-and-expire over 60 ticks, enabled determinism, disabled-never-fires).
   Phaser-free invariant green.
 - Commit: phase16: Systemic Shocks — green
+
+## Phase 17 — Fedora Noir Reskin — GREEN  (2026-06-18)
+- Summary: Added the pure presentation layer `src/scenes/theme.ts` (no Phaser, no sim): the
+  canonical NOIR_PALETTE + NOIR_FONT and flavor helpers — bribeChannelLabel (The Beat/Bench/
+  City Hall/Bureau), shockFlavor, tierName (Street/Block/Empire), heatLabel, moneyLine
+  (clean/dirty framing), statusNarration (clipped noir lines per win/loss/playing). The
+  adapter re-exports them and adds `narrate`. Rewrote BootScene to render the full enriched
+  view model in the noir palette — clean/dirty money, debt, heat band, crew, held vs needed,
+  uncollected takings, active shocks, the four bribe channels, and per-district control/
+  holder/operation-tiers/uncollected — with SPACE/E/C controls, and turns shocks ON for live
+  play (newGame(1,{shocks:true})).
+- Files: src/scenes/theme.ts (new), src/scenes/adapter.ts (narrate + theme re-exports),
+  src/scenes/BootScene.ts (full noir restyle + enriched HUD), new tests/theme.test.ts.
+- Decisions: All reskin work is in /src/scenes; zero sim changes — the Phaser-free invariant
+  is re-asserted by theme.test (and the original adapter.test). Flavor helpers are pure and
+  asserted exactly. The live scene enables shocks; unit tests keep them opt-in.
+- Gate: typecheck ✅  build ✅  test ✅ (243 total; +10 asserting palette/font, every bribe-
+  channel/shock/tier/heat label, money framing, narration per state, the enriched player/
+  district/status view model, and the sim-Phaser-free + theme-outside-sim invariant).
+- Commit: phase17: Fedora Noir Reskin — green
+
+## ENHANCEMENT RUN COMPLETE — DONE (2026-06-18)
+- All seven enhancement phases (11–17) completed GREEN, in order, each behind the full gate
+  (typecheck + build + test). Final suite: 243 tests across 20 files (up from 156/13 at the
+  end of the 0–10 run), all green; production build succeeds.
+- The five signature mechanics (CANON §2) are live and tested: S1 Dual Economy (clean/dirty
+  ledger + laundering + dirty-hoard heat), S2 Collector Units (income accrues at businesses,
+  risky collection runs — THE signature mechanic), S3 Bribery Sliders (police/judges/
+  politicians/feds channels with distinct effects), S4 Illegal Business Tiers (upgrade ladder
+  scaling income & heat), S5 Mutiny & Auto-Loan (coordinated walkouts + compounding debt
+  spiral). Systemic Shocks (Phase 16) stress them all, and the Federal Audit pays off the
+  S1↔S3 synergy by seizing only dirty cash, shielded by the Feds bribe. Phase 17 dresses it
+  all in Fedora Noir.
+- Architecture held throughout: /src/sim stayed pure and Phaser-free (enforced by an
+  invariant test every phase); all randomness draws from the single seeded cursor and
+  determinism is asserted per phase. Earlier-test updates were confined to the phases that
+  legitimately changed a mechanic (Collectors → income realization; Bribery → 2 law cases;
+  Mutiny/Auto-Loan → 3 bankruptcy cases) and each is documented in its receipt.
+- Decisions of note: CANON.md and ENHANCEMENT_PLAN.md were absent and authored at bootstrap
+  (recorded). The Ultracode "Workflow" tool was unavailable; its quality bar was applied
+  manually. The stray-`</content>` write glitch from the 0–10 run persisted and was stripped
+  after each write. No blockers encountered.

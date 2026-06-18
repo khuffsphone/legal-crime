@@ -22,6 +22,7 @@ import {
   type Family,
   type GameState,
 } from '../sim';
+import { statusNarration } from './theme';
 
 export interface PlayerView {
   name: string;
@@ -162,6 +163,23 @@ export function statusBanner(state: GameState): string {
       return `Week ${state.tick}`;
   }
 }
+
+/** A clipped Fedora Noir narration line for the current state (Phase 17). */
+export function narrate(state: GameState): string {
+  return statusNarration(state);
+}
+
+// Re-export the noir flavor helpers so scenes import a single module.
+export {
+  NOIR_PALETTE,
+  NOIR_FONT,
+  bribeChannelLabel,
+  shockFlavor,
+  tierName,
+  heatLabel,
+  moneyLine,
+  statusNarration,
+} from './theme';
 
 /** Dispatch a single command (no tick). Returns the same state. */
 export function dispatch(state: GameState, command: Command): GameState {

@@ -1,6 +1,6 @@
-// Phaser scene. Rendering and input only — all game rules live in the pure sim, reached
-// exclusively through the scene-agnostic adapter. The scene re-renders from a fresh view
-// model after every dispatched command or advanced turn.
+// Phaser scene — Fedora Noir. Rendering and input only; all rules live in the pure sim,
+// reached through the scene-agnostic adapter. Re-renders from a fresh view model after
+// every command or advanced week.
 
 import Phaser from 'phaser';
 import {
@@ -8,14 +8,21 @@ import {
   playerView,
   districtViews,
   rivalViews,
-  statusBanner,
   statusView,
+  narrate,
   advanceTurn,
   dispatch,
+  moneyLine,
+  heatLabel,
+  bribeChannelLabel,
+  shockFlavor,
+  tierName,
+  NOIR_PALETTE,
+  NOIR_FONT,
 } from './adapter';
-import type { GameState } from '../sim';
+import type { BribeChannel, GameState, ShockKind } from '../sim';
 
-const TEXT = { fontFamily: 'monospace', fontSize: '16px', color: '#cccccc' } as const;
+const CHANNELS: BribeChannel[] = ['police', 'judges', 'politicians', 'feds'];
 
 export class BootScene extends Phaser.Scene {
   private state!: GameState;
@@ -26,17 +33,22 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.state = newGame(1);
+    // Real play runs with systemic shocks on (Phase 16).
+    this.state = newGame(1, { shocks: true });
+    this.cameras.main.setBackgroundColor(NOIR_PALETTE.ink);
 
-    // SPACE advances a turn; E extorts the first front in the player's home district.
+    // SPACE ends the week; E extorts the home district; C collects it.
     this.input.keyboard?.on('keydown-SPACE', () => {
       advanceTurn(this.state);
       this.render();
     });
     this.input.keyboard?.on('keydown-E', () => {
-      const home = this.state.districts[0];
-      const front = home.businesses.find((b) => b.kind === 'front');
+      const front = this.state.districts[0].businesses.find((b) => b.kind === 'front');
       if (front) dispatch(this.state, { type: 'extort', familyId: 'player', businessId: front.id });
+      this.render();
+    });
+    this.input.keyboard?.on('keydown-C', () => {
+      dispatch(this.state, { type: 'collect', familyId: 'player', districtId: 'district-0' });
       this.render();
     });
 
@@ -47,35 +59,50 @@ export class BootScene extends Phaser.Scene {
     this.texts.forEach((t) => t.destroy());
     this.texts = [];
 
-    const banner = statusBanner(this.state);
-    const status = statusView(this.state);
     const p = playerView(this.state);
+    const status = statusView(this.state);
 
-    let y = 16;
-    const line = (s: string, color = '#cccccc', size = '16px') => {
-      this.texts.push(this.add.text(16, y, s, { ...TEXT, color, fontSize: size }));
+    let y = 14;
+    const line = (s: string, color: string = NOIR_PALETTE.fog, size = '16px') => {
+      this.texts.push(this.add.text(16, y, s, { fontFamily: NOIR_FONT, fontSize: size, color }));
       y += Number.parseInt(size, 10) + 6;
     };
 
-    line('LEGAL CRIME', '#e8c170', '28px');
-    line(`${banner}    (need ${status.districtsNeededToWin} districts to win)`, '#e8c170');
+    line('LEGAL CRIME', NOIR_PALETTE.brass, '30px');
+    line(narrate(this.state), NOIR_PALETTE.bone);
     line(
-      `Cash $${p.cash}  Heat ${p.heat}  Bribe ${p.bribeLevel}  Crew ${p.gangsterCount}  Held ${p.districtsHeld}`,
-      '#9ccc65',
+      `${moneyLine(p.cleanCash, p.dirtyCash)}  ·  Debt $${p.debt}  ·  ${heatLabel(p.heat)} (${p.heat})`,
+      NOIR_PALETTE.brass,
+    );
+    line(
+      `Crew ${p.gangsterCount}  ·  Held ${p.districtsHeld}/${status.districtsNeededToWin}  ·  Uncollected $${p.uncollected}`,
+      NOIR_PALETTE.fog,
     );
 
-    line('Districts:', '#ffffff');
+    const activeShocks = status.shocks;
+    if (activeShocks.length > 0) {
+      line(`ACTIVE: ${activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ')}`, NOIR_PALETTE.blood);
+    }
+
+    line('Protection:', NOIR_PALETTE.bone);
+    line('  ' + CHANNELS.map((c) => `${bribeChannelLabel(c)} ${p.bribes[c]}`).join('  ·  '), NOIR_PALETTE.fog);
+
+    line('Districts:', NOIR_PALETTE.bone);
     for (const d of districtViews(this.state)) {
       const holder = d.holderName ? `held by ${d.holderName}` : 'contested';
-      line(`  ${d.name} — you ${d.playerControl} — ${holder} — ops ${d.operationCount}`, '#aaaaaa');
+      const tiers = d.playerOperationTiers.map((t) => tierName(t)).join('/') || '—';
+      line(
+        `  ${d.name} — you ${d.playerControl} — ${holder} — ops ${tiers} — $${d.playerUncollected} waiting`,
+        NOIR_PALETTE.fog,
+      );
     }
 
-    line('Rivals:', '#ffffff');
+    line('Rivals:', NOIR_PALETTE.bone);
     for (const r of rivalViews(this.state)) {
-      const dead = r.alive ? '' : ' (eliminated)';
-      line(`  ${r.name} — cash $${r.cash} heat ${r.heat} crew ${r.gangsterCount}${dead}`, '#cc8888');
+      const dead = r.alive ? '' : ' (in the river)';
+      line(`  ${r.name} — crew ${r.gangsterCount} — ${heatLabel(r.heat)}${dead}`, NOIR_PALETTE.blood);
     }
 
-    line('[SPACE] end week   [E] extort home district', '#666666');
+    line('[SPACE] end week   [E] extort home   [C] collect home', '#6b6258');
   }
 }
