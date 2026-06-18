@@ -564,3 +564,44 @@
   present (CANON.md had a new repo-sync/concurrency section). Determinism preserved; all
   earlier-test edits were confined to the two phases and documented in their receipts. No
   blockers. "Fun" remains for human playtest validation.
+
+## Phase 20 — Visual Reskin — GREEN  (2026-06-18)
+- Summary: Turned the text-readout BootScene into a RENDERED Fedora Noir scene. New pure,
+  Phaser-free module `src/scenes/assets.ts`: ASSET_MANIFEST (the exact LCR_ filenames, no
+  version suffix), assetUrl, and `resolveSprite(key, loadedKeys)` — the graceful-fallback
+  resolver that returns either a sprite (key loaded) or a labeled colored placeholder
+  (missing/unknown key), plus view→asset mappings districtEnvKey / buildingKeyForKind /
+  unitKeyForSkill. BootScene now preloads every manifest asset, computes which textures
+  actually loaded, and renders: a top HUD panel (clean/dirty money, debt, heat band, crew,
+  held, uncollected), a federal-exposure meter with the 3-rung warning ladder + launder
+  prompt + The Bureau shield %, an active-shocks banner, a 5-card district MAP (env backdrop,
+  HQ marker, per-operation building sprites, control/holder/tier/uncollected footer, hover +
+  click-to-collect affordance), a crew strip of unit sprites (+ a collector when takings
+  wait), four bribe-channel chips, a rivals line, and a game-over/victory overlay — all in
+  the noir palette from theme.ts, with every missing PNG shown as a labeled placeholder so
+  the scene ALWAYS renders. Interaction preserved: SPACE end week, E extort, C collect (+ a
+  click affordance on districts).
+- Files: src/scenes/assets.ts (new), src/scenes/BootScene.ts (full rendered rewrite),
+  public/assets/{env,buildings,units,screens}/ (folders + .gitkeep), public/assets/README.md,
+  tests/assets.test.ts (new). No /src/sim changes.
+- Asset drop paths (drop processed PNGs here; they appear automatically, no code change):
+  public/assets/env/        LCR_env_industrial.png, LCR_env_downtown.png,
+                            LCR_env_waterfront.png, LCR_env_alley.png
+  public/assets/buildings/  LCR_bldg_hq.png, LCR_bldg_speakeasy.png, LCR_bldg_gamblinghall.png,
+                            LCR_bldg_collectioncenter.png, LCR_bldg_storefront.png
+  public/assets/units/      LCR_unit_thug.png, LCR_unit_thompsonman.png, LCR_unit_collector.png,
+                            LCR_unit_cadillac.png
+  public/assets/screens/    LCR_screen_title.png, LCR_screen_gameover.png
+- Decisions: The fallback LOGIC lives in a pure module so it is unit-tested in node without
+  Phaser (the brief's "loader test"); the BootScene gates rendering on Phaser's
+  textures.exists(key) after preload, so a 404 on a not-yet-dropped PNG simply yields a
+  placeholder (loaderror handled, no crash). Filenames/keys carry NO version suffix, matching
+  the brief exactly; the authoritative list is ASSET_MANIFEST. Verified `vite build` copies
+  public/assets/* into dist/assets/* so dropped art ships. Scene layout uses fixed logical
+  coordinates (Phaser RESIZE canvas) — visual polish is human-validated, not tested.
+- Gate: typecheck ✅  build ✅ (public/assets copied to dist) test ✅ (274 total; +12 asset
+  tests: exact manifest filenames per category, key=filename-without-ext with no _vN suffix,
+  assetUrl path, public folders exist, placeholder-on-missing + sprite-on-loaded + unknown-key
+  safety + every-key-placeholder-when-nothing-loaded, and the env/building/unit mappings).
+  /src/sim Phaser-free invariant green; sim untouched.
+- Commit: phase20: Visual Reskin — green
