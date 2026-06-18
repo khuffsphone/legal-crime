@@ -4,6 +4,10 @@
 export type GameStatus = 'playing' | 'won' | 'lost';
 export type LossReason = 'bankrupt' | 'dead' | 'busted';
 
+/** Channels a family can bribe (Phase 13 / S3). Police → fewer raids; Judges → survive a
+ * bust; Politicians → faster heat decay; Feds → shield against federal shocks (Phase 16). */
+export type BribeChannel = 'police' | 'judges' | 'politicians' | 'feds';
+
 /** Illegal operation kinds a family can establish (Phase 3). */
 export type OperationKind = 'numbers' | 'smuggling' | 'speakeasy' | 'protection';
 
@@ -34,7 +38,11 @@ export interface Family {
    * Crime income arrives dirty; laundering converts it to clean. (Phase 11 / S1) */
   dirtyCash: number;
   heat: number; // 0..HEAT_MAX
-  bribeLevel: number; // standing bribe, reduces heat gain & raid odds
+  /** Total standing bribe = sum of all channels; the per-tick retainer cost. Kept in sync
+   * with `bribes` by the bribe/setBribe commands. (Phase 13) */
+  bribeLevel: number;
+  /** Standing bribe allocated per channel (Phase 13 / S3). */
+  bribes: Record<BribeChannel, number>;
   alive: boolean; // boss alive; false => family eliminated
   gangsters: Gangster[];
 }

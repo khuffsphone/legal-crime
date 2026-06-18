@@ -47,6 +47,7 @@ function makeFamily(id: string, name: string, isPlayer: boolean): Family {
     dirtyCash: 0,
     heat: 0,
     bribeLevel: 0,
+    bribes: { police: 0, judges: 0, politicians: 0, feds: 0 },
     alive: true,
     gangsters: [],
   };

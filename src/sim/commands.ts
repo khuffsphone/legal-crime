@@ -30,6 +30,7 @@ import {
   collectionSafety,
   uncollectedOf,
 } from './collection';
+import { recomputeBribeLevel, sumBribes } from './bribery';
 import { GANGSTER_NAMES } from './gangsters';
 import { cleanCash, clampDirty, creditCrimeIncome, launderCapacity, launderFee } from './laundering';
 import { Rng } from './rng';
@@ -37,6 +38,7 @@ import { controlOf, topRivalControl } from './territory';
 import {
   findFamily,
   findGangster,
+  type BribeChannel,
   type Business,
   type District,
   type Family,
@@ -80,10 +82,19 @@ export interface ExpandControlCommand {
   districtId: string;
 }
 
-/** Phase 6: raise a family's standing bribe (a per-tick retainer that buys protection). */
+/** Phase 6: raise a family's standing bribe (a per-tick retainer that buys protection).
+ * Phase 13: this now adds to the Police channel. */
 export interface BribeCommand {
   type: 'bribe';
   familyId: string;
+  amount: number;
+}
+
+/** Phase 13: set a single bribery channel to an absolute amount (a slider). */
+export interface SetBribeCommand {
+  type: 'setBribe';
+  familyId: string;
+  channel: BribeChannel;
   amount: number;
 }
 
@@ -118,7 +129,8 @@ export type Command =
   | BribeCommand
   | OrderHitCommand
   | LaunderCommand
-  | CollectCommand;
+  | CollectCommand
+  | SetBribeCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -473,23 +485,72 @@ function applyBribe(state: GameState, cmd: BribeCommand): GameState {
 
   // The bribe is a standing retainer; its cost is realized per tick by the economy
   // (familyExpenses includes bribeLevel), so it is not deducted up front. Require the
-  // family to be able to cover at least one tick of the new retainer.
-  if (family.cash < cmd.amount) {
+  // family to be able to cover at least one tick of the new total retainer.
+  const newTotal = sumBribes(family) + cmd.amount;
+  if (family.cash < newTotal) {
     state.log.push({
       tick: state.tick,
       kind: 'bribe-denied',
-      message: `${family.name} cannot sustain a $${cmd.amount} bribe ($${family.cash} cash)`,
+      message: `${family.name} cannot sustain a $${newTotal} bribe ($${family.cash} cash)`,
       data: { ...cmd },
     });
     return state;
   }
 
-  family.bribeLevel += cmd.amount;
+  // Phase 13: the legacy bribe raises the Police channel.
+  family.bribes.police += cmd.amount;
+  recomputeBribeLevel(family);
   state.log.push({
     tick: state.tick,
     kind: 'bribe',
-    message: `${family.name} raised its bribe to ${family.bribeLevel}`,
-    data: { familyId: family.id, amount: cmd.amount, bribeLevel: family.bribeLevel },
+    message: `${family.name} raised its police bribe to ${family.bribes.police} (total ${family.bribeLevel})`,
+    data: { familyId: family.id, amount: cmd.amount, channel: 'police', bribeLevel: family.bribeLevel },
+  });
+  return state;
+}
+
+function applySetBribe(state: GameState, cmd: SetBribeCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  if (!family) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'bribe-invalid',
+      message: `Invalid setBribe: family ${cmd.familyId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (cmd.amount < 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'bribe-invalid',
+      message: `Bribe amount cannot be negative (got ${cmd.amount})`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  // Slider semantics: set the channel to an absolute amount. Raising the total requires
+  // the family to be able to cover the new total retainer for a tick; lowering is free.
+  const newTotal = sumBribes(family) - (family.bribes[cmd.channel] ?? 0) + cmd.amount;
+  if (newTotal > family.bribeLevel && family.cash < newTotal) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'bribe-denied',
+      message: `${family.name} cannot sustain a $${newTotal} total bribe ($${family.cash} cash)`,
+      data: { ...cmd, newTotal },
+    });
+    return state;
+  }
+
+  family.bribes[cmd.channel] = cmd.amount;
+  recomputeBribeLevel(family);
+  state.log.push({
+    tick: state.tick,
+    kind: 'setBribe',
+    message: `${family.name} set ${cmd.channel} bribe to ${cmd.amount} (total ${family.bribeLevel})`,
+    data: { familyId: family.id, channel: cmd.channel, amount: cmd.amount, bribeLevel: family.bribeLevel },
   });
   return state;
 }
@@ -696,6 +757,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyLaunder(state, cmd);
     case 'collect':
       return applyCollect(state, cmd);
+    case 'setBribe':
+      return applySetBribe(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);

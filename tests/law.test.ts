@@ -81,10 +81,10 @@ describe('resolveLaw — decay', () => {
     expect(s.rngState).toBe(cursor);
   });
 
-  it('decays faster with a standing bribe', () => {
+  it('decays faster with a standing politicians bribe', () => {
     const s = createInitialState(1);
     s.player.heat = 50;
-    s.player.bribeLevel = 40; // +2 decay
+    s.player.bribes.politicians = 40; // +2 decay (Phase 13: politicians channel)
     resolveLaw(s);
     expect(s.player.heat).toBe(50 - (HEAT_DECAY + 2));
   });
@@ -160,16 +160,18 @@ describe('resolveLaw — raids', () => {
     throw new Error('expected at least one cash-seizing raid across seeds');
   });
 
-  it('a heavy bribe suppresses raids entirely over many ticks at high heat', () => {
-    const s = createInitialState(3);
-    s.player.heat = HEAT_MAX;
-    s.player.bribeLevel = 100; // mitigation capped at 0.9; still some chance, but...
-    // With 0.9 mitigation, raid chance = 0.08. Assert player can survive a single resolve
-    // for most seeds is hard; instead assert exact mitigation already covered above.
-    // Here check decay dominates: heat strictly decreases.
-    const before = s.player.heat;
-    resolveLaw(s);
-    expect(s.player.heat).toBeLessThan(before);
+  it('a heavy police bribe sharply reduces raids at high heat over many seeds', () => {
+    // Police channel drives raid mitigation. With 0.9 mitigation, raid chance ~0.08, so
+    // most seeds see no raid (player survives the resolve).
+    let survived = 0;
+    for (let seed = 0; seed < 80; seed++) {
+      const s = createInitialState(seed);
+      s.player.heat = HEAT_MAX;
+      s.player.bribes.police = 100; // mitigation capped at 0.9
+      resolveLaw(s);
+      if (s.player.alive && s.status === 'playing') survived++;
+    }
+    expect(survived).toBeGreaterThan(60); // vs ~16 expected with no bribe (0.8 raid chance)
   });
 });
 

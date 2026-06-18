@@ -15,6 +15,7 @@ import {
   RAID_MAX_CHANCE,
   RAID_THRESHOLD,
 } from './constants';
+import { bustAvoidChance } from './bribery';
 import { Rng } from './rng';
 import { allFamilies, type Family, type GameState } from './types';
 
@@ -65,18 +66,31 @@ function ownedOperations(state: GameState, familyId: string) {
 /** Resolve a raid that has already been determined to fire against `family`. */
 function resolveRaid(state: GameState, family: Family, rng: Rng): void {
   if (family.heat >= BUST_HEAT) {
-    family.alive = false;
+    // Judges (Phase 13) buy a chance to spring the boss, downgrading a fatal bust to a
+    // severe seizure. The roll is only drawn when judges are actually retained.
+    const avoid = bustAvoidChance(family.bribes.judges);
+    const saved = avoid > 0 && rng.chance(avoid);
+    if (!saved) {
+      family.alive = false;
+      state.log.push({
+        tick: state.tick,
+        kind: 'raid-bust',
+        message: `${family.name}'s boss was busted in a raid (heat ${family.heat})`,
+        data: { familyId: family.id, heat: family.heat },
+      });
+      if (family.isPlayer) {
+        state.status = 'lost';
+        state.lossReason = 'busted';
+      }
+      return;
+    }
     state.log.push({
       tick: state.tick,
-      kind: 'raid-bust',
-      message: `${family.name}'s boss was busted in a raid (heat ${family.heat})`,
+      kind: 'raid-averted',
+      message: `${family.name}'s judges sprang the boss — the bust became a seizure`,
       data: { familyId: family.id, heat: family.heat },
     });
-    if (family.isPlayer) {
-      state.status = 'lost';
-      state.lossReason = 'busted';
-    }
-    return;
+    // fall through to a non-bust seizure
   }
 
   // Non-bust raid: either seize an operation or seize cash.
@@ -120,12 +134,16 @@ export function resolveLaw(state: GameState): void {
   for (const family of allFamilies(state)) {
     if (!family.alive) continue;
 
-    const chance = raidChance(family.heat, family.bribeLevel);
+    // Phase 13: the Police channel mitigates raid chance; Politicians speed heat decay.
+    const chance = raidChance(family.heat, family.bribes.police);
     if (chance > 0 && rng.chance(chance)) {
       resolveRaid(state, family, rng);
     }
 
-    family.heat = Math.max(0, Math.min(HEAT_MAX, family.heat - effectiveDecay(family.bribeLevel)));
+    family.heat = Math.max(
+      0,
+      Math.min(HEAT_MAX, family.heat - effectiveDecay(family.bribes.politicians)),
+    );
   }
 
   state.rngState = rng.state;

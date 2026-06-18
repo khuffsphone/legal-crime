@@ -50,6 +50,7 @@ export {
   type OrderHitCommand,
   type LaunderCommand,
   type CollectCommand,
+  type SetBribeCommand,
 } from './commands';
 export {
   raidBaseChance,
@@ -59,6 +60,12 @@ export {
   effectiveDecay,
   resolveLaw,
 } from './law';
+export {
+  BRIBE_CHANNELS,
+  sumBribes,
+  recomputeBribeLevel,
+  bustAvoidChance,
+} from './bribery';
 export {
   loyaltyDelta,
   desertionChance,

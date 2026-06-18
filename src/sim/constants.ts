@@ -66,10 +66,14 @@ export const BUST_HEAT = 90; // a raid at or above this heat busts the boss
 export const RAID_CASH_SEIZE_FRACTION = 0.3; // cash seized on a non-bust raid
 export const RAID_HEAT_RELIEF = 0.5; // fraction of heat shed after a non-bust raid
 
-// Bribery effects.
-export const BRIBE_MITIGATION_PER_LEVEL = 0.01; // raid-chance reduction per bribe point
+// Bribery effects (the police channel drives raid mitigation; politicians drive decay).
+export const BRIBE_MITIGATION_PER_LEVEL = 0.01; // raid-chance reduction per police-bribe point
 export const BRIBE_MAX_MITIGATION = 0.9; // cap on raid-chance reduction
-export const BRIBE_DECAY_PER_LEVEL = 0.05; // extra heat decay per bribe point
+export const BRIBE_DECAY_PER_LEVEL = 0.05; // extra heat decay per politicians-bribe point
+
+// Bribery sliders (Phase 13 / S3): judges buy a chance to spring the boss from a bust.
+export const JUDGE_BUST_MITIGATION_PER_LEVEL = 0.01; // bust-avoidance per judges point
+export const JUDGE_MAX_BUST_MITIGATION = 0.8; // cap on bust avoidance from judges
 
 // Hits & conflict (Phase 8).
 export const HIT_HEAT = 25; // heat the attacker draws for ordering a hit

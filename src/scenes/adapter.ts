@@ -16,6 +16,7 @@ import {
   pendingCollection,
   totalUncollected,
   districtsNeededToWin,
+  type BribeChannel,
   type Command,
   type Family,
   type GameState,
@@ -30,6 +31,7 @@ export interface PlayerView {
   uncollected: number;
   heat: number;
   bribeLevel: number;
+  bribes: Record<BribeChannel, number>;
   gangsterCount: number;
   strength: number;
   districtsHeld: number;
@@ -89,6 +91,7 @@ export function playerView(state: GameState): PlayerView {
     uncollected: totalUncollected(state, p.id),
     heat: p.heat,
     bribeLevel: p.bribeLevel,
+    bribes: { ...p.bribes },
     gangsterCount: p.gangsters.length,
     strength: familyStrength(p),
     districtsHeld: districtsHeldCount(state, p.id),

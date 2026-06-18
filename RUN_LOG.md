@@ -321,3 +321,32 @@
   RNG mirror, presence/heat slashing the take, muscle monotonicity, own-businesses-only
   sweep, empty no-op, determinism, and rival AI collection). Phaser-free invariant green.
 - Commit: phase12: Collector Units — green
+
+## Phase 13 — Bribery Sliders (S3) — GREEN  (2026-06-18)
+- Summary: Split the single bribe into a `bribes` channel allocation (police/judges/
+  politicians/feds) on Family, with `bribeLevel` kept in sync as the total retainer cost.
+  New pure module `src/sim/bribery.ts`: BRIBE_CHANNELS, sumBribes, recomputeBribeLevel,
+  bustAvoidChance (judges·0.01, cap 0.8). New `setBribe{channel,amount}` command (absolute
+  slider; lowering is free, raising requires cash to sustain the new total; negatives
+  rejected). Legacy `bribe` command now raises the Police channel. Channel effects in law:
+  police drives raid mitigation (raidChance now fed bribes.police), politicians drive heat
+  decay (effectiveDecay fed bribes.politicians), and judges give a seeded chance to spring
+  the boss from a bust (downgrading it to a seizure, logged 'raid-averted'). Feds are stored
+  as a Phase-16 shock-shield hook. Adapter exposes the bribes map.
+- Files: src/sim/bribery.ts (new), types.ts (BribeChannel + bribes map), state.ts (init),
+  constants.ts (judges constants; renamed bribe-effect comments), commands.ts (setBribe +
+  bribe→police), law.ts (per-channel reads + judges bust mitigation), index.ts, adapter.ts;
+  updated 2 law.test cases that drove decay/raid via the flat bribeLevel to use the new
+  channels; new tests/bribery.test.ts.
+- Decisions: `bribeLevel` retained as the authoritative total cost so economy.familyExpenses
+  and its test pass unchanged (no double-charge; channels are cosmetic to cost, functional
+  to effect). The pure law helpers (raidChance/effectiveDecay/bribeMitigation/bribeDecayBonus)
+  are UNCHANGED — they still take a number — so all law.test helper assertions stay green;
+  only which channel feeds them changed in resolveLaw, requiring the 2 documented test
+  updates. Judges' bust-avoidance roll is drawn ONLY when judges>0, preserving the existing
+  bust-test RNG stream (judges=0 there) and all prior determinism.
+- Gate: typecheck ✅  build ✅  test ✅ (197 total; +11 asserting sum/sync, exact
+  bustAvoidChance, slider set/lower/deny/negative, bribe→police mapping, politicians decay,
+  total-charged-each-tick, judges seed-scan (averted>0, busts reduced vs none), determinism).
+  Phaser-free invariant green.
+- Commit: phase13: Bribery Sliders — green
