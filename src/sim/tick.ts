@@ -8,6 +8,7 @@
 
 import { EXTORT_HEAT, HEAT_MAX } from './constants';
 import { allBusinesses, familyExpenses, familyIncome, operationHeat } from './economy';
+import { clampDirty, heatFromDirty } from './laundering';
 import { resolveRivalAI } from './ai';
 import { resolveConflict } from './conflict';
 import { resolveWinLoss } from './flow';
@@ -15,12 +16,16 @@ import { resolveLoyalty } from './gangsters';
 import { resolveLaw } from './law';
 import { allFamilies, findFamily, type Family, type GameState } from './types';
 
-/** Apply one tick's economy to a single family: cash += income - expenses. */
+/** Apply one tick's economy to a single family: cash += income - expenses. Crime income
+ * is classed dirty (cash already rose by it); expenses spend clean money first, which the
+ * dirty clamp realizes. */
 function resolveFamilyEconomy(state: GameState, family: Family): void {
   const income = familyIncome(state, family.id);
   const expenses = familyExpenses(family);
   const net = income - expenses;
   family.cash += net;
+  family.dirtyCash += income; // all current income is proceeds of crime
+  clampDirty(family);
   if (net !== 0) {
     state.log.push({
       tick: state.tick,
@@ -28,6 +33,14 @@ function resolveFamilyEconomy(state: GameState, family: Family): void {
       message: `${family.name}: ${net >= 0 ? '+' : ''}${net} (income ${income}, expenses ${expenses})`,
       data: { familyId: family.id, income, expenses, net },
     });
+  }
+}
+
+/** Step 3.5 (heat): a standing hoard of dirty cash radiates per-tick heat for its owner. */
+function resolveDirtyHeat(state: GameState): void {
+  for (const family of allFamilies(state)) {
+    const add = heatFromDirty(family.dirtyCash);
+    if (add > 0) family.heat = Math.min(HEAT_MAX, family.heat + add);
   }
 }
 
@@ -76,6 +89,9 @@ export function tick(state: GameState): GameState {
   // Step 3 (heat from extortion).
   resolveExtortionHeat(state);
 
+  // Step 3.5 (heat from a standing dirty-cash hoard — dual economy / S1).
+  resolveDirtyHeat(state);
+
   // Step 4 (gangster loyalty drift & desertion).
   resolveLoyalty(state);
 
@@ -90,6 +106,9 @@ export function tick(state: GameState): GameState {
 
   // Step 8 (win/loss evaluation).
   resolveWinLoss(state);
+
+  // Normalize the dirty-cash ledger after raids/seizures may have reduced cash this tick.
+  for (const family of allFamilies(state)) clampDirty(family);
 
   // Step 9: advance the clock.
   state.tick += 1;

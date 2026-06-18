@@ -80,6 +80,13 @@ export const HIT_ROUT_MARGIN = 0.5; // above this margin the loser takes an extr
 export const BANKRUPT_FLOOR = -1000;
 export const WIN_DISTRICTS = 0.6; // fraction of districts the player must hold to win
 
+// Dual economy (Phase 11 / S1). Crime income is dirty; a hoard of dirty cash radiates
+// heat, and laundering converts dirty -> clean (safe) through extorted fronts for a fee.
+export const DIRTY_CASH_HEAT_DIVISOR = 1000; // per tick: heat += floor(dirtyCash / divisor)
+export const DIRTY_HEAT_MAX_PER_TICK = 15; // cap on per-tick dirty-cash heat
+export const LAUNDER_FEE_RATE = 0.15; // fee fraction to convert dirty -> clean
+export const LAUNDER_CAP_PER_FRONT = 200; // launder capacity granted per extorted front
+
 // Rival AI scoring heuristic (Phase 7). Base scores are deterministic; a small seeded
 // jitter breaks ties and adds variety.
 export const AI_RECRUIT_BASE = 60;

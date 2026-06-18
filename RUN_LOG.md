@@ -260,3 +260,31 @@
 - Beginning Phase 11 — Dual Economy.
 
 ---
+
+## Phase 11 — Dual Economy (S1) — GREEN  (2026-06-18)
+- Summary: Added the clean/dirty cash ledger. New `dirtyCash` field on Family (invariant
+  0 ≤ dirtyCash ≤ cash; clean = cash − dirtyCash). New pure module `src/sim/laundering.ts`:
+  cleanCash, clampDirty, creditCrimeIncome, heatFromDirty (floor(dirty/1000), cap 15),
+  launderFee (15%), launderCapacity (#extorted-fronts × 200). Tick now classes crime income
+  as dirty inline, adds a "dirty hoard heat" sub-step (step 3.5), and normalizes the ledger
+  at end-of-tick (after raids may have cut cash). New `launder` command converts dirty→clean
+  through extorted fronts, capped by capacity & dirty, paying the fee from cash. Adapter
+  exposes cleanCash/dirtyCash/launderCapacity (player) and dirtyCash (rivals).
+- Files: src/sim/laundering.ts (new), src/sim/types.ts (dirtyCash), src/sim/state.ts
+  (init 0), src/sim/constants.ts (S1 constants), src/sim/tick.ts (dirty credit + dirty-heat
+  step + end-of-tick clamp), src/sim/commands.ts (launder), src/sim/index.ts, adapter.ts,
+  tests/dualEconomy.test.ts.
+- Decisions: Chose an ADDITIVE model — `cash` stays the spendable total, `dirtyCash` tracks
+  the illicit portion (≤ cash) — so all 156 prior cash assertions pass unchanged (verified:
+  zero regressions). The in-phase teeth is dirty-hoard heat (divisor 1000 so only large
+  hoards radiate heat; short existing tests stay under it) + the laundering fee; the bigger
+  payoff (Federal Audit seizing dirty cash) lands in Phase 16 per CANON. Laundering capacity
+  is tied to extorted fronts (canon synergy: you launder THROUGH your legit fronts). Rival
+  AI does not yet launder (deferred; accruing dirty-heat is an acceptable balancing pressure)
+  — noted for a later AI pass. creditCrimeIncome is a pure helper (tested directly) that
+  Phase 12 collection will reuse, minimizing future churn.
+- Gate: typecheck ✅  build ✅  test ✅ (172 total; +16 asserting ledger invariant, exact
+  cleanCash/heatFromDirty/launderFee/launderCapacity math, launder conversion+cap+fee+denial
+  with exact clean-cash deltas, dirty income classification, dirty-hoard heat in tick,
+  clean-spent-first clamp, and determinism). Phaser-free invariant test green.
+- Commit: phase11: Dual Economy — green

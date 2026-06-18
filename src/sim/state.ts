@@ -43,6 +43,7 @@ function makeFamily(id: string, name: string, isPlayer: boolean): Family {
     name,
     isPlayer,
     cash: STARTING_CASH,
+    dirtyCash: 0,
     heat: 0,
     bribeLevel: 0,
     alive: true,

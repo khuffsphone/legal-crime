@@ -5,12 +5,14 @@
 
 import {
   applyCommand,
+  cleanCash,
   createInitialState,
   districtHolder,
   districtsHeldCount,
   endTurn,
   familyStrength,
   isGameOver,
+  launderCapacity,
   districtsNeededToWin,
   type Command,
   type Family,
@@ -20,6 +22,9 @@ import {
 export interface PlayerView {
   name: string;
   cash: number;
+  cleanCash: number;
+  dirtyCash: number;
+  launderCapacity: number;
   heat: number;
   bribeLevel: number;
   gangsterCount: number;
@@ -43,6 +48,7 @@ export interface RivalView {
   name: string;
   alive: boolean;
   cash: number;
+  dirtyCash: number;
   heat: number;
   gangsterCount: number;
   strength: number;
@@ -73,6 +79,9 @@ export function playerView(state: GameState): PlayerView {
   return {
     name: p.name,
     cash: p.cash,
+    cleanCash: cleanCash(p),
+    dirtyCash: p.dirtyCash,
+    launderCapacity: launderCapacity(state, p.id),
     heat: p.heat,
     bribeLevel: p.bribeLevel,
     gangsterCount: p.gangsters.length,
@@ -104,6 +113,7 @@ export function rivalViews(state: GameState): RivalView[] {
     name: r.name,
     alive: r.alive,
     cash: r.cash,
+    dirtyCash: r.dirtyCash,
     heat: r.heat,
     gangsterCount: r.gangsters.length,
     strength: familyStrength(r),

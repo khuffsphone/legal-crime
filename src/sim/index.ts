@@ -14,6 +14,14 @@ export {
   familyExpenses,
   familyNet,
 } from './economy';
+export {
+  cleanCash,
+  clampDirty,
+  creditCrimeIncome,
+  heatFromDirty,
+  launderFee,
+  launderCapacity,
+} from './laundering';
 export { tick, tickN } from './tick';
 export {
   applyCommand,
@@ -29,6 +37,7 @@ export {
   type ExpandControlCommand,
   type BribeCommand,
   type OrderHitCommand,
+  type LaunderCommand,
 } from './commands';
 export {
   raidBaseChance,

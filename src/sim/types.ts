@@ -30,6 +30,9 @@ export interface Family {
   name: string;
   isPlayer: boolean;
   cash: number;
+  /** Portion of `cash` that is illicit (0 ≤ dirtyCash ≤ cash). Clean = cash − dirtyCash.
+   * Crime income arrives dirty; laundering converts it to clean. (Phase 11 / S1) */
+  dirtyCash: number;
   heat: number; // 0..HEAT_MAX
   bribeLevel: number; // standing bribe, reduces heat gain & raid odds
   alive: boolean; // boss alive; false => family eliminated

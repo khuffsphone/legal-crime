@@ -24,6 +24,7 @@ import {
   RECRUIT_SKILL_MIN,
 } from './constants';
 import { GANGSTER_NAMES } from './gangsters';
+import { cleanCash, clampDirty, launderCapacity, launderFee } from './laundering';
 import { Rng } from './rng';
 import { controlOf, topRivalControl } from './territory';
 import {
@@ -86,6 +87,13 @@ export interface OrderHitCommand {
   targetFamilyId: string;
 }
 
+/** Phase 11: launder dirty cash into clean through extorted fronts, paying a fee. */
+export interface LaunderCommand {
+  type: 'launder';
+  familyId: string;
+  amount: number;
+}
+
 /** Union of all commands. Extended in later phases. */
 export type Command =
   | ExtortCommand
@@ -94,7 +102,8 @@ export type Command =
   | AssignGangsterCommand
   | ExpandControlCommand
   | BribeCommand
-  | OrderHitCommand;
+  | OrderHitCommand
+  | LaunderCommand;
 
 /** Locate a business and its containing district. */
 export function findBusiness(
@@ -527,6 +536,70 @@ function applyOrderHit(state: GameState, cmd: OrderHitCommand): GameState {
   return state;
 }
 
+function applyLaunder(state: GameState, cmd: LaunderCommand): GameState {
+  const family = findFamily(state, cmd.familyId);
+  if (!family) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'launder-invalid',
+      message: `Invalid launder: family ${cmd.familyId} not found`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  if (cmd.amount <= 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'launder-invalid',
+      message: `Launder amount must be positive (got ${cmd.amount})`,
+      data: { ...cmd },
+    });
+    return state;
+  }
+
+  const capacity = launderCapacity(state, family.id);
+  const effective = Math.min(cmd.amount, family.dirtyCash, capacity);
+  if (effective <= 0) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'launder-denied',
+      message: `${family.name} cannot launder (dirty $${family.dirtyCash}, capacity $${capacity})`,
+      data: { ...cmd, capacity, dirtyCash: family.dirtyCash },
+    });
+    return state;
+  }
+
+  const fee = launderFee(effective);
+  if (family.cash < fee) {
+    state.log.push({
+      tick: state.tick,
+      kind: 'launder-denied',
+      message: `${family.name} cannot cover the laundering fee ($${fee})`,
+      data: { ...cmd, fee },
+    });
+    return state;
+  }
+
+  family.cash -= fee; // the fee leaves the economy (paid to launderers)
+  family.dirtyCash -= effective; // that money is now clean
+  clampDirty(family);
+
+  state.log.push({
+    tick: state.tick,
+    kind: 'launder',
+    message: `${family.name} laundered $${effective} (fee $${fee})`,
+    data: {
+      familyId: family.id,
+      laundered: effective,
+      fee,
+      dirtyCash: family.dirtyCash,
+      cleanCash: cleanCash(family),
+    },
+  });
+  return state;
+}
+
 /** Apply a single command, returning the (mutated) state. */
 export function applyCommand(state: GameState, cmd: Command): GameState {
   switch (cmd.type) {
@@ -544,6 +617,8 @@ export function applyCommand(state: GameState, cmd: Command): GameState {
       return applyBribe(state, cmd);
     case 'orderHit':
       return applyOrderHit(state, cmd);
+    case 'launder':
+      return applyLaunder(state, cmd);
     default: {
       const _exhaustive: never = cmd;
       throw new Error(`Unknown command: ${JSON.stringify(_exhaustive)}`);
