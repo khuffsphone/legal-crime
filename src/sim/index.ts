@@ -66,3 +66,10 @@ export {
   resolveConflict,
   type CasualtyOutcome,
 } from './conflict';
+export {
+  resolveWinLoss,
+  endTurn,
+  isGameOver,
+  districtsNeededToWin,
+  allRivalsEliminated,
+} from './flow';

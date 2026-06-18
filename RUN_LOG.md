@@ -187,3 +187,24 @@
   wins over 40 seeds → boss kill, weakest-first removal, player-death loss, queue clear,
   dead-target skip without RNG draw, and determinism).
 - Commit: phase8: Hits & Conflict — green
+
+## Phase 9 — Win/Loss & Game Flow — GREEN  (2026-06-18)
+- Summary: Added pure flow module `src/sim/flow.ts`: `resolveWinLoss` (tick step 8) checks
+  loss before win — bankruptcy below BANKRUPT_FLOOR, player boss dead → 'dead', preserving
+  an already-decided 'busted'/'dead' loss — then wins if every rival is eliminated AND the
+  player holds ≥ ceil(districts·WIN_DISTRICTS) districts. `endTurn(state, commands)` applies
+  the turn's commands then ticks, and is a no-op once the game is over. tick now guards at
+  entry (a decided game does not advance) and runs resolveWinLoss as step 8. Helpers
+  districtsNeededToWin, allRivalsEliminated, isGameOver exported.
+- Files: src/sim/flow.ts, src/sim/tick.ts (entry guard + step 8), src/sim/index.ts,
+  tests/flow.test.ts.
+- Decisions: flow.ts ↔ tick.ts form a benign function-level circular import (both bindings
+  used only at call time); build/typecheck confirm it resolves. Bankruptcy is strict (<
+  floor, not ≤). A decided game freezes: tick returns early so tick count and state stay
+  final — prior determinism/economy tests are unaffected because fresh worlds never reach a
+  terminal state within their tick budgets.
+- Gate: typecheck ✅  build ✅  test ✅ (147 total; +16 asserting win threshold math,
+  each loss path (bankrupt strict boundary, dead, busted-preserved), win gating on rivals
+  and district count, endTurn apply-then-tick and game-over no-op, tick-integrated win and
+  bankruptcy, frozen-after-decision, and endTurn determinism).
+- Commit: phase9: Win/Loss & Game Flow — green

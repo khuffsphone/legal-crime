@@ -10,6 +10,7 @@ import { EXTORT_HEAT, HEAT_MAX } from './constants';
 import { allBusinesses, familyExpenses, familyIncome, operationHeat } from './economy';
 import { resolveRivalAI } from './ai';
 import { resolveConflict } from './conflict';
+import { resolveWinLoss } from './flow';
 import { resolveLoyalty } from './gangsters';
 import { resolveLaw } from './law';
 import { allFamilies, findFamily, type Family, type GameState } from './types';
@@ -61,6 +62,9 @@ function resolveExtortionHeat(state: GameState): void {
  * object for convenience.
  */
 export function tick(state: GameState): GameState {
+  // A decided game does not advance — its final state is preserved.
+  if (state.status !== 'playing') return state;
+
   // Step 1–3 (economy): passive income + extortion + operations, minus expenses.
   for (const family of allFamilies(state)) {
     resolveFamilyEconomy(state, family);
@@ -84,7 +88,10 @@ export function tick(state: GameState): GameState {
   // Step 7 (heat decay + raid checks).
   resolveLaw(state);
 
-  // Step 9: advance the clock. (Step 8 win/loss is filled in by Phase 9.)
+  // Step 8 (win/loss evaluation).
+  resolveWinLoss(state);
+
+  // Step 9: advance the clock.
   state.tick += 1;
   return state;
 }
