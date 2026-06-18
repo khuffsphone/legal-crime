@@ -6,6 +6,7 @@
 import {
   DIRTY_EXPOSURE_CAP,
   DIRTY_EXPOSURE_DIVISOR,
+  FED_ARM_DELAY,
   FED_MAX_WARN_LEVEL,
   FED_RELIEF_CAP,
   FED_RELIEF_PER_LEVEL,
@@ -67,19 +68,7 @@ export function resolveFederalWarnings(state: GameState): void {
     const tier = fedWarningTier(exposure);
     const oldLevel = family.fedWarningLevel;
 
-    // Arm the bust only when the imminent tier was reached on a PRIOR tick and still holds.
-    if (oldLevel >= FED_MAX_WARN_LEVEL && tier >= FED_MAX_WARN_LEVEL && !family.bustArmed) {
-      family.bustArmed = true;
-      if (family.isPlayer) {
-        state.log.push({
-          tick: state.tick,
-          kind: 'fed-armed',
-          message: `The Bureau has the warrant. A bust can come at any time now.`,
-          data: { familyId: family.id, exposure },
-        });
-      }
-    }
-
+    // Escalation / de-escalation warning events (player only).
     if (tier > oldLevel) {
       family.fedWarningLevel = tier;
       if (family.isPlayer) {
@@ -92,18 +81,30 @@ export function resolveFederalWarnings(state: GameState): void {
       }
     } else if (tier < oldLevel) {
       family.fedWarningLevel = tier;
-      // Cooling off below the imminent tier disarms the bust — the danger recedes.
-      if (tier < FED_MAX_WARN_LEVEL && family.bustArmed) {
-        family.bustArmed = false;
-        if (family.isPlayer) {
-          state.log.push({
-            tick: state.tick,
-            kind: 'fed-cooldown',
-            message: `Federal heat is cooling — the Bureau backs off for now.`,
-            data: { familyId: family.id, tier, exposure },
-          });
-        }
+      if (family.isPlayer) {
+        state.log.push({
+          tick: state.tick,
+          kind: 'fed-cooldown',
+          message: `Federal heat is cooling — the Bureau backs off for now.`,
+          data: { familyId: family.id, tier, exposure },
+        });
       }
+    }
+
+    // Arming delay (Phase 19): the imminent tier must hold for FED_ARM_DELAY ticks before a
+    // bust can arm, guaranteeing runway. Dropping below the imminent tier resets and disarms.
+    if (tier >= FED_MAX_WARN_LEVEL) family.fedImminentTicks += 1;
+    else family.fedImminentTicks = 0;
+
+    const wasArmed = family.bustArmed;
+    family.bustArmed = family.fedImminentTicks > FED_ARM_DELAY;
+    if (family.bustArmed && !wasArmed && family.isPlayer) {
+      state.log.push({
+        tick: state.tick,
+        kind: 'fed-armed',
+        message: `The Bureau has the warrant. A bust can come at any time now.`,
+        data: { familyId: family.id, exposure },
+      });
     }
   }
 }

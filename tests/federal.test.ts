@@ -20,6 +20,7 @@ import {
   FED_WARN_TIER_2,
   FED_WARN_TIER_3,
   FED_DIRTY_DANGER,
+  FED_ARM_DELAY,
 } from '../src/sim/constants';
 
 describe('exposure helpers', () => {
@@ -67,7 +68,7 @@ describe('resolveFederalWarnings — escalation', () => {
     expect(s.log.some((e) => e.kind === 'fed-warning' && e.data?.tier === 1)).toBe(true);
   });
 
-  it('does not arm the bust on the tick the imminent tier first fires, but arms the next', () => {
+  it('telegraphs the imminent tier but only arms after FED_ARM_DELAY more ticks', () => {
     const s = createInitialState(1);
     s.player.heat = FED_WARN_TIER_3 + 5; // tier 3
     resolveFederalWarnings(s);
@@ -75,7 +76,12 @@ describe('resolveFederalWarnings — escalation', () => {
     expect(s.player.bustArmed).toBe(false); // telegraphed, not yet armed
     expect(s.log.some((e) => e.kind === 'fed-warning' && e.data?.tier === 3)).toBe(true);
 
-    resolveFederalWarnings(s); // a tick later, still imminent
+    // It takes FED_ARM_DELAY additional imminent ticks to arm — guaranteed runway.
+    for (let i = 0; i < FED_ARM_DELAY - 1; i++) {
+      resolveFederalWarnings(s);
+      expect(s.player.bustArmed).toBe(false);
+    }
+    resolveFederalWarnings(s);
     expect(s.player.bustArmed).toBe(true);
   });
 

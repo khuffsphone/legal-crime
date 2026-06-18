@@ -113,6 +113,9 @@ export const FED_WARN_TIER_2 = 70; // exposure threshold: "agents near your fron
 export const FED_WARN_TIER_3 = 85; // exposure threshold: "a bust is imminent"
 export const FED_MAX_WARN_LEVEL = 3; // the imminent tier; a bust requires this armed
 export const FED_DIRTY_DANGER = 4000; // dirty cash above which the launder prompt appears
+// Phase 19 balance: the imminent (tier-3) warning must hold this many ticks before the bust
+// arms, guaranteeing several ticks of runway between the warning and a terminal bust.
+export const FED_ARM_DELAY = 3;
 
 // Systemic shocks (Phase 16). A seeded world event table that stresses every mechanic.
 export const SHOCK_CHANCE = 0.15; // per-tick chance a shock fires (only when enabled)
@@ -127,8 +130,11 @@ export const AUDIT_FED_SHIELD_PER_LEVEL = 0.02; // audit shield per feds-bribe p
 // heat, and laundering converts dirty -> clean (safe) through extorted fronts for a fee.
 export const DIRTY_CASH_HEAT_DIVISOR = 1000; // per tick: heat += floor(dirtyCash / divisor)
 export const DIRTY_HEAT_MAX_PER_TICK = 15; // cap on per-tick dirty-cash heat
-export const LAUNDER_FEE_RATE = 0.15; // fee fraction to convert dirty -> clean
-export const LAUNDER_CAP_PER_FRONT = 200; // launder capacity granted per extorted front
+// Phase 19 balance: laundering made more accessible — cheaper fee, higher throughput per
+// front — so clearing a dangerous dirty hoard is viable before it becomes fatal.
+// (was 0.15 / 200.)
+export const LAUNDER_FEE_RATE = 0.1; // fee fraction to convert dirty -> clean
+export const LAUNDER_CAP_PER_FRONT = 400; // launder capacity granted per extorted front
 
 // Collector units (Phase 12 / S2). Income accrues at businesses as "uncollected" takings;
 // a collection run gathers it with a risk — police presence and heat skim/steal the take,

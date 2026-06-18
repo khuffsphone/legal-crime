@@ -512,3 +512,55 @@
   the gate (unarmed never busts over 80 seeds) + one-tick telegraph via the pipeline, launder
   prompt threshold, Bureau shield flag, and determinism). Phaser-free invariant green.
 - Commit: phase18: Feedback & Telegraphing — green
+
+## Phase 19 — Balance Pass — GREEN  (2026-06-18)
+- Summary: Conservative, documented constant retune giving the player runway to react to the
+  federal-bust danger surfaced in Phase 18. No new systems; tuned values + a federal arming
+  delay. Added `fedImminentTicks` counter so arming the bust requires the imminent tier to
+  hold for FED_ARM_DELAY ticks.
+- EXACT before → after values (rationale):
+  • LAUNDER_FEE_RATE: 0.15 → 0.10 — laundering was too costly relative to the danger; a
+    cheaper fee makes proactively converting dirty→clean worthwhile.
+  • LAUNDER_CAP_PER_FRONT: 200 → 400 — at 200/run, clearing a ~$10k hoard took ~50 runs
+    (impractical, the exact playtest trap); doubling throughput lets a few fronts keep pace.
+  • FED_ARM_DELAY: (new) = 3 — the tier-3 "bust imminent" warning must persist 3 ticks before
+    a bust can arm, guaranteeing ≥3 ticks of runway after the imminent warning (on top of the
+    tier1→tier3 climb), so a federal loss is never a surprise and is always actionable.
+  • STARTING_CASH: 2000 → 3000 — +50% early-game runway so a run doesn't end abruptly while
+    the player is still establishing income and protection.
+- Files: src/sim/constants.ts (LAUNDER_FEE_RATE, LAUNDER_CAP_PER_FRONT, FED_ARM_DELAY),
+  src/sim/state.ts (STARTING_CASH), types.ts (fedImminentTicks), src/sim/federal.ts (arming
+  delay logic); new tests/balance.test.ts; updated 2 dualEconomy launder assertions (fee 0.10,
+  capacity-cap path) and 1 federal arming test (delay) — documented earlier-test edits.
+- Decisions: All "2000" references in the suite explicitly set cash first, so the STARTING_CASH
+  bump touched no test (verified). Income-ramp constants (OPERATION_INCOME, EXTORT_RATE) and
+  the dirty-cash heat divisor were reviewed and deliberately LEFT UNCHANGED — they are heavily
+  asserted by the verified economy tests and the abrupt-loss problem is addressed by the
+  telegraph (P18) + arming delay + laundering accessibility + starting funds; changing income
+  risked the foundation for marginal benefit. NOTE: "fun"/feel is validated by HUMAN PLAYTEST,
+  not by these tests — the tests assert the new constant RELATIONSHIPS hold (fee ≤ 0.10,
+  capacity ≥ 400, arm delay ≥ 3, run-clears ≥ 400, gap(imminent→armed) ≥ FED_ARM_DELAY,
+  starting cash = 3000) and that determinism is preserved. The before/after list above is for
+  the human to iterate from.
+- Gate: typecheck ✅  build ✅  test ✅ (262 total; +6 balance asserting the accessibility/
+  runway/pacing relationships and determinism; +updated launder & arming assertions).
+  Phaser-free invariant green.
+- Commit: phase19: Balance Pass — green
+
+## FEEDBACK & BALANCE RUN COMPLETE — DONE (2026-06-18)
+- Phases 18–19 complete GREEN, in order, behind the full gate. Final suite: 262 tests across
+  22 files (up from 243/20), all green; production build succeeds; /src/sim Phaser-free
+  invariant intact.
+- The playtest failure (a no-warning federal bust on a $10,503 dirty / $2 clean hoard) is now
+  addressed end to end: (P18) a queryable federal exposure signal, escalating tiered warnings,
+  a hard gate that forbids a terminal bust until the imminent warning has armed, a launder
+  prompt with capacity, and The Bureau shield surfaced in the view model + HUD — plus The
+  Bureau bribe now relieving exposure so it is a discoverable counter; (P19) a 3-tick arming
+  delay for guaranteed runway, cheaper/higher-throughput laundering, and more starting funds.
+  A federal loss is now always telegraphed with several ticks to launder, bribe The Bureau,
+  or cool off.
+- Per CANON: bribery channels remained The Beat (police) / The Bench (judges) / City Hall
+  (politicians) / The Bureau (feds) throughout. Step 0 sync confirmed both canonical docs
+  present (CANON.md had a new repo-sync/concurrency section). Determinism preserved; all
+  earlier-test edits were confined to the two phases and documented in their receipts. No
+  blockers. "Fun" remains for human playtest validation.

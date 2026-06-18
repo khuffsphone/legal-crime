@@ -82,9 +82,10 @@ describe('heatFromDirty', () => {
 
 describe('launderFee', () => {
   it('is floor(amount * LAUNDER_FEE_RATE)', () => {
-    expect(LAUNDER_FEE_RATE).toBe(0.15);
-    expect(launderFee(1000)).toBe(150);
-    expect(launderFee(99)).toBe(14); // floor(14.85)
+    // Phase 19 balance: fee lowered to 0.10 to make laundering more accessible.
+    expect(LAUNDER_FEE_RATE).toBe(0.1);
+    expect(launderFee(1000)).toBe(100);
+    expect(launderFee(99)).toBe(9); // floor(9.9)
     expect(launderFee(0)).toBe(0);
   });
 });
@@ -109,15 +110,16 @@ describe('launder command', () => {
     const s = createInitialState(1);
     s.player.cash = 2000;
     s.player.dirtyCash = 1000;
-    s.districts[0].businesses = [front('f1', 100, 'player')]; // capacity 200
+    s.districts[0].businesses = [front('f1', 100, 'player')]; // capacity 400 (Phase 19)
     const cleanBefore = cleanCash(s.player); // 1000
+    const cap = LAUNDER_CAP_PER_FRONT; // 1 front
 
-    applyCommand(s, launder('player', 500)); // effective = min(500,1000,200) = 200
+    applyCommand(s, launder('player', 9999)); // effective = min(9999,1000,cap) = cap
 
-    const fee = launderFee(200); // 30
+    const fee = launderFee(cap);
     expect(s.player.cash).toBe(2000 - fee);
-    expect(s.player.dirtyCash).toBe(1000 - 200);
-    expect(cleanCash(s.player)).toBe(cleanBefore + 200 - fee);
+    expect(s.player.dirtyCash).toBe(1000 - cap);
+    expect(cleanCash(s.player)).toBe(cleanBefore + cap - fee);
     expect(s.log.at(-1)?.kind).toBe('launder');
   });
 

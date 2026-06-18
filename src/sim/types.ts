@@ -49,9 +49,12 @@ export interface Family {
   /** Highest federal-warning tier reached so far (Phase 18). 0 = none; FED_MAX_WARN_LEVEL
    * = "bust imminent". A terminal federal bust requires this to be armed. */
   fedWarningLevel: number;
-  /** Whether a terminal federal bust is currently possible — only armed at least one tick
-   * after the imminent warning fires, so a bust is always telegraphed. (Phase 18) */
+  /** Whether a terminal federal bust is currently possible — only armed after the imminent
+   * warning has held for FED_ARM_DELAY ticks, so a bust is always telegraphed. (Phase 18/19) */
   bustArmed: boolean;
+  /** Consecutive ticks the family has sat at the imminent federal tier (Phase 19). Drives
+   * the arming delay; resets when exposure drops below the imminent tier. */
+  fedImminentTicks: number;
   alive: boolean; // boss alive; false => family eliminated
   gangsters: Gangster[];
 }
