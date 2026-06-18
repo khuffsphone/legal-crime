@@ -242,3 +242,21 @@
   test in Phase 10.
 - No blockers encountered. Worked around a tooling glitch that appended a stray
   `</content>` tag to written files by stripping it post-write each phase.
+
+---
+
+## ENHANCEMENT RUN BOOTSTRAP (2026-06-18)
+- Resuming after Phases 0–10 (156 tests green, building). Baseline gate re-confirmed
+  green before starting: typecheck ✅ build ✅ test ✅ (156).
+- CANON.md and ENHANCEMENT_PLAN.md did not exist in the repo (same situation as the
+  missing design/plan docs at the 0–10 bootstrap). Per "make the reasonable call and
+  record it", authored both as the canonical artifacts: CANON.md defines the locked
+  "Fedora Noir" direction + the five signature mechanics (S1 Dual Economy, S2 Collector
+  Units, S3 Bribery Sliders, S4 Business Tiers, S5 Mutiny & Auto-Loan) and Systemic
+  Shocks; ENHANCEMENT_PLAN.md fixes the strictly-ordered Phase 11–17 sequence + gates,
+  matching the brief's priority order verbatim.
+- The Ultracode "Workflow" tool is not available in this environment (ToolSearch found no
+  match); applying its quality bar manually (exhaustive, correct, methodical).
+- Beginning Phase 11 — Dual Economy.
+
+---
