@@ -59,7 +59,10 @@ function makeFamily(id: string, name: string, isPlayer: boolean): Family {
  * front businesses and a police-presence rating. Player starts in the first district
  * with a small foothold; two rival families seed control in others.
  */
-export function createInitialState(seed: number): GameState {
+export function createInitialState(
+  seed: number,
+  options?: { shocks?: boolean },
+): GameState {
   const rng = new Rng(seedToCursor(seed));
 
   const player = makeFamily('player', 'Player Family', true);
@@ -96,6 +99,8 @@ export function createInitialState(seed: number): GameState {
     rivals: [rivalA, rivalB],
     districts,
     pendingHits: [],
+    activeShocks: [],
+    shocksEnabled: options?.shocks ?? false,
     log: [],
   };
 }

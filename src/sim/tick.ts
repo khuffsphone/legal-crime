@@ -15,6 +15,7 @@ import { resolveConflict } from './conflict';
 import { resolveWinLoss } from './flow';
 import { resolveLoyalty } from './gangsters';
 import { resolveLaw } from './law';
+import { resolveShocks } from './shocks';
 import { allFamilies, findFamily, type Family, type GameState } from './types';
 
 /** Apply one tick's finances to a family (Phase 15 / S5): compound interest on any carried
@@ -93,6 +94,11 @@ function resolveExtortionHeat(state: GameState): void {
 export function tick(state: GameState): GameState {
   // A decided game does not advance — its final state is preserved.
   if (state.status !== 'playing') return state;
+
+  // Step 0 (systemic shocks): fire/age world events before anything else this tick, so a
+  // boom/bust affects this tick's accrual and a crackdown's heat lands before law. No-op
+  // unless shocks are enabled.
+  resolveShocks(state);
 
   // Step 1a (accrual): takings pile up at each earning business as uncollected funds.
   accrueUncollected(state);

@@ -84,6 +84,15 @@ export interface HitOrder {
   orderedTick: number;
 }
 
+/** Systemic shock kinds (Phase 16). */
+export type ShockKind = 'crackdown' | 'boom' | 'bust' | 'audit' | 'gangWar' | 'speakeasyRaid';
+
+/** A shock currently in effect, with the ticks it has left to run (durational shocks). */
+export interface ActiveShock {
+  kind: ShockKind;
+  ticksRemaining: number;
+}
+
 /** Structured, append-only event for UI/debug. */
 export interface GameEvent {
   tick: number;
@@ -102,6 +111,11 @@ export interface GameState {
   rivals: Family[];
   districts: District[];
   pendingHits: HitOrder[];
+  /** Shocks currently in effect (Phase 16). */
+  activeShocks: ActiveShock[];
+  /** Whether the systemic-shock system rolls each tick. Off in isolated unit tests; on in
+   * real games. */
+  shocksEnabled: boolean;
   log: GameEvent[];
 }
 

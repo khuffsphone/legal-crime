@@ -404,3 +404,33 @@
   shortfall→debt with cash floored at 0, exact interest compounding, repay cap by cash/debt,
   repay denial, debt-ceiling bankruptcy via tick, determinism). Phaser-free invariant green.
 - Commit: phase15: Mutiny & Auto-Loan — green
+
+## Phase 16 — Systemic Shocks — GREEN  (2026-06-18)
+- Summary: Added a seeded world-event system (`src/sim/shocks.ts`) as tick step 0. New state
+  fields `activeShocks` and `shocksEnabled`. When enabled, each tick rolls SHOCK_CHANCE to
+  fire one of six shocks (uniform pick): Crackdown (durational, +CRACKDOWN_HEAT to every
+  family each tick), Boom/Bust (durational income ×BOOM_MULT/×BUST_MULT applied at accrual
+  via incomeShockMultiplier), Federal Audit (instant: seizes a feds-shielded fraction of each
+  family's DIRTY cash, leaving clean cash untouched — paying off S1+S3), Gang War (instant:
+  every armed living rival queues a hit on the player, resolved at the conflict step the same
+  tick), and Speakeasy Raid (instant: shuts one operation). Pure helpers incomeShockMultiplier,
+  fedShield, auditSeizure, plus triggerShock (force a kind) exported. Adapter statusView
+  exposes active shocks.
+- Files: src/sim/shocks.ts (new), types.ts (ShockKind/ActiveShock + state fields), state.ts
+  (createInitialState options.shocks; init []), constants.ts (shock table values),
+  collection.ts (accrual × incomeShockMultiplier), tick.ts (step 0 resolveShocks), index.ts,
+  adapter.ts (statusView shocks + newGame shocks option, default off); new tests/shocks.test.ts.
+- Decisions: Shocks are OPT-IN (`shocksEnabled`, default false). When disabled, resolveShocks
+  returns immediately and draws NO RNG — so every prior mechanic-isolation and tick-based
+  exact test is completely unaffected (verified: 219 prior tests unchanged, zero updates this
+  phase). createInitialState gained an optional options arg (additive); newGame keeps shocks
+  off so adapter.test is untouched — the live BootScene (Phase 17) will enable them. The
+  Federal Audit deliberately seizes only DIRTY cash (clean/laundered survives) and is shielded
+  by the Feds bribe channel, the intended S1↔S3↔S16 synergy. Durational shocks age and expire;
+  the active set is bounded. Determinism asserted with shocks enabled.
+- Gate: typecheck ✅  build ✅  test ✅ (233 total; +14 asserting no-op/no-draw when disabled,
+  income multiplier + scaled accrual, exact fedShield/auditSeizure, audit seizes dirty/spares
+  clean, feds shield, gangWar hit queueing, speakeasy op removal, crackdown registration +
+  ongoing heat, shocks-fire-and-expire over 60 ticks, enabled determinism, disabled-never-fires).
+  Phaser-free invariant green.
+- Commit: phase16: Systemic Shocks — green

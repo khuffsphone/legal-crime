@@ -70,6 +70,7 @@ export interface StatusView {
   tick: number;
   districtsNeededToWin: number;
   over: boolean;
+  shocks: { kind: string; ticksRemaining: number }[];
 }
 
 /** Map of family id -> display name (player + rivals). */
@@ -79,9 +80,10 @@ function familyNames(state: GameState): Record<string, string> {
   return names;
 }
 
-/** Start a new, deterministic game. */
-export function newGame(seed: number): GameState {
-  return createInitialState(seed);
+/** Start a new, deterministic game. Pass { shocks: true } to enable systemic shocks
+ * (Phase 16); the live scene turns them on for real play. */
+export function newGame(seed: number, options?: { shocks?: boolean }): GameState {
+  return createInitialState(seed, { shocks: options?.shocks ?? false });
 }
 
 export function playerView(state: GameState): PlayerView {
@@ -145,6 +147,7 @@ export function statusView(state: GameState): StatusView {
     tick: state.tick,
     districtsNeededToWin: districtsNeededToWin(state),
     over: isGameOver(state),
+    shocks: state.activeShocks.map((s) => ({ kind: s.kind, ticksRemaining: s.ticksRemaining })),
   };
 }
 

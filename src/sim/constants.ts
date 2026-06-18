@@ -100,6 +100,15 @@ export const MUTINY_SKIM = 0.25; // fraction of cash the mutineers steal on the 
 export const LOAN_INTEREST_RATE = 0.1; // per-tick compounding interest on outstanding debt
 export const DEBT_CEILING = 5000; // bankrupt when debt exceeds this
 
+// Systemic shocks (Phase 16). A seeded world event table that stresses every mechanic.
+export const SHOCK_CHANCE = 0.15; // per-tick chance a shock fires (only when enabled)
+export const SHOCK_DURATION = 3; // ticks a durational shock (crackdown/boom/bust) stays active
+export const CRACKDOWN_HEAT = 8; // heat added to every family each crackdown tick
+export const BOOM_MULT = 1.5; // business income multiplier during a boom
+export const BUST_MULT = 0.5; // business income multiplier during a bust
+export const AUDIT_SEIZE_FRACTION = 0.5; // fraction of dirty cash a federal audit seizes
+export const AUDIT_FED_SHIELD_PER_LEVEL = 0.02; // audit shield per feds-bribe point (capped 1)
+
 // Dual economy (Phase 11 / S1). Crime income is dirty; a hoard of dirty cash radiates
 // heat, and laundering converts dirty -> clean (safe) through extorted fronts for a fee.
 export const DIRTY_CASH_HEAT_DIVISOR = 1000; // per tick: heat += floor(dirtyCash / divisor)

@@ -12,6 +12,7 @@ import {
   COLLECT_SKIM_MAX,
 } from './constants';
 import { businessAccrual, businessEarner } from './economy';
+import { incomeShockMultiplier } from './shocks';
 import type { Business, GameState } from './types';
 
 /** Current uncollected takings on a business (absent => 0). */
@@ -19,11 +20,13 @@ export function uncollectedOf(business: Business): number {
   return business.uncollected ?? 0;
 }
 
-/** Step 1a of the tick: each business accrues its per-tick takings into `uncollected`. */
+/** Step 1a of the tick: each business accrues its per-tick takings into `uncollected`,
+ * scaled by any active boom/bust shock (Phase 16). */
 export function accrueUncollected(state: GameState): void {
+  const mult = incomeShockMultiplier(state);
   for (const district of state.districts) {
     for (const business of district.businesses) {
-      const amt = businessAccrual(business);
+      const amt = Math.floor(businessAccrual(business) * mult);
       if (amt > 0) business.uncollected = uncollectedOf(business) + amt;
     }
   }

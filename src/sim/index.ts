@@ -111,3 +111,11 @@ export {
   districtsNeededToWin,
   allRivalsEliminated,
 } from './flow';
+export {
+  SHOCK_KINDS,
+  incomeShockMultiplier,
+  fedShield,
+  auditSeizure,
+  triggerShock,
+  resolveShocks,
+} from './shocks';
