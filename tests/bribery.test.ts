@@ -114,6 +114,7 @@ describe('channel effects', () => {
     for (let seed = 0; seed < 80; seed++) {
       const s = createInitialState(seed);
       s.player.heat = HEAT_MAX;
+      s.player.bustArmed = true; // Phase 18: arm the bust so judges have something to avert
       s.player.bribes.police = 0; // let raids fire
       s.player.bribes.judges = 80; // 0.8 chance to avert a bust
       resolveLaw(s);
@@ -127,6 +128,7 @@ describe('channel effects', () => {
     for (let seed = 0; seed < 80; seed++) {
       const s = createInitialState(seed);
       s.player.heat = HEAT_MAX;
+      s.player.bustArmed = true; // arm so the no-judges baseline busts on every fired raid
       s.player.bribes.police = 0;
       s.player.bribes.judges = 0;
       resolveLaw(s);

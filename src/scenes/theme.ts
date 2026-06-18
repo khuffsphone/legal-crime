@@ -69,6 +69,20 @@ export function moneyLine(cleanCash: number, dirtyCash: number): string {
   return `Clean $${cleanCash} · Dirty $${dirtyCash}`;
 }
 
+/** Noir flavor for a federal warning tier (null at tier 0 — no warning). */
+export function federalWarningLabel(tier: number): string | null {
+  switch (tier) {
+    case 1:
+      return 'The Bureau is asking questions.';
+    case 2:
+      return 'Agents are watching your fronts.';
+    case 3:
+      return 'A federal bust is imminent — launder, cool off, or pay The Bureau.';
+    default:
+      return null;
+  }
+}
+
 /** A clipped noir narration line for the current game state. */
 export function statusNarration(state: GameState): string {
   if (state.status === 'won') {

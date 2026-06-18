@@ -46,6 +46,12 @@ export interface Family {
   /** Outstanding loan-shark debt (Phase 15 / S5). A cash shortfall is auto-loaned into
    * debt, which compounds interest each tick; too much debt is bankruptcy. */
   debt: number;
+  /** Highest federal-warning tier reached so far (Phase 18). 0 = none; FED_MAX_WARN_LEVEL
+   * = "bust imminent". A terminal federal bust requires this to be armed. */
+  fedWarningLevel: number;
+  /** Whether a terminal federal bust is currently possible — only armed at least one tick
+   * after the imminent warning fires, so a bust is always telegraphed. (Phase 18) */
+  bustArmed: boolean;
   alive: boolean; // boss alive; false => family eliminated
   gangsters: Gangster[];
 }

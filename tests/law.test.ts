@@ -103,6 +103,7 @@ describe('resolveLaw — raids', () => {
     for (let seed = 0; seed < 80; seed++) {
       const s = createInitialState(seed);
       s.player.heat = HEAT_MAX; // >= BUST_HEAT, chance 0.8
+      s.player.bustArmed = true; // Phase 18: a bust requires the telegraph to have armed
       resolveLaw(s);
       if (!s.player.alive) {
         busts++;
@@ -167,6 +168,7 @@ describe('resolveLaw — raids', () => {
     for (let seed = 0; seed < 80; seed++) {
       const s = createInitialState(seed);
       s.player.heat = HEAT_MAX;
+      s.player.bustArmed = true; // arm so a fired raid actually busts (Phase 18 gate)
       s.player.bribes.police = 100; // mitigation capped at 0.9
       resolveLaw(s);
       if (s.player.alive && s.status === 'playing') survived++;

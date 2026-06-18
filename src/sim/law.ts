@@ -65,7 +65,7 @@ function ownedOperations(state: GameState, familyId: string) {
 
 /** Resolve a raid that has already been determined to fire against `family`. */
 function resolveRaid(state: GameState, family: Family, rng: Rng): void {
-  if (family.heat >= BUST_HEAT) {
+  if (family.heat >= BUST_HEAT && family.bustArmed) {
     // Judges (Phase 13) buy a chance to spring the boss, downgrading a fatal bust to a
     // severe seizure. The roll is only drawn when judges are actually retained.
     const avoid = bustAvoidChance(family.bribes.judges);
@@ -91,6 +91,15 @@ function resolveRaid(state: GameState, family: Family, rng: Rng): void {
       data: { familyId: family.id, heat: family.heat },
     });
     // fall through to a non-bust seizure
+  } else if (family.heat >= BUST_HEAT && family.isPlayer) {
+    // Bust-level heat, but the bust is not yet armed (Phase 18): the danger has not been
+    // telegraphed to its terminal point, so the raid lands as a seizure, not a bust.
+    state.log.push({
+      tick: state.tick,
+      kind: 'bust-withheld',
+      message: `${family.name} weathered a federal raid — for now`,
+      data: { familyId: family.id, heat: family.heat },
+    });
   }
 
   // Non-bust raid: either seize an operation or seize cash.

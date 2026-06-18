@@ -119,3 +119,11 @@ export {
   triggerShock,
   resolveShocks,
 } from './shocks';
+export {
+  dirtyExposurePoints,
+  fedExposureRelief,
+  federalExposure,
+  fedWarningTier,
+  fedWarningMessage,
+  resolveFederalWarnings,
+} from './federal';

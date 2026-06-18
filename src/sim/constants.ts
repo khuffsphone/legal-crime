@@ -100,6 +100,20 @@ export const MUTINY_SKIM = 0.25; // fraction of cash the mutineers steal on the 
 export const LOAN_INTEREST_RATE = 0.1; // per-tick compounding interest on outstanding debt
 export const DEBT_CEILING = 5000; // bankrupt when debt exceeds this
 
+// Federal exposure & telegraphing (Phase 18). Exposure = heat + dirty-cash hoard points,
+// relieved by The Bureau (feds) bribe, clamped to [0,100]. Escalating warnings fire at the
+// tier thresholds; a terminal federal bust requires the imminent tier to have armed (>= 1
+// tick after it fires), so a bust is always telegraphed.
+export const DIRTY_EXPOSURE_DIVISOR = 200; // exposure points = floor(dirtyCash / divisor)
+export const DIRTY_EXPOSURE_CAP = 50; // cap on dirty-cash exposure points
+export const FED_RELIEF_PER_LEVEL = 0.5; // exposure relief per The Bureau (feds) bribe point
+export const FED_RELIEF_CAP = 40; // cap on The Bureau exposure relief
+export const FED_WARN_TIER_1 = 50; // exposure threshold: "asking questions"
+export const FED_WARN_TIER_2 = 70; // exposure threshold: "agents near your fronts"
+export const FED_WARN_TIER_3 = 85; // exposure threshold: "a bust is imminent"
+export const FED_MAX_WARN_LEVEL = 3; // the imminent tier; a bust requires this armed
+export const FED_DIRTY_DANGER = 4000; // dirty cash above which the launder prompt appears
+
 // Systemic shocks (Phase 16). A seeded world event table that stresses every mechanic.
 export const SHOCK_CHANCE = 0.15; // per-tick chance a shock fires (only when enabled)
 export const SHOCK_DURATION = 3; // ticks a durational shock (crackdown/boom/bust) stays active

@@ -84,8 +84,21 @@ export class BootScene extends Phaser.Scene {
       line(`ACTIVE: ${activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ')}`, NOIR_PALETTE.blood);
     }
 
+    // Federal exposure meter + active warning (Phase 18 telegraph).
+    const exposureColor = p.federalTier >= 3 ? NOIR_PALETTE.blood : p.federalTier >= 1 ? NOIR_PALETTE.brass : NOIR_PALETTE.fog;
+    line(`Federal exposure ${p.federalExposure}/100${p.bustArmed ? '  [BUST ARMED]' : ''}`, exposureColor);
+    if (p.federalWarning) line(`  ⚠ ${p.federalWarning}`, NOIR_PALETTE.blood);
+    if (p.launderPrompt) {
+      line(`  Launder your dirty cash — capacity $${p.launderCapacity}/run`, NOIR_PALETTE.brass);
+    }
+
     line('Protection:', NOIR_PALETTE.bone);
-    line('  ' + CHANNELS.map((c) => `${bribeChannelLabel(c)} ${p.bribes[c]}`).join('  ·  '), NOIR_PALETTE.fog);
+    line(
+      '  ' +
+        CHANNELS.map((c) => `${bribeChannelLabel(c)} ${p.bribes[c]}`).join('  ·  ') +
+        (p.bureauShielded ? `  (Bureau shield ${Math.round(p.bureauShield * 100)}%)` : ''),
+      NOIR_PALETTE.fog,
+    );
 
     line('Districts:', NOIR_PALETTE.bone);
     for (const d of districtViews(this.state)) {

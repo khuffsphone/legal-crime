@@ -13,6 +13,7 @@ import { clampDirty, heatFromDirty } from './laundering';
 import { resolveRivalAI } from './ai';
 import { resolveConflict } from './conflict';
 import { resolveWinLoss } from './flow';
+import { resolveFederalWarnings } from './federal';
 import { resolveLoyalty } from './gangsters';
 import { resolveLaw } from './law';
 import { resolveShocks } from './shocks';
@@ -126,6 +127,10 @@ export function tick(state: GameState): GameState {
 
   // Step 6 (conflict resolution — pending hits).
   resolveConflict(state);
+
+  // Step 6.5 (federal telegraphing): escalate/de-escalate warnings and arm the bust, so the
+  // law step can only deliver a terminal bust that has been telegraphed a tick ahead.
+  resolveFederalWarnings(state);
 
   // Step 7 (heat decay + raid checks).
   resolveLaw(state);

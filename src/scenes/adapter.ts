@@ -11,18 +11,22 @@ import {
   districtsHeldCount,
   endTurn,
   familyStrength,
+  fedShield,
+  federalExposure,
+  fedWarningTier,
   isGameOver,
   launderCapacity,
   pendingCollection,
   totalUncollected,
   tierOf,
   districtsNeededToWin,
+  FED_DIRTY_DANGER,
   type BribeChannel,
   type Command,
   type Family,
   type GameState,
 } from '../sim';
-import { statusNarration } from './theme';
+import { federalWarningLabel, statusNarration } from './theme';
 
 export interface PlayerView {
   name: string;
@@ -30,6 +34,7 @@ export interface PlayerView {
   cleanCash: number;
   dirtyCash: number;
   launderCapacity: number;
+  launderPrompt: boolean;
   uncollected: number;
   heat: number;
   bribeLevel: number;
@@ -38,6 +43,14 @@ export interface PlayerView {
   gangsterCount: number;
   strength: number;
   districtsHeld: number;
+  // Federal telegraphing (Phase 18).
+  federalExposure: number;
+  federalTier: number;
+  federalWarning: string | null;
+  bustArmed: boolean;
+  bureauBribe: number;
+  bureauShield: number;
+  bureauShielded: boolean;
 }
 
 export interface DistrictView {
@@ -89,12 +102,16 @@ export function newGame(seed: number, options?: { shocks?: boolean }): GameState
 
 export function playerView(state: GameState): PlayerView {
   const p = state.player;
+  const exposure = federalExposure(p);
+  const tier = fedWarningTier(exposure);
+  const shield = fedShield(p.bribes.feds);
   return {
     name: p.name,
     cash: p.cash,
     cleanCash: cleanCash(p),
     dirtyCash: p.dirtyCash,
     launderCapacity: launderCapacity(state, p.id),
+    launderPrompt: p.dirtyCash > FED_DIRTY_DANGER,
     uncollected: totalUncollected(state, p.id),
     heat: p.heat,
     bribeLevel: p.bribeLevel,
@@ -103,6 +120,13 @@ export function playerView(state: GameState): PlayerView {
     gangsterCount: p.gangsters.length,
     strength: familyStrength(p),
     districtsHeld: districtsHeldCount(state, p.id),
+    federalExposure: exposure,
+    federalTier: tier,
+    federalWarning: federalWarningLabel(tier),
+    bustArmed: p.bustArmed,
+    bureauBribe: p.bribes.feds,
+    bureauShield: shield,
+    bureauShielded: shield > 0,
   };
 }
 
@@ -179,6 +203,7 @@ export {
   heatLabel,
   moneyLine,
   statusNarration,
+  federalWarningLabel,
 } from './theme';
 
 /** Dispatch a single command (no tick). Returns the same state. */

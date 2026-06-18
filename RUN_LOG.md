@@ -476,3 +476,39 @@
   (recorded). The Ultracode "Workflow" tool was unavailable; its quality bar was applied
   manually. The stray-`</content>` write glitch from the 0–10 run persisted and was stripped
   after each write. No blockers encountered.
+
+## Phase 18 — Feedback & Telegraphing — GREEN  (2026-06-18)
+- Summary: Made the dirty-cash → heat → federal-bust danger chain legible. New pure module
+  `src/sim/federal.ts`: federalExposure (heat + dirtyExposurePoints(dirty) − fedExposureRelief
+  (The Bureau bribe), clamped 0..100), fedWarningTier (0..3 at thresholds 50/70/85), and the
+  tick step `resolveFederalWarnings` (step 6.5, before law) which escalates/de-escalates a
+  per-family `fedWarningLevel`, emits surfaced `fed-warning`/`fed-armed`/`fed-cooldown` events
+  for the player, and ARMS the bust only one tick after the imminent tier holds. law.ts now
+  gates the terminal bust on `family.bustArmed` (bust-level heat without arming lands as a
+  seizure, logged `bust-withheld`). Adapter playerView gained federalExposure/federalTier/
+  federalWarning (noir flavor via theme.federalWarningLabel), bustArmed, launderPrompt
+  (dirty > FED_DIRTY_DANGER) with launderCapacity, and bureauBribe/bureauShield/bureauShielded.
+  BootScene shows the exposure meter, active warning, launder prompt, and Bureau shield %.
+- Files: src/sim/federal.ts (new), types.ts (fedWarningLevel/bustArmed), state.ts (init),
+  constants.ts (federal constants), law.ts (bust gate + withheld log), tick.ts (step 6.5),
+  index.ts, src/scenes/theme.ts (federalWarningLabel), src/scenes/adapter.ts (view fields),
+  src/scenes/BootScene.ts (HUD); new tests/federal.test.ts; ARMED the bust in 3 earlier
+  direct-resolveLaw bust tests (law.test ×2, bribery.test ×1) — documented below.
+- Decisions: The terminal federal bust is now structurally telegraphed — it requires
+  `bustArmed`, which is only set ≥1 tick AFTER the imminent (tier-3) warning fires and still
+  holds, so a loss is always preceded by a warning the player can act on. This is a behavior
+  change to the bust mechanic, so the three earlier tests that exercise the raw bust via a
+  direct `resolveLaw` call (which bypasses the warning step) now set `s.player.bustArmed =
+  true` to opt into a bust — with armed=true they reproduce the exact prior RNG/outcomes
+  (verified: same draws, same results). The federal step is deterministic (no RNG), runs for
+  all families (so rival busts still work, just telegraphed), and only fires at high exposure
+  — low-heat tests are untouched (zero other regressions). The Bureau (feds) bribe now also
+  RELIEVES federal exposure (heavy investment can keep exposure below the imminent tier and
+  thus prevent the bust entirely) — making the narration ("The Bureau finally made it stick")
+  match a discoverable counter, in addition to its existing audit shield. Cooling off (launder
+  / lower heat) de-escalates and disarms, so player action visibly removes the danger.
+- Gate: typecheck ✅  build ✅  test ✅ (256 total; +13 asserting exact exposure/relief/tier
+  math, warning escalation per tier, no-arm-on-first-tick + arm-next-tick, cooldown disarm,
+  the gate (unarmed never busts over 80 seeds) + one-tick telegraph via the pipeline, launder
+  prompt threshold, Bureau shield flag, and determinism). Phaser-free invariant green.
+- Commit: phase18: Feedback & Telegraphing — green
