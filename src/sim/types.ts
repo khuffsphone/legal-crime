@@ -1,6 +1,8 @@
 // Core data model for the Legal Crime simulation. Pure types — no Phaser, no DOM.
 // See LEGAL_CRIME_DESIGN.md §3.
 
+import type { MovableUnit } from './movement';
+
 export type GameStatus = 'playing' | 'won' | 'lost';
 export type LossReason = 'bankrupt' | 'dead' | 'busted';
 
@@ -128,6 +130,10 @@ export interface GameState {
   /** Real-time seconds accumulated toward the next week settlement (RTS-0). Driven by
    * advanceClock; the economic tick itself never touches it. */
   weekElapsed: number;
+  /** Spatial units moving on the map in real time (RTS-2). Advanced by the movement system
+   * via `update(state, dt)`, independent of the week clock; the economic tick never touches
+   * them. Empty until the RTS control layer (RTS-3+) spawns units. */
+  units: MovableUnit[];
   log: GameEvent[];
 }
 

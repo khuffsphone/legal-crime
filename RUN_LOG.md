@@ -690,3 +690,70 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   no-mutation; tileNeighbors/8, inBounds, manhattan, tileEquals). /src/sim Phaser-free invariant
   green; 289-test sim+clock untouched and all green.
 - Commit: rts1: Isometric World Foundation — green
+
+## RTS-2 — Spatial Units & Movement — GREEN  (2026-06-19)
+- Summary: Units now exist in space and move in continuous real time, on the SAME clock as the
+  RTS-0 week settlement but fully independent of it. Two new PURE, Phaser-free modules:
+  `src/sim/pathfinding.ts` (BFS shortest path on a 4-connected grid, routes around blocked
+  tiles, deterministic — neighbors always expanded in iso [E,W,S,N] order) and
+  `src/sim/movement.ts` (a `MovableUnit` with a continuous grid-space position + a tile-waypoint
+  path, advanced by dt at MOVE_SPEED tiles/sec). New `src/sim/realtime.ts` exposes the unified
+  driver `update(state, dt[, weekDuration])` that advances units AND the week clock together.
+  GameState gains an additive `units: MovableUnit[]` (initialized `[]`). IsoScene renders two
+  placeholder patroller markers (disc + shadow + label) that walk between corners and pathfind
+  around the demo buildings, depth-sorted above their tile. /src/sim stays Phaser-free.
+- Files: src/sim/pathfinding.ts (new), src/sim/movement.ts (new), src/sim/realtime.ts (new),
+  src/sim/constants.ts (+MOVE_SPEED, +ARRIVE_EPSILON), src/sim/types.ts (+GameState.units,
+  type-only import of MovableUnit), src/sim/state.ts (units: []), src/sim/index.ts (exports),
+  src/scenes/IsoScene.ts (patroller markers + nav grid); new tests/pathfinding.test.ts,
+  tests/movement.test.ts.
+
+═══ MOVEMENT / PATHFINDING API — THE RTS-2 CONTRACT (RTS-3+ build on these) ═══
+- CONSTANTS: MOVE_SPEED = 2.5 (default unit speed, TILES PER SECOND — resolution-independent
+  of iso pixel size); ARRIVE_EPSILON = 1e-6 (tiles; within this a waypoint counts as reached).
+- PATHFINDING (src/sim/pathfinding.ts):
+    NavGrid { cols, rows, isBlocked(gx,gy): boolean }
+    makeGrid(cols, rows, blocked?): NavGrid          // blocked = Iterable<GridPos>
+    findPath(start, goal, grid): GridPos[] | null    // [start..goal] inclusive, or null if the
+                                                     // goal is blocked / OOB / unreachable
+    isValidPath(path, grid): boolean                 // contiguous, in-bounds, unblocked walk
+  BFS gives a shortest tile path and is byte-deterministic for a given (start, goal, grid).
+- MOVEMENT (src/sim/movement.ts):
+    MovableUnit { id; pos: GridPos (continuous); path: GridPos[]; speed: number }
+    spawnUnit(id, gx, gy, speed=MOVE_SPEED): MovableUnit
+    setUnitPath(u, path)        // assigns waypoints; drops a leading waypoint == current tile
+    issueMove(u, target, grid): boolean   // findPath + setUnitPath; false ⇒ unreachable, idle
+    advanceUnit(u, dt): boolean // walks speed·dt tiles of arc length; true iff arrived this step
+    advanceUnits(units, dt): string[]     // batch; returns ids that arrived this step
+    stopUnit(u); unitTile(u); unitArrived(u); unitDestination(u); unitScreenPos(u)
+  Motion is ARC-LENGTH PARAMETRIZED ⇒ exactly frame-rate independent: the same total time in
+  one big dt or many small dt lands the unit in the same place (proven across a waypoint corner).
+- REAL-TIME DRIVER (src/sim/realtime.ts):
+    update(state, dt, weekDuration=WEEK_DURATION_SECONDS): { weeksFired, arrivedUnitIds }
+  Advances units then settles weeks. The economic tick never touches state.units, so a week
+  firing cannot reset or interrupt a move — units walk straight through a settlement boundary.
+- RENDER (IsoScene, Phaser-only): place a unit at gridToScreen(unit.pos); depth =
+  depthValue(round gx, round gy)·10 + 8 (unit layer above ground=0 / building offset).
+═════════════════════════════════════════════════════════════════════════════════════════
+
+- Decisions: ALL spatial/movement logic is pure in /src/sim (Phaser-free invariant covers it;
+  unit-tested by stepping dt). Position is stored in GRID space (continuous gx,gy) and speed in
+  tiles/sec, so the iso pixel size never leaks into the sim; the scene projects via gridToScreen
+  at render time. Pathfinding is BFS (uniform-cost shortest path, trivially deterministic with a
+  fixed neighbor order) rather than A* — no priority-queue tie-break ambiguity, exact paths in
+  tests. `units` is an additive GameState field (`[]` by default) so all prior determinism
+  deep-equals still hold (both sides see `units: []`; the economic tick ignores it). MovableUnit
+  is imported into types.ts type-only (erased), so the types↔movement↔constants edges carry no
+  runtime cycle. The patrollers in IsoScene are placeholder markers (RTS-3 adds real selection/
+  command, RTS-4 interception, RTS-5 the economy-on-map collector run); visual quality is
+  human-validated, all movement/pathfinding math is asserted.
+- Gate: typecheck ✅  build ✅ (IsoScene bundled) test ✅ (328 total; +24: 10 pathfinding —
+  straight path, path-to-self, diagonal Manhattan length, detour around a single blocker (never
+  steps on it), routing around a wall through the gap, null for blocked/walled-off/OOB goals,
+  determinism, isValidPath rejects empty/teleport/onto-blocker; 14 movement — spawn defaults,
+  setUnitPath trim, stopUnit, speed·dt per second, arrives exactly on the emptying step then
+  idles, arrival across many tiny steps, non-positive dt no-op, frame-rate independence straight
+  AND across a corner, issueMove routes-around-blocker-to-arrival + unreachable→idle, batch
+  arrival ids, update() week-fires-without-interrupting-movement, update determinism).
+  /src/sim Phaser-free invariant green; the 304-test sim+clock+iso base untouched and all green.
+- Commit: rts2: Spatial Units & Movement — green

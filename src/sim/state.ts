@@ -107,6 +107,7 @@ export function createInitialState(
     activeShocks: [],
     shocksEnabled: options?.shocks ?? false,
     weekElapsed: 0,
+    units: [],
     log: [],
   };
 }

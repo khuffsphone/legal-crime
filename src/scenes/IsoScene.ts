@@ -10,6 +10,15 @@ import {
   depthValue,
   ISO_TILE_HALF_HEIGHT,
   ISO_TILE_HEIGHT,
+  makeGrid,
+  spawnUnit,
+  issueMove,
+  advanceUnits,
+  unitArrived,
+  unitScreenPos,
+  type NavGrid,
+  type MovableUnit,
+  type GridPos,
 } from '../sim';
 import { NOIR_PALETTE, NOIR_FONT } from './theme';
 
@@ -31,8 +40,29 @@ interface Block {
   color: string;
 }
 
+// The demo building footprints — also the blocked tiles units must route around (RTS-2).
+const BLOCKS: Block[] = [
+  { gx: 3, gy: 3, height: 48, color: NOIR_PALETTE.brass },
+  { gx: 4, gy: 3, height: 80, color: NOIR_PALETTE.blood },
+  { gx: 3, gy: 4, height: 64, color: NOIR_PALETTE.charcoal },
+  { gx: 8, gy: 9, height: 96, color: NOIR_PALETTE.brass },
+  { gx: 9, gy: 9, height: 40, color: NOIR_PALETTE.charcoal },
+];
+
+/** A patrolling demo unit: a marker that walks back and forth between two tiles, repathing on
+ * arrival. RTS-3 replaces this with real selection/command; here it just proves movement. */
+interface Patroller {
+  unit: MovableUnit;
+  marker: Phaser.GameObjects.Container;
+  a: GridPos;
+  b: GridPos;
+  goingToB: boolean;
+}
+
 export class IsoScene extends Phaser.Scene {
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
+  private navGrid!: NavGrid;
+  private patrollers: Patroller[] = [];
 
   constructor() {
     super('IsoScene');
@@ -43,13 +73,11 @@ export class IsoScene extends Phaser.Scene {
     cam.setBackgroundColor(NOIR_PALETTE.ink);
 
     this.drawGround();
-    this.drawBlocks([
-      { gx: 3, gy: 3, height: 48, color: NOIR_PALETTE.brass },
-      { gx: 4, gy: 3, height: 80, color: NOIR_PALETTE.blood },
-      { gx: 3, gy: 4, height: 64, color: NOIR_PALETTE.charcoal },
-      { gx: 8, gy: 9, height: 96, color: NOIR_PALETTE.brass },
-      { gx: 9, gy: 9, height: 40, color: NOIR_PALETTE.charcoal },
-    ]);
+    this.drawBlocks(BLOCKS);
+
+    // Buildings are impassable; units (RTS-2) pathfind around them on this nav grid.
+    this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
+    this.spawnPatrollers();
 
     // Center the camera on the middle of the map.
     const mid = gridToScreen((COLS - 1) / 2, (ROWS - 1) / 2);
@@ -57,6 +85,53 @@ export class IsoScene extends Phaser.Scene {
 
     this.setupCameraControls();
     this.drawHud();
+  }
+
+  // ── units (RTS-2 spatial movement; placeholder markers) ──────────────────────────────────
+
+  private spawnPatrollers(): void {
+    const routes: Array<{ id: string; a: GridPos; b: GridPos; color: string }> = [
+      { id: 'collector', a: { gx: 1, gy: 1 }, b: { gx: 14, gy: 14 }, color: NOIR_PALETTE.brass },
+      { id: 'muscle', a: { gx: 14, gy: 1 }, b: { gx: 1, gy: 12 }, color: NOIR_PALETTE.blood },
+    ];
+    for (const r of routes) {
+      const unit = spawnUnit(r.id, r.a.gx, r.a.gy);
+      issueMove(unit, r.b, this.navGrid);
+      this.patrollers.push({
+        unit,
+        marker: this.makeMarker(r.color, r.id),
+        a: r.a,
+        b: r.b,
+        goingToB: true,
+      });
+    }
+  }
+
+  /** A simple token (disc + drop shadow + label) standing in for a real unit sprite. */
+  private makeMarker(color: string, label: string): Phaser.GameObjects.Container {
+    const shadow = this.add.ellipse(0, 4, 26, 13, hex(NOIR_PALETTE.ink), 0.45);
+    const disc = this.add
+      .circle(0, -10, 9, hex(color), 1)
+      .setStrokeStyle(2, hex(NOIR_PALETTE.bone), 0.9);
+    const tag = this.add
+      .text(0, -30, label, { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone })
+      .setOrigin(0.5, 1);
+    return this.add.container(0, 0, [shadow, disc, tag]);
+  }
+
+  private updatePatrollers(dt: number): void {
+    advanceUnits(this.patrollers.map((p) => p.unit), dt);
+    for (const p of this.patrollers) {
+      if (unitArrived(p.unit)) {
+        p.goingToB = !p.goingToB;
+        issueMove(p.unit, p.goingToB ? p.b : p.a, this.navGrid);
+      }
+      const s = unitScreenPos(p.unit);
+      p.marker.setPosition(s.x, s.y);
+      // Depth-sort the unit above its ground/building tile (unit layer = 8).
+      const t = p.unit.pos;
+      p.marker.setDepth(depthValue(Math.round(t.gx), Math.round(t.gy)) * 10 + 8);
+    }
   }
 
   // ── map ────────────────────────────────────────────────────────────────────────────────
@@ -121,6 +196,9 @@ export class IsoScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    const dt = delta / 1000;
+    this.updatePatrollers(dt);
+
     const cam = this.cameras.main;
     const k = this.cursors;
     if (!k) return;
@@ -138,7 +216,7 @@ export class IsoScene extends Phaser.Scene {
       12,
       12,
       `LEGAL CRIME — Isometric (2:1, ${ISO_TILE_HEIGHT * 2}×${ISO_TILE_HEIGHT} tiles)\n` +
-        'drag = pan · wheel = zoom · arrows = scroll · [B] card view',
+        'units patrol & route around buildings · drag = pan · wheel = zoom · arrows = scroll · [B] card view',
       { fontFamily: NOIR_FONT, fontSize: '14px', color: NOIR_PALETTE.brass },
     );
     t.setScrollFactor(0).setDepth(100000);

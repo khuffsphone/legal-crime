@@ -36,6 +36,26 @@ export {
 export { tick, tickN } from './tick';
 export { advanceClock, weekProgress, secondsUntilNextWeek } from './clock';
 export {
+  findPath,
+  makeGrid,
+  isValidPath,
+  type NavGrid,
+} from './pathfinding';
+export {
+  spawnUnit,
+  unitTile,
+  unitArrived,
+  unitDestination,
+  unitScreenPos,
+  setUnitPath,
+  issueMove,
+  stopUnit,
+  advanceUnit,
+  advanceUnits,
+  type MovableUnit,
+} from './movement';
+export { update, type UpdateResult } from './realtime';
+export {
   ISO_TILE_WIDTH,
   ISO_TILE_HEIGHT,
   ISO_TILE_HALF_WIDTH,

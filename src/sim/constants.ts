@@ -162,3 +162,9 @@ export const AI_JITTER = 8; // max additive random jitter on a candidate score
 // RTS-0 — continuous real-time loop. A "week" (the existing economic settlement) is now a
 // real-time interval rather than a keypress. Tunable for pacing/engagement (see plan).
 export const WEEK_DURATION_SECONDS = 120; // real seconds between week settlements (~2 min)
+
+// RTS-2 — spatial units & movement. Units travel tile waypoints in real time, on the same
+// clock as the week settlement but fully independent of it (a week firing never interrupts a
+// move). Speed is in TILES PER SECOND so it is resolution-independent of the iso pixel size.
+export const MOVE_SPEED = 2.5; // default unit speed, tiles/second
+export const ARRIVE_EPSILON = 1e-6; // tiles; within this distance a waypoint counts as reached
