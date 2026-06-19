@@ -638,3 +638,55 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   sequence AND across 1.0s vs 0.5s granularities; weekProgress / secondsUntilNextWeek).
   /src/sim Phaser-free invariant green; 274-test economic sim untouched and all green.
 - Commit: rts0: Continuous Loop & Week-Timer — green
+
+## RTS-1 — Isometric World Foundation — GREEN  (2026-06-18)
+- Summary: Built the isometric rendering foundation. New PURE, Phaser-free module
+  `src/sim/iso.ts`: gridToScreen / screenToGrid (exact inverse) / screenToTile, tileCorners,
+  depthValue + compareDepth + depthSort (painter back-to-front), tileNeighbors(4) /
+  tileNeighbors8 / inBounds / manhattan / tileEquals. New additive Phaser `IsoScene`
+  rendering a 16×16 diamond-tile map (checkerboard placeholder tiles) plus sample box
+  "buildings" to demonstrate depth layering, with a pannable (drag + arrow keys) and zoomable
+  (wheel) camera centered on the map. main.ts now registers [IsoScene, BootScene] with the iso
+  map as the default RTS view; BootScene stays registered and reachable ([B] map→card, [M]
+  card→map). /src/sim stays Phaser-free.
+- Files: src/sim/iso.ts (new), src/sim/index.ts (iso exports), src/scenes/IsoScene.ts (new),
+  src/main.ts (register IsoScene first), src/scenes/BootScene.ts (+[M] return key); new
+  tests/iso.test.ts. No /src/sim economic changes.
+
+═══ PROJECTION SPEC — THE ART-PIPELINE CONTRACT (generate iso art against these) ═══
+- PROJECTION: 2:1 dimetric ("standard game isometric"). On screen, grid +X goes DOWN-RIGHT,
+  grid +Y goes DOWN-LEFT. A tile is a flat diamond (rhombus).
+- TILE PIXEL DIMENSIONS: ISO_TILE_WIDTH = 128, ISO_TILE_HEIGHT = 64 (2:1). Half-extents
+  64 × 32. A ground tile's diamond has corners (relative to its center): top (0,−32),
+  right (+64, 0), bottom (0, +32), left (−64, 0).
+- PROJECTION MATH (canonical, in src/sim/iso.ts):
+    gridToScreen(gx,gy) = { x: (gx−gy)·64, y: (gx+gy)·32 }  // tile CENTER
+    screenToGrid(sx,sy) = { gx: (sx/64 + sy/32)/2, gy: (sy/32 − sx/64)/2 }
+- SPRITE ANCHOR / ORIGIN CONVENTION: anchor sprites at the BOTTOM-CENTER (Phaser origin
+  x=0.5, y=1.0). Place a sprite at gridToScreen(gx,gy) — i.e. the tile center — so the sprite's
+  base sits on the tile and its body rises upward (−y). This makes taller art overlap the
+  tiles/objects behind it correctly.
+- SIZING: a FOOTPRINT-1×1 building/unit sprite is ISO_TILE_WIDTH (128px) wide at the base;
+  height is free (art rises above the diamond). Multi-tile buildings scale the base width by
+  the tile footprint (e.g. a 2×2 racket base ≈ 256px wide). Trim transparent margins to the
+  128px-wide base so the diamond footprint aligns.
+- DEPTH SORTING: draw order key = depthValue = gx + gy (ascending = back→front); ties break
+  by gx then by an explicit layer (ground=0 < building < unit). In Phaser, setDepth from this
+  key (the scene multiplies by 10 and adds a small per-object offset so a building draws above
+  its own ground tile but stays ordered among objects by tile).
+═════════════════════════════════════════════════════════════════════════════════════════
+
+- Decisions: Projection math lives in /src/sim (covered by the Phaser-free invariant test and
+  unit-testable headlessly). gridToScreen returns the tile CENTER; screenToTile = round(inverse)
+  because a unit square centered on a lattice point maps (under the linear transform) exactly
+  to that tile's diamond — verified by round-trip + known-point tests. screenToTile normalizes
+  −0 → 0 so tile coordinates are canonical (caught by a test). The iso scene is the default on
+  the RTS branch (additive, BootScene preserved and reachable). Camera/visual quality is
+  human-validated; all projection/depth/neighbor math is asserted.
+- Gate: typecheck ✅  build ✅ (IsoScene bundled) test ✅ (304 total; +15 iso tests: 128×64
+  2:1 spec; known gridToScreen points; grid→screen→grid exact round-trips over a 17×17 range;
+  screenToGrid known fractional; screenToTile lands in the correct tile for centers + interior
+  offsets + the −0 edge; tileCorners; depthValue + depthSort exact ordering + tie-breaks +
+  no-mutation; tileNeighbors/8, inBounds, manhattan, tileEquals). /src/sim Phaser-free invariant
+  green; 289-test sim+clock untouched and all green.
+- Commit: rts1: Isometric World Foundation — green

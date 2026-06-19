@@ -36,6 +36,27 @@ export {
 export { tick, tickN } from './tick';
 export { advanceClock, weekProgress, secondsUntilNextWeek } from './clock';
 export {
+  ISO_TILE_WIDTH,
+  ISO_TILE_HEIGHT,
+  ISO_TILE_HALF_WIDTH,
+  ISO_TILE_HALF_HEIGHT,
+  gridToScreen,
+  screenToGrid,
+  screenToTile,
+  tileCorners,
+  depthValue,
+  compareDepth,
+  depthSort,
+  tileNeighbors,
+  tileNeighbors8,
+  inBounds,
+  manhattan,
+  tileEquals,
+  type Vec2,
+  type GridPos,
+  type DepthItem,
+} from './iso';
+export {
   applyCommand,
   applyCommands,
   findBusiness,

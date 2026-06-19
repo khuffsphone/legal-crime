@@ -79,6 +79,8 @@ export class BootScene extends Phaser.Scene {
       dispatch(this.state, { type: 'collect', familyId: 'player', districtId: 'district-0' });
       this.render();
     });
+    // [M] return to the isometric map (RTS-1).
+    this.input.keyboard?.on('keydown-M', () => this.scene.start('IsoScene'));
 
     this.render();
   }

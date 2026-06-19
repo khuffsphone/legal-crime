@@ -3,6 +3,7 @@
 
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
+import { IsoScene } from './scenes/IsoScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -13,7 +14,9 @@ const config: Phaser.Types.Core.GameConfig = {
     width: '100%',
     height: '100%',
   },
-  scene: [BootScene],
+  // RTS branch: the isometric world is the default view; the strategic card scene
+  // (BootScene) stays registered and reachable ([B] from the map, [M] back).
+  scene: [IsoScene, BootScene],
 };
 
 new Phaser.Game(config);
