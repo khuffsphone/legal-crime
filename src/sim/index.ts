@@ -79,6 +79,18 @@ export {
   type ThreatLevel,
 } from './gamefeel';
 export {
+  facingFromVector,
+  unitFacing,
+  facesRight,
+  inspectUnit,
+  inspectBusiness,
+  inspectDistrict,
+  type Facing,
+  type UnitInspection,
+  type BusinessInspection,
+  type DistrictInspection,
+} from './inspect';
+export {
   formatCountdown,
   familyHudView,
   realtimeHudView,

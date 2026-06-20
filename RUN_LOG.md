@@ -1124,3 +1124,62 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   delta + federal-warning crossing + determinism). /src/sim Phaser-free invariant green; the
   402-test base untouched and all green.
 - Commit: rts9: Incident Ledger & Causal Readout — green
+
+## RTS-10 — Vision Pass: Living City — GREEN  (2026-06-20)
+- Summary: Turned the abstract colored-diamond prototype into a readable, atmospheric Fedora-Noir
+  crime map — a presentation/UX run on the EXISTING systems (no tick/applyCommand change, sim
+  stays Phaser-free). New PURE module `src/sim/inspect.ts` (unit-tested) backs the legibility:
+  facing math (facingFromVector / unitFacing / facesRight — 8-way grid compass) so units orient
+  to their movement, and tooltip inspection selectors (inspectUnit / inspectBusiness /
+  inspectDistrict) that answer "what is this, whose is it, what does it earn/carry, is it in
+  danger." New Phaser-only `src/scenes/cityArt.ts` generates ALL art procedurally from vector
+  Graphics (no external assets): recognizable unit figures (a courier with a money bag, broad
+  muscle, a blood-red rival enforcer with a tommy gun), a rotating brass "%" protection coin,
+  and cobbled iso ground tiles, plus a parametric iso-building drawer (brick storefronts, a tall
+  brass-trimmed HQ, speakeasies, warehouses). IsoScene was rewritten around them.
+  What a player now SEES:
+    • A LEGIBLE CITY — cobbled streets vs. lots, five subtly tinted districts, brick buildings
+      with lit windows and brass trim, a distinct flagged HQ per family (not bare diamonds).
+    • UNITS THAT READ AS UNITS — figures with clear silhouettes + a faction foot-ring (brass=you,
+      blood=rival) that FACE their direction (flip), bob as they walk, and idle-breathe.
+    • THE PROTECTION STATE — a rotating brass % coin floats over every front you've shaken down
+      (the original's green %), driven by inspectBusiness().payingProtection.
+    • HOVER TOOLTIPS — hovering any unit/building/district shows a noir tooltip (kind, owner,
+      income, takings, cash carried + AMBUSH/danger), the single biggest legibility win.
+    • A CLEAR HUD — clean/dirty money, heat label, crew, a week-countdown bar, and a federal
+      EXPOSURE LADDER bar with 50/70/85 tick marks that reddens by tier; a warning banner.
+    • THE WIRE — the incident ledger ([L]) as a severity-coloured live feed, newest first.
+    • JUICE — selection ring throb, a real ROBBED beat (expanding shock ring + camera shake +
+      stolen amount), a + $X BANKED beat, move-target markers, a slow day↔night veil so the
+      city breathes.
+    • ONBOARDING — a noir intro/legend card (extort → collect → protect the collector → bank →
+      reinvest → bribe the four channels) dismissed by a click, re-openable with [H].
+  /src/sim stays Phaser-free; the economic settlement is untouched.
+- Files: src/sim/inspect.ts (new, pure), src/sim/index.ts (inspect exports), src/scenes/cityArt.ts
+  (new, procedural art), src/scenes/IsoScene.ts (full vision rewrite); new tests/inspect.test.ts.
+  Note: the procedural art now drives the scene; the RTS-7 isoAssets placeholder/real-PNG loader
+  module + its tests are retained (still green) but no longer wired into IsoScene — procedural art
+  supersedes it and always renders with zero assets.
+
+═══ INSPECTION / FACING API — THE RTS-10 PURE CONTRACT (tooltips / orientation / future UI) ═══
+- FACING (src/sim/inspect.ts): Facing = 'E'|'SE'|'S'|'SW'|'W'|'NW'|'N'|'NE'.
+    facingFromVector(dx,dy): Facing|null  (null for zero vector) · unitFacing(unit): Facing
+    (heads toward next waypoint, default 'S' idle) · facesRight(facing): boolean (flip helper).
+- INSPECTION (read-only models over existing state):
+    inspectUnit(state,id): { id, kind, ownerId, ownerName, carrying, vulnerable, threat, facing } | null
+    inspectBusiness(state,id): { id, name, kind, districtId, districtName, earnerId, earnerName,
+        payingProtection, income, uncollected, tier } | null
+    inspectDistrict(state,id): { id, name, holderId, holderName, policePresence, playerControl,
+        businessCount, operationCount } | null
+- Decisions: facing + inspection are PURE and unit-tested (the gated core); all rendering is
+  procedural vector art (cityArt.ts) so no asset pipeline is needed and the scene always renders.
+  Faction colour is carried by a foot-ring + figure tint rather than per-figure textures (fewer
+  bakes). District identity is a subtle tile tint. Visual quality is human-validated; the facing
+  math + tooltip models are fully asserted.
+- Gate: typecheck ✅  build ✅  test ✅ (425 total; +10 inspect: 8-way facing incl. zero-vector
+  null + facesRight; unitFacing toward-waypoint/idle; inspectUnit carrying collector w/ owner +
+  threat=ambush + facing, enforcer label, null-unknown; inspectBusiness paying-protection +
+  earner + income + takings, un-extorted has no earner, null-unknown; inspectDistrict holder +
+  police + control; dispatched-collector integration). /src/sim Phaser-free invariant green; the
+  415-test base untouched and all green.
+- Commit: rts10: Vision Pass — Living City — green
