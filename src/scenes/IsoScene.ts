@@ -14,7 +14,6 @@ import {
   ISO_TILE_HEIGHT,
   makeGrid,
   spawnUnit,
-  spawnCollector,
   spawnEnforcer,
   issueMove,
   unitTile,
@@ -29,7 +28,14 @@ import {
   isSelected,
   createInitialState,
   update as advanceWorld,
+  buildMapLayout,
+  startCollectorRun,
+  processCollectorArrivals,
+  hqTileOf,
+  laidOutBusinessIds,
+  businessTileOf,
   type GameState,
+  type MapLayout,
   type Selection,
   type NavGrid,
   type MovableUnit,
@@ -75,12 +81,14 @@ export class IsoScene extends Phaser.Scene {
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
   private navGrid!: NavGrid;
   private state!: GameState;
+  private layout!: MapLayout;
   private units: UnitView[] = [];
   private selection: Selection = emptySelection();
   private pressX = 0;
   private pressY = 0;
   private statusText?: Phaser.GameObjects.Text;
   private robbedCollectors = new Set<string>();
+  private collectorId?: string;
 
   constructor() {
     super('IsoScene');
@@ -97,6 +105,8 @@ export class IsoScene extends Phaser.Scene {
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
     // The real-time world: units live on state.units and are advanced by advanceWorld (update).
     this.state = createInitialState(1);
+    this.layout = buildMapLayout(this.state, COLS, ROWS);
+    this.drawEconomy(); // businesses + HQs on tiles (RTS-5)
     this.spawnUnits();
 
     const mid = gridToScreen((COLS - 1) / 2, (ROWS - 1) / 2);
@@ -107,26 +117,63 @@ export class IsoScene extends Phaser.Scene {
     this.drawHud();
   }
 
+  // ── economy on the map (RTS-5) ───────────────────────────────────────────────────────────
+
+  private drawEconomy(): void {
+    // HQ / collection houses.
+    for (const fid of ['player', 'rival-a', 'rival-b']) {
+      const hq = hqTileOf(this.layout, fid);
+      if (!hq) continue;
+      const s = gridToScreen(hq.gx, hq.gy);
+      const color = fid === 'player' ? NOIR_PALETTE.brass : NOIR_PALETTE.blood;
+      this.add.star(s.x, s.y - 14, 5, 7, 15, hex(color), 1)
+        .setStrokeStyle(2, hex(NOIR_PALETTE.bone), 0.9)
+        .setDepth(depthValue(hq.gx, hq.gy) * 10 + 6);
+      this.add.text(s.x, s.y - 34, fid === 'player' ? 'HQ' : 'HQ', {
+        fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.bone,
+      }).setOrigin(0.5, 1).setDepth(depthValue(hq.gx, hq.gy) * 10 + 6);
+    }
+    // Business storefront dots.
+    for (const bid of laidOutBusinessIds(this.layout)) {
+      const t = businessTileOf(this.layout, bid)!;
+      const s = gridToScreen(t.gx, t.gy);
+      this.add.rectangle(s.x, s.y - 6, 12, 12, hex(NOIR_PALETTE.fog), 0.85)
+        .setStrokeStyle(1, hex(NOIR_PALETTE.brass), 0.8)
+        .setDepth(depthValue(t.gx, t.gy) * 10 + 4);
+    }
+  }
+
   // ── units (RTS-2 movement + RTS-3 selection + RTS-4 interception markers) ─────────────────
 
   private spawnUnits(): void {
     // Player muscle (selectable, no faction conflict among themselves).
     const roster: Array<{ id: string; gx: number; gy: number; color: string }> = [
-      { id: 'muscle-1', gx: 2, gy: 1, color: NOIR_PALETTE.blood },
-      { id: 'muscle-2', gx: 1, gy: 2, color: NOIR_PALETTE.bone },
+      { id: 'muscle-1', gx: 6, gy: 1, color: NOIR_PALETTE.blood },
+      { id: 'muscle-2', gx: 7, gy: 1, color: NOIR_PALETTE.bone },
     ];
     for (const r of roster) this.addUnit(spawnUnit(r.id, r.gx, r.gy), r.color);
 
-    // RTS-4 ambush demo: a player collector carrying a fat take walks across the map; a rival
-    // enforcer chases it down. When it closes within range, advanceWorld resolves the robbery.
-    this.addUnit(spawnCollector('collector', 1, 14, 'player', 500, 1.6), NOIR_PALETTE.brass);
-    this.addUnit(spawnEnforcer('rival-gun', 14, 1, 'rival-a', 2.2), NOIR_PALETTE.blood);
-    const collector = this.state.units.find((u) => u.id === 'collector')!;
-    issueMove(collector, { gx: 14, gy: 14 }, this.navGrid); // head for the far "safe house"
+    // RTS-5 collector run + RTS-4 ambush: the player extorts a front, takings pile up, and a
+    // real collector spawns there and walks to HQ — while a rival enforcer hunts it en route.
+    const front = this.state.districts[0].businesses[0];
+    front.extortedBy = 'player';
+    front.uncollected = 600;
+    const run = startCollectorRun(this.state, this.layout, 'player', 'district-0', this.navGrid);
+    if (run.unit) {
+      this.collectorId = run.unit.id;
+      this.attachMarker(run.unit, NOIR_PALETTE.brass);
+    }
+    this.addUnit(spawnEnforcer('rival-gun', 14, 1, 'rival-a', 2.4), NOIR_PALETTE.blood);
   }
 
+  /** Push a freshly-built unit onto the world and give it a marker. */
   private addUnit(unit: MovableUnit, color: string): void {
     this.state.units.push(unit);
+    this.attachMarker(unit, color);
+  }
+
+  /** Give an existing world unit (already on state.units) a selection ring + token marker. */
+  private attachMarker(unit: MovableUnit, color: string): void {
     const ring = this.add
       .ellipse(0, 4, 30, 16)
       .setStrokeStyle(2, hex(NOIR_PALETTE.brass), 1)
@@ -148,7 +195,7 @@ export class IsoScene extends Phaser.Scene {
 
   private updateUnits(dt: number): void {
     // The rival enforcer hunts the collector: re-path toward it while it still carries a take.
-    const collector = this.state.units.find((u) => u.id === 'collector');
+    const collector = this.collectorId ? this.state.units.find((u) => u.id === this.collectorId) : undefined;
     const gun = this.state.units.find((u) => u.id === 'rival-gun');
     if (collector && gun && (collector.carrying ?? 0) > 0) {
       issueMove(gun, unitTile(collector), this.navGrid);
@@ -157,6 +204,10 @@ export class IsoScene extends Phaser.Scene {
     // Advance the whole real-time world (movement + interception + week clock).
     const res = advanceWorld(this.state, dt);
     for (const ev of res.interceptions) this.flashAmbush(ev.collectorId);
+    // RTS-5: bank any collector that reached its HQ this frame.
+    for (const dep of processCollectorArrivals(this.state, this.layout)) {
+      this.flashDeposit(dep.collectorId, dep.banked);
+    }
 
     for (const v of this.units) {
       const s = unitScreenPos(v.unit);
@@ -185,6 +236,21 @@ export class IsoScene extends Phaser.Scene {
       .setDepth(100001);
     this.tweens.add({ targets: flash, y: s.y - 80, alpha: 0, duration: 1600, onComplete: () => flash.destroy() });
     this.refreshStatus('collector ambushed — the take is gone');
+  }
+
+  /** Render a safe deposit: a brass flash over the collector that banked its take (RTS-5). */
+  private flashDeposit(collectorId: string, banked: number): void {
+    const v = this.units.find((u) => u.unit.id === collectorId);
+    if (!v) return;
+    const s = unitScreenPos(v.unit);
+    const flash = this.add
+      .text(s.x, s.y - 44, `+ $${banked} BANKED`, {
+        fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold',
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(100001);
+    this.tweens.add({ targets: flash, y: s.y - 80, alpha: 0, duration: 1600, onComplete: () => flash.destroy() });
+    this.refreshStatus(`collector reached HQ — banked $${banked}`);
   }
 
   // ── selection & command (RTS-3) ──────────────────────────────────────────────────────────

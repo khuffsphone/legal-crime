@@ -29,6 +29,8 @@ export interface MovableUnit {
   role?: UnitRole;
   /** Dirty cash physically carried by a collector in transit (RTS-4/5). Absent ⇒ 0. */
   carrying?: number;
+  /** District a collector's take was gathered from (RTS-5) — governs the deposit skim. */
+  originDistrictId?: string;
 }
 
 /** Create an idle unit standing at tile (gx, gy). Plain mover — no faction/role (RTS-2/3). */

@@ -854,3 +854,60 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   stepped dt; intercept-before-settle so a robbed take isn't banked). /src/sim Phaser-free
   invariant green; the 343-test base untouched and all green.
 - Commit: rts4: Interception & Ambush — green
+
+## RTS-5 — Economy-on-Map Integration — GREEN  (2026-06-20)
+- Summary: The existing economic systems now play out in space — the settlement logic is
+  UNCHANGED; only spatial triggers were added. New PURE, Phaser-free module
+  `src/sim/mapEconomy.ts`: a deterministic MapLayout places every business on a tile and every
+  family HQ in a corner; a COLLECTOR run (startCollectorRun) gathers a family's pending takings
+  in a district, empties those businesses into a collector that spawns AT the first business and
+  walks a real path to the family HQ (intercept-able via RTS-4); on safe ARRIVAL the take is
+  banked (depositCollector / processCollectorArrivals) using the EXACT existing collection rules
+  (collectionSafety × collectionFraction skim from the source district's presence/heat/muscle,
+  then creditCrimeIncome as dirty money); robbed in transit ⇒ nothing banked. Extortion is
+  driven from the map (businessAtTile → extortAtTile → the existing extort command), and map
+  actions are control-gated (hasFootholdForExtort, the same EXTORT_MIN_CONTROL rule; the extort
+  command itself still enforces it). MovableUnit gains the additive optional originDistrictId
+  (set on a run; governs the deposit skim). IsoScene renders HQs + business storefronts on tiles
+  and runs a live demo: the player extorts a front, a real collector walks the take to HQ while a
+  rival enforcer hunts it — flashing "+ $X BANKED" on a safe deposit or "— ROBBED —" on an
+  ambush. /src/sim stays Phaser-free.
+- Files: src/sim/mapEconomy.ts (new), src/sim/movement.ts (+originDistrictId), src/sim/index.ts
+  (exports), src/scenes/IsoScene.ts (HQ/business rendering, real collector-run demo, deposit
+  flash); new tests/mapEconomy.test.ts. No economic-settlement (tick/commands) logic changed —
+  deposits reuse collectionSafety/collectionFraction/creditCrimeIncome verbatim; extortion reuses
+  the extort command.
+
+═══ ECONOMY-ON-MAP API — THE RTS-5 CONTRACT (RTS-6 surfaces this in the HUD) ═══
+- LAYOUT (src/sim/mapEconomy.ts):
+    buildMapLayout(state, cols=16, rows=16): MapLayout { cols, rows, hqTiles, businessTiles }
+    businessTileOf(layout, id) · hqTileOf(layout, familyId) · businessAtTile(layout, tile)
+    laidOutBusinessIds(layout) · navGridForLayout(layout, blocked?)
+- CONTROL GATE: hasFootholdForExtort(state, familyId, districtId): boolean  (control ≥ EXTORT_MIN_CONTROL)
+- COLLECTOR RUN (existing collection rules, made spatial):
+    startCollectorRun(state, layout, familyId, districtId, grid?, unitId?): { unit, carrying }
+      — gathers pending, empties businesses, spawns a collector at the business carrying the
+        GROSS take with originDistrictId set, paths to HQ; null result if nothing/no HQ/no path.
+    depositCollector(state, collector): number   — banks via collectionSafety×collectionFraction
+      skim (source district presence/heat/muscle) + creditCrimeIncome + COLLECT_HEAT; empties it.
+    processCollectorArrivals(state, layout): DepositEvent[]  — banks every collector that has
+      arrived at its own HQ tile still carrying. Call each frame after the world step.
+- EXTORTION ON MAP: extortAtTile(state, layout, familyId, tile): { businessId?, targeted } —
+  resolves the building under the click and dispatches the existing extort command (control gate
+  + success roll unchanged).
+- Decisions: the take is carried GROSS and the existing skim is applied at DEPOSIT (so "reaching
+  HQ deposits (existing rules)" is literal and a test predicts the banked amount with the same
+  functions + RNG cursor). The collector empties its businesses at dispatch (the take is "in the
+  bag"), so an ambush (RTS-4) cleanly costs the victim the whole run with no double-count.
+  Layout is a SEPARATE deterministic structure (not stored on Business) so the economic types and
+  their determinism deep-equals are untouched. Businesses are walkable (occupy, don't block).
+  Map UI for bribery/tiers/laundering is the existing commands surfaced by the scene (human-
+  validated); the spatial collector/extortion logic is fully asserted.
+- Gate: typecheck ✅  build ✅  test ✅ (369 total; +14 mapEconomy: layout assigns every
+  business a tile + every family an HQ + tile→business resolution + determinism; foothold control
+  gate; collector spawns-at-business / carries / empties-source / routes-to-HQ / null-when-empty /
+  determinism; deposit banks via the EXACT existing skim (predicted amount) + dirty crediting +
+  no-deposit-before-HQ + full-credit-without-district; intercept-in-transit banks nothing for the
+  victim; extortAtTile targets the right building, no-op on empty ground, control-gated block).
+  /src/sim Phaser-free invariant green; the 355-test base untouched and all green.
+- Commit: rts5: Economy-on-Map Integration — green

@@ -66,6 +66,23 @@ export {
   resolveInterceptions,
   type InterceptionEvent,
 } from './interception';
+export {
+  buildMapLayout,
+  navGridForLayout,
+  businessTileOf,
+  hqTileOf,
+  businessAtTile,
+  hasFootholdForExtort,
+  startCollectorRun,
+  depositCollector,
+  processCollectorArrivals,
+  extortAtTile,
+  laidOutBusinessIds,
+  type MapLayout,
+  type CollectorRunResult,
+  type DepositEvent,
+  type ExtortAtTileResult,
+} from './mapEconomy';
 export { update, type UpdateResult } from './realtime';
 export {
   emptySelection,
