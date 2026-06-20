@@ -1,24 +1,32 @@
-// RTS-1 — isometric world scene. Renders a tile grid as a 2:1 dimetric map (placeholder
-// diamond tiles; real art arrives in RTS-7) with correct depth-sorting and a pannable,
-// zoomable camera. Rendering + input only — all projection math is the pure /src/sim/iso
-// module; no game rules here. The strategic card scene (BootScene) remains registered.
+// RTS-1/2/3 — isometric world scene. Renders a 2:1 dimetric tile map (placeholder diamonds;
+// real art arrives in RTS-7) with depth-sorting, a pannable/zoomable camera, real-time spatial
+// units (RTS-2), and the selection & command control layer (RTS-3). Rendering + input only —
+// all projection/movement/selection logic is the pure /src/sim modules; no game rules here.
 
 import Phaser from 'phaser';
 import {
   gridToScreen,
+  screenToGrid,
+  screenToTile,
   tileCorners,
   depthValue,
   ISO_TILE_HALF_HEIGHT,
   ISO_TILE_HEIGHT,
   makeGrid,
   spawnUnit,
-  issueMove,
   advanceUnits,
-  unitArrived,
   unitScreenPos,
+  pickUnit,
+  resolveMoveCommand,
+  isCommandableTile,
+  emptySelection,
+  selectOnly,
+  toggleSelection,
+  clearSelection,
+  isSelected,
+  type Selection,
   type NavGrid,
   type MovableUnit,
-  type GridPos,
 } from '../sim';
 import { NOIR_PALETTE, NOIR_FONT } from './theme';
 
@@ -27,6 +35,7 @@ const ROWS = 16;
 const PAN_SPEED = 600; // px/sec for keyboard panning (in world units)
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2.5;
+const CLICK_SLOP = 6; // px of pointer travel under which a press counts as a click, not a drag
 
 function hex(c: string): number {
   return Number.parseInt(c.replace('#', ''), 16);
@@ -40,7 +49,7 @@ interface Block {
   color: string;
 }
 
-// The demo building footprints — also the blocked tiles units must route around (RTS-2).
+// The demo building footprints — also the blocked tiles units must route around (RTS-2/3).
 const BLOCKS: Block[] = [
   { gx: 3, gy: 3, height: 48, color: NOIR_PALETTE.brass },
   { gx: 4, gy: 3, height: 80, color: NOIR_PALETTE.blood },
@@ -49,20 +58,21 @@ const BLOCKS: Block[] = [
   { gx: 9, gy: 9, height: 40, color: NOIR_PALETTE.charcoal },
 ];
 
-/** A patrolling demo unit: a marker that walks back and forth between two tiles, repathing on
- * arrival. RTS-3 replaces this with real selection/command; here it just proves movement. */
-interface Patroller {
+/** A unit and its render objects: a selection ring (ground) + a token marker. */
+interface UnitView {
   unit: MovableUnit;
+  ring: Phaser.GameObjects.Ellipse;
   marker: Phaser.GameObjects.Container;
-  a: GridPos;
-  b: GridPos;
-  goingToB: boolean;
 }
 
 export class IsoScene extends Phaser.Scene {
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
   private navGrid!: NavGrid;
-  private patrollers: Patroller[] = [];
+  private units: UnitView[] = [];
+  private selection: Selection = emptySelection();
+  private pressX = 0;
+  private pressY = 0;
+  private statusText?: Phaser.GameObjects.Text;
 
   constructor() {
     super('IsoScene');
@@ -77,37 +87,35 @@ export class IsoScene extends Phaser.Scene {
 
     // Buildings are impassable; units (RTS-2) pathfind around them on this nav grid.
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
-    this.spawnPatrollers();
+    this.spawnUnits();
 
-    // Center the camera on the middle of the map.
     const mid = gridToScreen((COLS - 1) / 2, (ROWS - 1) / 2);
     cam.centerOn(mid.x, mid.y);
 
     this.setupCameraControls();
+    this.setupSelectionInput();
     this.drawHud();
   }
 
-  // ── units (RTS-2 spatial movement; placeholder markers) ──────────────────────────────────
+  // ── units (RTS-2 movement + RTS-3 selection markers) ─────────────────────────────────────
 
-  private spawnPatrollers(): void {
-    const routes: Array<{ id: string; a: GridPos; b: GridPos; color: string }> = [
-      { id: 'collector', a: { gx: 1, gy: 1 }, b: { gx: 14, gy: 14 }, color: NOIR_PALETTE.brass },
-      { id: 'muscle', a: { gx: 14, gy: 1 }, b: { gx: 1, gy: 12 }, color: NOIR_PALETTE.blood },
+  private spawnUnits(): void {
+    const roster: Array<{ id: string; gx: number; gy: number; color: string }> = [
+      { id: 'collector', gx: 1, gy: 1, color: NOIR_PALETTE.brass },
+      { id: 'muscle-1', gx: 2, gy: 1, color: NOIR_PALETTE.blood },
+      { id: 'muscle-2', gx: 1, gy: 2, color: NOIR_PALETTE.bone },
     ];
-    for (const r of routes) {
-      const unit = spawnUnit(r.id, r.a.gx, r.a.gy);
-      issueMove(unit, r.b, this.navGrid);
-      this.patrollers.push({
-        unit,
-        marker: this.makeMarker(r.color, r.id),
-        a: r.a,
-        b: r.b,
-        goingToB: true,
-      });
+    for (const r of roster) {
+      const unit = spawnUnit(r.id, r.gx, r.gy);
+      const ring = this.add
+        .ellipse(0, 4, 30, 16)
+        .setStrokeStyle(2, hex(NOIR_PALETTE.brass), 1)
+        .setVisible(false);
+      this.units.push({ unit, ring, marker: this.makeMarker(r.color, r.id) });
     }
   }
 
-  /** A simple token (disc + drop shadow + label) standing in for a real unit sprite. */
+  /** A token (disc + drop shadow + label) standing in for a real unit sprite (RTS-7). */
   private makeMarker(color: string, label: string): Phaser.GameObjects.Container {
     const shadow = this.add.ellipse(0, 4, 26, 13, hex(NOIR_PALETTE.ink), 0.45);
     const disc = this.add
@@ -119,19 +127,56 @@ export class IsoScene extends Phaser.Scene {
     return this.add.container(0, 0, [shadow, disc, tag]);
   }
 
-  private updatePatrollers(dt: number): void {
-    advanceUnits(this.patrollers.map((p) => p.unit), dt);
-    for (const p of this.patrollers) {
-      if (unitArrived(p.unit)) {
-        p.goingToB = !p.goingToB;
-        issueMove(p.unit, p.goingToB ? p.b : p.a, this.navGrid);
-      }
-      const s = unitScreenPos(p.unit);
-      p.marker.setPosition(s.x, s.y);
-      // Depth-sort the unit above its ground/building tile (unit layer = 8).
-      const t = p.unit.pos;
-      p.marker.setDepth(depthValue(Math.round(t.gx), Math.round(t.gy)) * 10 + 8);
+  private updateUnits(dt: number): void {
+    advanceUnits(this.units.map((v) => v.unit), dt);
+    for (const v of this.units) {
+      const s = unitScreenPos(v.unit);
+      const t = v.unit.pos;
+      const depth = depthValue(Math.round(t.gx), Math.round(t.gy)) * 10 + 8;
+      v.marker.setPosition(s.x, s.y).setDepth(depth);
+      v.ring.setPosition(s.x, s.y + 4).setDepth(depth - 1).setVisible(isSelected(this.selection, v.unit.id));
     }
+  }
+
+  // ── selection & command (RTS-3) ──────────────────────────────────────────────────────────
+
+  private setupSelectionInput(): void {
+    this.input.mouse?.disableContextMenu(); // so right-click can be a move command
+
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      this.pressX = p.x;
+      this.pressY = p.y;
+    });
+
+    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      const travel = Math.hypot(p.x - this.pressX, p.y - this.pressY);
+      if (travel > CLICK_SLOP) return; // it was a drag (camera pan), not a click
+      const shift = !!(p.event as MouseEvent | undefined)?.shiftKey;
+      if (p.rightButtonReleased()) this.commandMove(p);
+      else this.commandSelect(p, shift);
+    });
+  }
+
+  private commandSelect(p: Phaser.Input.Pointer, shift: boolean): void {
+    const point = screenToGrid(p.worldX, p.worldY);
+    const hit = pickUnit(this.units.map((v) => v.unit), point);
+    if (!hit) {
+      if (!shift) this.selection = clearSelection();
+    } else if (shift) {
+      this.selection = toggleSelection(this.selection, hit.id);
+    } else {
+      this.selection = selectOnly(hit.id);
+    }
+    this.refreshStatus();
+  }
+
+  private commandMove(p: Phaser.Input.Pointer): void {
+    if (this.selection.ids.length === 0) return;
+    const target = screenToTile(p.worldX, p.worldY);
+    if (!isCommandableTile(target, this.navGrid)) return;
+    const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, target, this.navGrid);
+    this.refreshStatus(`moving ${res.moved.length} → (${target.gx},${target.gy})` +
+      (res.failed.length ? ` · ${res.failed.length} blocked` : ''));
   }
 
   // ── map ────────────────────────────────────────────────────────────────────────────────
@@ -141,13 +186,11 @@ export class IsoScene extends Phaser.Scene {
       for (let gy = 0; gy < ROWS; gy++) {
         const c = gridToScreen(gx, gy);
         const corners = tileCorners(gx, gy);
-        // Polygon points are relative to the object's (x,y), so subtract the center.
-        const pts = corners.map((p) => ({ x: p.x - c.x, y: p.y - c.y }));
+        const pts = corners.map((pt) => ({ x: pt.x - c.x, y: pt.y - c.y }));
         const checker = (gx + gy) % 2 === 0 ? NOIR_PALETTE.charcoal : NOIR_PALETTE.ink;
         const tile = this.add
           .polygon(c.x, c.y, pts, hex(checker), 1)
           .setStrokeStyle(1, hex(NOIR_PALETTE.fog), 0.25);
-        // Ground sits at the bottom of its tile's depth band (layer 0).
         tile.setDepth(depthValue(gx, gy) * 10);
       }
     }
@@ -158,7 +201,6 @@ export class IsoScene extends Phaser.Scene {
       const c = gridToScreen(b.gx, b.gy);
       const corners = tileCorners(b.gx, b.gy).map((p) => ({ x: p.x - c.x, y: p.y - c.y }));
 
-      // Vertical faces (left + right) as parallelograms, then the top diamond — a simple box.
       const top = corners; // [top,right,bottom,left] of the tile diamond
       const right = [top[1], top[2], { x: top[2].x, y: top[2].y - b.height }, { x: top[1].x, y: top[1].y - b.height }];
       const left = [top[3], top[2], { x: top[2].x, y: top[2].y - b.height }, { x: top[3].x, y: top[3].y - b.height }];
@@ -177,7 +219,7 @@ export class IsoScene extends Phaser.Scene {
     const cam = this.cameras.main;
     this.cursors = this.input.keyboard?.createCursorKeys();
 
-    // Drag to pan.
+    // Drag to pan (any button). The click/drag split in selection input ignores drags.
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (p.isDown) {
         cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom;
@@ -185,19 +227,17 @@ export class IsoScene extends Phaser.Scene {
       }
     });
 
-    // Wheel to zoom, about the cursor.
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       const z = Phaser.Math.Clamp(cam.zoom - dy * 0.001, MIN_ZOOM, MAX_ZOOM);
       cam.setZoom(z);
     });
 
-    // [B] view the strategic card scene; the iso map is the default RTS view.
     this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
   }
 
   update(_time: number, delta: number): void {
     const dt = delta / 1000;
-    this.updatePatrollers(dt);
+    this.updateUnits(dt);
 
     const cam = this.cameras.main;
     const k = this.cursors;
@@ -216,11 +256,22 @@ export class IsoScene extends Phaser.Scene {
       12,
       12,
       `LEGAL CRIME — Isometric (2:1, ${ISO_TILE_HEIGHT * 2}×${ISO_TILE_HEIGHT} tiles)\n` +
-        'units patrol & route around buildings · drag = pan · wheel = zoom · arrows = scroll · [B] card view',
+        'left-click = select (shift = add) · right-click = move · drag = pan · wheel = zoom · [B] card view',
       { fontFamily: NOIR_FONT, fontSize: '14px', color: NOIR_PALETTE.brass },
     );
     t.setScrollFactor(0).setDepth(100000);
-    // ISO_TILE_HALF_HEIGHT referenced so the spec value is part of the build surface.
+
+    this.statusText = this.add
+      .text(12, 54, 'nothing selected', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone })
+      .setScrollFactor(0)
+      .setDepth(100000);
     void ISO_TILE_HALF_HEIGHT;
+  }
+
+  private refreshStatus(action?: string): void {
+    if (!this.statusText) return;
+    const sel = this.selection.ids;
+    const base = sel.length === 0 ? 'nothing selected' : `selected: ${sel.join(', ')}`;
+    this.statusText.setText(action ? `${base}  ·  ${action}` : base);
   }
 }

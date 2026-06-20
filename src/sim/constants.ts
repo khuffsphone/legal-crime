@@ -168,3 +168,7 @@ export const WEEK_DURATION_SECONDS = 120; // real seconds between week settlemen
 // move). Speed is in TILES PER SECOND so it is resolution-independent of the iso pixel size.
 export const MOVE_SPEED = 2.5; // default unit speed, tiles/second
 export const ARRIVE_EPSILON = 1e-6; // tiles; within this distance a waypoint counts as reached
+
+// RTS-3 — selection & command. Click-picking selects the unit within this grid-space radius of
+// the click; a generous half-tile-plus so a click anywhere on a unit's tile lands the pick.
+export const PICK_RADIUS = 0.7; // tiles

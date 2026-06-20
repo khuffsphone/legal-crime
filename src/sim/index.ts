@@ -56,6 +56,22 @@ export {
 } from './movement';
 export { update, type UpdateResult } from './realtime';
 export {
+  emptySelection,
+  selectOnly,
+  selectMany,
+  addToSelection,
+  toggleSelection,
+  clearSelection,
+  isSelected,
+  selectedUnits,
+  pickUnit,
+  unitsInBox,
+  resolveMoveCommand,
+  isCommandableTile,
+  type Selection,
+  type MoveResolution,
+} from './selection';
+export {
   ISO_TILE_WIDTH,
   ISO_TILE_HEIGHT,
   ISO_TILE_HALF_WIDTH,

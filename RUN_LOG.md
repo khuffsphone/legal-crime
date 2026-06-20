@@ -757,3 +757,50 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   arrival ids, update() week-fires-without-interrupting-movement, update determinism).
   /src/sim Phaser-free invariant green; the 304-test sim+clock+iso base untouched and all green.
 - Commit: rts2: Spatial Units & Movement — green
+
+## RTS-3 — Selection & Command — GREEN  (2026-06-20)
+- Summary: Built the RTS control layer. New PURE, Phaser-free module `src/sim/selection.ts`:
+  an immutable Selection set (emptySelection / selectOnly / selectMany / addToSelection /
+  toggleSelection / clearSelection / isSelected / selectedUnits — every helper returns a NEW
+  Selection, never mutates), grid-space hit-testing (pickUnit = nearest unit within PICK_RADIUS,
+  deterministic ties; unitsInBox = drag-rectangle multi-select), and command resolution
+  (resolveMoveCommand routes each selected unit to a target via issueMove, reporting moved/
+  failed; isCommandableTile rejects walls / out-of-bounds). IsoScene now wires real input:
+  left-click selects the unit under the cursor (shift = toggle/add), right-click issues a move
+  of the selection to the clicked tile, a click/drag split (CLICK_SLOP px) keeps camera-pan
+  drags from triggering selection, and a brass selection ring + a status line render the
+  control state. The RTS-2 auto-patrol demo is replaced by player-driven control. /src/sim
+  stays Phaser-free.
+- Files: src/sim/selection.ts (new), src/sim/constants.ts (+PICK_RADIUS), src/sim/index.ts
+  (selection exports), src/scenes/IsoScene.ts (selection/command input, selection ring, status
+  HUD; replaces auto-patrol); new tests/selection.test.ts. No /src/sim economic changes.
+
+═══ SELECTION / COMMAND API — THE RTS-3 CONTRACT (RTS-4/5 build on these) ═══
+- CONSTANTS: PICK_RADIUS = 0.7 (tiles; click within this of a unit selects it).
+- SELECTION (immutable; src/sim/selection.ts):
+    Selection { ids: string[] }
+    emptySelection() · selectOnly(id) · selectMany(ids) · addToSelection(sel,id)
+    toggleSelection(sel,id) · clearSelection() · isSelected(sel,id) · selectedUnits(sel,units)
+- HIT-TESTING (grid space; the scene converts pointer→grid via screenToGrid/screenToTile):
+    pickUnit(units, point, radius=PICK_RADIUS): MovableUnit | null   // nearest within radius
+    unitsInBox(units, a, b): string[]                                // drag-rectangle select
+- COMMAND RESOLUTION:
+    resolveMoveCommand(units, selectedIds, target, grid): { moved: string[]; failed: string[] }
+    isCommandableTile(target, grid): boolean   // in-bounds && !blocked
+  Deterministic (BFS paths); each selected unit routes around blockers, unreachable ⇒ failed,
+  left idle (no crash). Missing ids are skipped.
+- Decisions: control logic is PURE in /src/sim (covered by the Phaser-free invariant; unit-
+  tested headlessly) — the scene only translates pointer events to grid points and renders the
+  ring/status. Selection is immutable view-state (returns new objects) so it is asserted by
+  value and composes for RTS-5 map-UI. pickUnit is distance-based (works for units mid-tile,
+  not just tile-aligned) with deterministic array-order tie-break. Multi-select via shift-click
+  (wired) and unitsInBox (pure, ready for a drag-box gesture later). Right-click is the move
+  command; disableContextMenu lets it through. Input wiring is human-validated; all selection/
+  pick/command logic is asserted.
+- Gate: typecheck ✅  build ✅ (IsoScene bundled) test ✅ (343 total; +15 selection: immutable
+  set helpers incl. no-op same-ref add + dedupe + drop-missing-ids; pickUnit under-cursor /
+  empty-ground null / nearest-of-two / radius boundary; unitsInBox corners-any-order + empty;
+  resolveMoveCommand single + multi-unit + unreachable→failed-idle + skip-missing + determinism;
+  isCommandableTile open/wall/OOB). /src/sim Phaser-free invariant green; the 328-test base
+  untouched and all green.
+- Commit: rts3: Selection & Command — green
