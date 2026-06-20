@@ -35,6 +35,7 @@ import {
 import { recomputeBribeLevel, sumBribes } from './bribery';
 import { tierOf, upgradeCost } from './tiers';
 import { GANGSTER_NAMES } from './gangsters';
+import { crewExtortBonus, rollTraits, traitUpkeepModifier } from './traits';
 import { cleanCash, clampDirty, creditCrimeIncome, launderCapacity, launderFee } from './laundering';
 import { Rng } from './rng';
 import { controlOf, topRivalControl } from './territory';
@@ -187,11 +188,11 @@ export function extortSuccessChance(
   const found = findBusiness(state, businessId);
   if (!found) return 0;
   const control = controlOf(found.district, familyId);
-  const muscle = (() => {
-    const fam = findFamily(state, familyId);
-    return fam ? muscleInDistrict(fam, found.district.id) : 0;
-  })();
-  const raw = EXTORT_BASE_CHANCE + (control / 100) * (1 - EXTORT_BASE_CHANCE) + 0.04 * muscle;
+  const fam = findFamily(state, familyId);
+  const muscle = fam ? muscleInDistrict(fam, found.district.id) : 0;
+  // RTS-14: Brutal gangsters guarding the district lean harder on a shakedown.
+  const traitBonus = fam ? crewExtortBonus(fam, found.district.id) : 0;
+  const raw = EXTORT_BASE_CHANCE + (control / 100) * (1 - EXTORT_BASE_CHANCE) + 0.04 * muscle + traitBonus;
   return raw < 0 ? 0 : raw > 1 ? 1 : raw;
 }
 
@@ -363,13 +364,18 @@ function applyRecruitGangster(state: GameState, cmd: RecruitGangsterCommand): Ga
   const name = rng.pick(GANGSTER_NAMES);
   state.rngState = rng.state;
 
+  // RTS-14: traits are rolled from the gangster's id with their OWN seeded Rng, so they are
+  // deterministic but never touch state.rngState (the skill/loyalty/name draws above are intact).
+  const id = `${family.id}-g-${family.gangsters.length}`;
+  const traits = rollTraits(id);
   const gangster = {
-    id: `${family.id}-g-${family.gangsters.length}`,
+    id,
     name,
     skill,
     loyalty,
-    upkeep: skill * GANGSTER_UPKEEP_PER_SKILL,
+    upkeep: Math.max(0, skill * GANGSTER_UPKEEP_PER_SKILL + traitUpkeepModifier(traits)),
     assignment: { type: 'idle' as const },
+    traits,
   };
   family.gangsters.push(gangster);
 
@@ -377,7 +383,7 @@ function applyRecruitGangster(state: GameState, cmd: RecruitGangsterCommand): Ga
     tick: state.tick,
     kind: 'recruit',
     message: `${family.name} recruited ${name} (skill ${skill}, loyalty ${loyalty})`,
-    data: { familyId: family.id, gangsterId: gangster.id, skill, loyalty },
+    data: { familyId: family.id, gangsterId: gangster.id, skill, loyalty, traits },
   });
   return state;
 }

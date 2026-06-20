@@ -28,8 +28,8 @@ describe('startingCrew option — a fair opening, determinism preserved', () => 
     const plain = createInitialState(1);
     const crew = createInitialState(1, { startingCrew: true });
     const bizId = plain.districts[0].businesses[0].id;
-    // muscle (2 guards × skill 3 = 6) adds 0.24 to the chance.
-    expect(extortSuccessChance(crew, 'player', bizId)).toBeCloseTo(extortSuccessChance(plain, 'player', bizId) + 0.24, 6);
+    // muscle (2 guards × skill 3 = 6) adds 0.24, and RTS-14 Vito's Brutal trait adds 0.08 → +0.32.
+    expect(extortSuccessChance(crew, 'player', bizId)).toBeCloseTo(extortSuccessChance(plain, 'player', bizId) + 0.32, 6);
   });
 });
 

@@ -3,6 +3,7 @@
 
 import { EXTORT_RATE } from './constants';
 import { effectiveOperationIncome, tierMultiplier, tierOf } from './tiers';
+import { crewBribeDiscount } from './traits';
 import type { Business, District, Family, GameState } from './types';
 
 /** Every business across every district. */
@@ -65,10 +66,12 @@ export function familyIncome(state: GameState, familyId: string): number {
   return extortionIncome(state, familyId) + operationIncome(state, familyId);
 }
 
-/** Total per-tick expenses for a family: gangster upkeep plus standing bribe retainer. */
+/** Total per-tick expenses for a family: gangster upkeep plus standing bribe retainer. RTS-14:
+ * Connected crew trim the bribe retainer (capped at the retainer; no-op without the trait). */
 export function familyExpenses(family: Family): number {
   const upkeep = family.gangsters.reduce((sum, g) => sum + g.upkeep, 0);
-  return upkeep + family.bribeLevel;
+  const retainer = Math.max(0, family.bribeLevel - crewBribeDiscount(family));
+  return upkeep + retainer;
 }
 
 /** Net per-tick cash flow for a family (income minus expenses). */

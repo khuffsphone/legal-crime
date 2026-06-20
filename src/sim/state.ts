@@ -80,10 +80,13 @@ export function createInitialState(
   // FIXED (no RNG draw), so the seeded PRNG cursor — and every determinism test — is unchanged
   // whether or not the crew is requested. Two guards (< MUTINY_MIN_CREW) cannot mutiny early.
   if (options?.startingCrew) {
+    // RTS-14: fixed traits + a tie (no RNG draw, cursor-safe). Sal is Loyal (your old reliable),
+    // Vito is Brutal (your muscle); they came up together — allies.
     player.gangsters.push(
-      { id: 'player-g-0', name: 'Sal', skill: 3, loyalty: 70, upkeep: STARTING_CREW_UPKEEP, assignment: { type: 'guard', districtId: 'district-0' } },
-      { id: 'player-g-1', name: 'Vito', skill: 3, loyalty: 70, upkeep: STARTING_CREW_UPKEEP, assignment: { type: 'guard', districtId: 'district-0' } },
+      { id: 'player-g-0', name: 'Sal', skill: 3, loyalty: 70, upkeep: STARTING_CREW_UPKEEP, assignment: { type: 'guard', districtId: 'district-0' }, traits: ['loyal'] },
+      { id: 'player-g-1', name: 'Vito', skill: 3, loyalty: 70, upkeep: STARTING_CREW_UPKEEP, assignment: { type: 'guard', districtId: 'district-0' }, traits: ['brutal'] },
     );
+    player.ties = [{ a: 'player-g-0', b: 'player-g-1', kind: 'ally' }];
   }
 
   const districts: District[] = DISTRICT_NAMES.map((name, di) => {

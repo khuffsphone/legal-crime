@@ -16,6 +16,7 @@ import {
   RAID_THRESHOLD,
 } from './constants';
 import { bustAvoidChance } from './bribery';
+import { crewHeatRelief } from './traits';
 import { Rng } from './rng';
 import { allFamilies, type Family, type GameState } from './types';
 
@@ -149,9 +150,10 @@ export function resolveLaw(state: GameState): void {
       resolveRaid(state, family, rng);
     }
 
+    // RTS-14: Cool crew shed extra heat each tick (no-op without the trait).
     family.heat = Math.max(
       0,
-      Math.min(HEAT_MAX, family.heat - effectiveDecay(family.bribes.politicians)),
+      Math.min(HEAT_MAX, family.heat - effectiveDecay(family.bribes.politicians) - crewHeatRelief(family)),
     );
   }
 

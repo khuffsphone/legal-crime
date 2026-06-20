@@ -232,6 +232,36 @@ export {
   GANGSTER_NAMES,
 } from './gangsters';
 export {
+  TRAIT_DEFS,
+  ALL_TRAITS,
+  gangsterTraits,
+  hasTrait,
+  traitUpkeepModifier,
+  crewExtortBonus,
+  crewCombatBonus,
+  crewHeatRelief,
+  crewBribeDiscount,
+  memberLoyaltyDelta,
+  desertionChanceFactor,
+  rollTraits,
+  type Trait,
+  type TraitDef,
+} from './traits';
+export {
+  LOYALTY_EVENT_DELTA,
+  loyaltyStatus,
+  tiesOf,
+  propagateTie,
+  adjustMemberLoyalty,
+  applyCrewLoyaltyEvent,
+  propagateMemberLoss,
+  crewReadout,
+  type LoyaltyEvent,
+  type LoyaltyStatus,
+  type CrewTie,
+  type CrewMemberReadout,
+} from './crew';
+export {
   controlOf,
   districtHolder,
   holdsDistrict,

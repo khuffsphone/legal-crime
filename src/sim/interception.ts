@@ -11,6 +11,7 @@
 
 import { HEAT_MAX, INTERCEPT_RADIUS, INTERCEPT_HEAT } from './constants';
 import { creditCrimeIncome } from './laundering';
+import { applyCrewLoyaltyEvent } from './crew';
 import { stopUnit, type MovableUnit } from './movement';
 import { findFamily, type GameState } from './types';
 
@@ -102,6 +103,10 @@ export function resolveInterceptions(state: GameState): InterceptionEvent[] {
     }
     collector.carrying = 0;
     stopUnit(collector);
+
+    // RTS-14: losing a run to an ambush shakes the victim's crew.
+    const victim = findFamily(state, ev.victimFaction);
+    if (victim) applyCrewLoyaltyEvent(victim, 'robbed');
 
     state.log.push({
       tick: state.tick,

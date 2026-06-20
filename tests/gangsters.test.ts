@@ -7,6 +7,7 @@ import {
 } from '../src/sim/commands';
 import { tick } from '../src/sim/tick';
 import { loyaltyDelta, desertionChance, resolveLoyalty } from '../src/sim/gangsters';
+import { traitUpkeepModifier } from '../src/sim/traits';
 import {
   RECRUIT_COST,
   RECRUIT_SKILL_MIN,
@@ -40,7 +41,10 @@ describe('recruitGangster', () => {
     expect(g.skill).toBeLessThanOrEqual(RECRUIT_SKILL_MAX);
     expect(g.loyalty).toBeGreaterThanOrEqual(RECRUIT_LOYALTY_MIN);
     expect(g.loyalty).toBeLessThanOrEqual(RECRUIT_LOYALTY_MAX);
-    expect(g.upkeep).toBe(g.skill * GANGSTER_UPKEEP_PER_SKILL);
+    // RTS-14: a recruit gets 1–2 seeded traits; upkeep is skill-scaled plus the trait modifier.
+    expect(g.traits!.length).toBeGreaterThanOrEqual(1);
+    expect(g.traits!.length).toBeLessThanOrEqual(2);
+    expect(g.upkeep).toBe(Math.max(0, g.skill * GANGSTER_UPKEEP_PER_SKILL + traitUpkeepModifier(g.traits!)));
     expect(g.assignment).toEqual({ type: 'idle' });
   });
 

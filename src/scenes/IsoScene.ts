@@ -43,6 +43,7 @@ import {
   businessTileOf,
   businessAtTile,
   realtimeHudView,
+  crewReadout,
   collectorCarryView,
   threatenedCollectors,
   anyCollectorInDanger,
@@ -137,6 +138,9 @@ export class IsoScene extends Phaser.Scene {
   private feedTitle?: Phaser.GameObjects.Text;
   private feedLines: Phaser.GameObjects.Text[] = [];
   private feedVisible = true;
+  private crewTitle?: Phaser.GameObjects.Text;
+  private crewPanel?: Phaser.GameObjects.Text;
+  private crewVisible = true;
   private tooltipBg?: Phaser.GameObjects.Graphics;
   private tooltipText?: Phaser.GameObjects.Text;
   private legend?: Phaser.GameObjects.Container;
@@ -615,6 +619,7 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-R', () => this.commandReinvest());
     this.input.keyboard?.on('keydown-G', () => this.commandGrease());
     this.input.keyboard?.on('keydown-L', () => this.toggleFeed());
+    this.input.keyboard?.on('keydown-K', () => this.toggleCrew());
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
     this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
   }
@@ -625,6 +630,7 @@ export class IsoScene extends Phaser.Scene {
     this.refreshHud();
     this.refreshObjective();
     this.refreshFeed();
+    this.refreshCrew();
     this.refreshNight();
 
     const cam = this.cameras.main;
@@ -657,6 +663,39 @@ export class IsoScene extends Phaser.Scene {
       this.feedLines.push(this.add.text(0, 32 + i * 16, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000).setOrigin(1, 0));
     }
     this.nightVeil = this.add.rectangle(0, 0, 6000, 4000, 0x0a1020, 0).setOrigin(0, 0).setScrollFactor(0).setDepth(99980);
+
+    // RTS-14 crew roster (bottom-left, names · traits · loyalty read; toggle with [K]).
+    this.crewTitle = this.add.text(12, 0, 'YOUR CREW  [K]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 1).setScrollFactor(0).setDepth(100000);
+    this.crewPanel = this.add.text(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setOrigin(0, 1).setScrollFactor(0).setDepth(100000);
+  }
+
+  private toggleCrew(): void {
+    this.crewVisible = !this.crewVisible;
+    this.crewTitle?.setVisible(this.crewVisible);
+    this.crewPanel?.setVisible(this.crewVisible);
+  }
+
+  private static crewGlyph(status: string): string {
+    return status === 'loyal' ? '●' : status === 'wavering' ? '◐' : '○';
+  }
+
+  /** Paint the crew roster: each member by name, traits, and loyalty read (RTS-14). */
+  private refreshCrew(): void {
+    if (!this.crewPanel || !this.crewTitle || !this.crewVisible) return;
+    const rows = crewReadout(this.state.player);
+    const bottom = this.scale.height - 40; // sit above the federal warning banner
+    const lines = rows.length === 0
+      ? ['(no crew — recruit muscle)']
+      : rows.map((r) => {
+          const tr = r.traitLabels.length ? ` [${r.traitLabels.join(', ')}]` : '';
+          return `${IsoScene.crewGlyph(r.status)} ${r.name}${tr} — ${r.status} (${r.loyalty})`;
+        });
+    this.crewPanel.setText(lines.join('\n')).setPosition(12, bottom);
+    // tint the roster by the unhappiest member
+    const worst = rows.some((r) => r.status === 'disloyal') ? NOIR_PALETTE.blood
+      : rows.some((r) => r.status === 'wavering') ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
+    this.crewPanel.setColor(worst);
+    this.crewTitle.setPosition(12, bottom - this.crewPanel.height - 2);
   }
 
   private refreshHud(): void {
@@ -777,7 +816,7 @@ export class IsoScene extends Phaser.Scene {
       'CONTROLS',
       '  left-click select · shift adds · right-click move · drag pan · wheel zoom',
       '  [E] shake down · [C] collect · [R] reinvest · [G] grease a channel',
-      '  [L] the wire · [H] this help · [B] card view',
+      '  [K] your crew (names · traits · loyalty) · [L] the wire · [H] help · [B] card view',
     ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
     const hint = this.add.text(0, h / 2 - 26, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
     this.legend = this.add.container(cx, cy, [bg, title, body, hint]).setScrollFactor(0).setDepth(100100);

@@ -22,6 +22,7 @@ import {
 } from './collection';
 import { applyCommand, muscleInDistrict } from './commands';
 import { hostileEnforcerNear } from './gamefeel';
+import { applyCrewLoyaltyEvent } from './crew';
 import { creditCrimeIncome } from './laundering';
 import { controlOf } from './territory';
 import { Rng } from './rng';
@@ -203,6 +204,7 @@ export function depositCollector(state: GameState, collector: MovableUnit): numb
   creditCrimeIncome(family, banked);
   family.heat = Math.min(HEAT_MAX, family.heat + COLLECT_HEAT);
   collector.carrying = 0;
+  if (banked > 0) applyCrewLoyaltyEvent(family, 'score'); // RTS-14: a score lifts crew morale
 
   state.log.push({
     tick: state.tick,

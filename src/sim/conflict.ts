@@ -10,11 +10,14 @@ import {
   HEAT_MAX,
 } from './constants';
 import { Rng } from './rng';
+import { crewCombatBonus } from './traits';
+import { propagateMemberLoss } from './crew';
 import { findFamily, type Family, type GameState } from './types';
 
-/** Raw combat strength of a family: the summed skill of its gangsters. */
+/** Raw combat strength of a family: the summed skill of its gangsters, plus the Brutal-crew
+ * bonus (RTS-14; zero for a trait-less roster, so legacy values are unchanged). */
 export function familyStrength(family: Family): number {
-  return family.gangsters.reduce((sum, g) => sum + g.skill, 0);
+  return family.gangsters.reduce((sum, g) => sum + g.skill, 0) + crewCombatBonus(family);
 }
 
 export interface CasualtyOutcome {
@@ -56,11 +59,14 @@ export function decideCasualties(
   return { attackerWins, attackerLosses, defenderLosses, margin };
 }
 
-/** Remove the `count` lowest-skill gangsters from a family (deterministic). */
+/** Remove the `count` lowest-skill gangsters from a family (deterministic). RTS-14: a fallen
+ * crewmate's tied allies lose heart first (propagated before removal; no-op without ties). */
 function removeWeakest(family: Family, count: number): void {
   if (count <= 0) return;
   const ordered = [...family.gangsters].sort((a, b) => a.skill - b.skill);
-  const doomed = new Set(ordered.slice(0, count).map((g) => g.id));
+  const doomedIds = ordered.slice(0, count).map((g) => g.id);
+  for (const id of doomedIds) propagateMemberLoss(family, id);
+  const doomed = new Set(doomedIds);
   family.gangsters = family.gangsters.filter((g) => !doomed.has(g.id));
 }
 

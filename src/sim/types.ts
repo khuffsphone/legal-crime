@@ -3,6 +3,8 @@
 
 import type { MovableUnit } from './movement';
 import type { IncidentRecord } from './ledger';
+import type { Trait } from './traits';
+import type { CrewTie } from './crew';
 
 export type GameStatus = 'playing' | 'won' | 'lost';
 export type LossReason = 'bankrupt' | 'dead' | 'busted';
@@ -30,6 +32,9 @@ export interface Gangster {
   loyalty: number; // 0..100
   upkeep: number; // cash per tick
   assignment: GangsterAssignment;
+  /** Character traits with mechanical effects (RTS-14). Absent ⇒ a plain, effectless crewman, so
+   * a trait-less roster behaves exactly as before. Assigned (seeded, cursor-safe) at recruitment. */
+  traits?: Trait[];
 }
 
 export interface Family {
@@ -60,6 +65,9 @@ export interface Family {
   fedImminentTicks: number;
   alive: boolean; // boss alive; false => family eliminated
   gangsters: Gangster[];
+  /** Interpersonal ties between crew members (RTS-14). Absent ⇒ none; a wronged member's ally
+   * loses heart too. Additive — default-absent so prior states are byte-identical. */
+  ties?: CrewTie[];
 }
 
 export interface Business {

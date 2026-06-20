@@ -1347,3 +1347,65 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   tutorialDefense retuned (upkeep 30). /src/sim Phaser-free invariant green; the 451-test base
   otherwise untouched and all green.
 - Commit: rts13: Onramp Polish — green
+
+## RTS-14 — Crew Traits & Loyalties — GREEN  (2026-06-20)
+- Summary: Added the first DEPTH mechanic — crew members are now distinct characters with traits,
+  individual loyalties shifted by the events the sim already produces, and a light ties layer —
+  deepening (not replacing) the existing desertion/mutiny spiral. All pure, additive, seeded, and
+  cursor-safe; tick/applyCommand correctness preserved (every modifier is a no-op for a trait/
+  tie-less crew, so all prior behaviour and 458 tests are byte-identical without traits).
+  1. TRAITS (src/sim/traits.ts) — 6 traits as PURE data + PURE modifier functions over existing
+     mechanics: Brutal (+0.08 extort per guarding member, +2 combat strength), Loyal (softens
+     loyalty losses by 3, halves desertion chance), Greedy (+15 upkeep), Cool (sheds +1 heat/tick,
+     ignores the heat loyalty penalty), Green (−10 upkeep, cheap/weak), Connected (−5/wk bribe
+     retainer). Traits are rolled 1–2 per gangster, seeded from the gangster id via its OWN Rng
+     (rollTraits) — deterministic but NEVER touches state.rngState, so recruitment's skill/loyalty/
+     name draws and every determinism test are unchanged. Greedy+Green can't co-occur.
+  2. LOYALTY AS PER-MEMBER, EVENT-DRIVEN (src/sim/crew.ts) — individual loyalty already existed;
+     now it shifts on real events: paid/unpaid (resolveLoyalty, via trait-aware memberLoyaltyDelta),
+     a SCORE banked (applyCrewLoyaltyEvent on deposit, +4), a run ROBBED (−8 on interception), a
+     crewmate KILLED (tie propagation in conflict). Low individual loyalty still feeds the existing
+     desertion rolls (now × desertionChanceFactor) and the mutiny cohort — extended, not replaced.
+  3. TIES — a minimal Family.ties list ({a,b,kind:'ally'|'rival'}) + pure propagation: a wrong done
+     to one member spills half onto a tied ally (same sign) or a rival (opposite), one hop, no
+     recursion. The starting crew ships Sal (Loyal) + Vito (Brutal) as allies.
+  4. SURFACED — IsoScene shows a bottom-left CREW roster (toggle [K], default on): each member by
+     name, [traits], and a loyalty read (● loyal / ◐ wavering / ○ disloyal + value), sorted most-
+     disloyal-first and tinted by the unhappiest member, via the pure crewReadout selector.
+- Files: src/sim/traits.ts (new), src/sim/crew.ts (new), src/sim/types.ts (+Gangster.traits,
+  +Family.ties, type-only imports), src/sim/state.ts (starting crew traits + ally tie),
+  src/sim/commands.ts (recruit rolls traits + trait upkeep; extort + Brutal bonus),
+  src/sim/conflict.ts (familyStrength + Brutal; removeWeakest propagates a death to allies),
+  src/sim/economy.ts (familyExpenses − Connected discount), src/sim/law.ts (resolveLaw − Cool
+  heat relief), src/sim/gangsters.ts (resolveLoyalty via memberLoyaltyDelta + Loyal desert
+  resist), src/sim/mapEconomy.ts (deposit → 'score' morale), src/sim/interception.ts (ambush →
+  'robbed' morale), src/sim/index.ts (exports), src/scenes/IsoScene.ts (crew roster [K]); new
+  tests/crewTraits.test.ts; updated tests/gangsters.test.ts (recruit upkeep incl. trait modifier),
+  tests/onboarding.test.ts (Brutal +0.08 on the starting-crew extort math). tick/applyCommand
+  settlement logic unchanged.
+
+═══ CREW TRAITS & LOYALTIES API — THE RTS-14 PURE CONTRACT ═══
+- STATE (additive, default-absent): Gangster.traits?: Trait[] · Family.ties?: CrewTie[].
+- TRAITS (src/sim/traits.ts): Trait = brutal|loyal|greedy|cool|green|connected; TRAIT_DEFS,
+  ALL_TRAITS; hasTrait/gangsterTraits; traitUpkeepModifier; crewExtortBonus(family,districtId) ·
+  crewCombatBonus(family) · crewHeatRelief(family) · crewBribeDiscount(family);
+  memberLoyaltyDelta(g,cashPositive,heat) · desertionChanceFactor(g); rollTraits(idKey) (seeded,
+  cursor-safe). Magnitudes exported (BRUTAL_*, COOL_HEAT_RELIEF, CONNECTED_BRIBE_DISCOUNT, …).
+- CREW (src/sim/crew.ts): LoyaltyEvent = paid|unpaid|score|robbed|memberKilled|overworked +
+  LOYALTY_EVENT_DELTA; loyaltyStatus(loyalty) → loyal|wavering|disloyal; applyCrewLoyaltyEvent
+  (family,event) (crew-wide, Loyal-shielded) · adjustMemberLoyalty(family,id,delta) (+ties) ·
+  propagateTie / propagateMemberLoss · tiesOf · crewReadout(family) → CrewMemberReadout[]
+  (name/skill/loyalty/status/traitLabels/upkeep/assignment/ties, most-disloyal-first).
+- Decisions: trait assignment uses a per-id sub-Rng so it is deterministic AND never advances the
+  shared cursor (the "starting-crew-style" cursor-safety the brief required); all modifiers are
+  additive no-ops without traits/ties so the economic settlement is untouched and all prior deep-
+  equals hold; loyalty events are wired in the systems that already fire them (deposit/ambush/
+  conflict/pay) without changing their core math; 'overworked' is modelled in the event table for
+  future wiring. Crew panel is human-validated; every modifier, event, and tie is asserted.
+- Gate: typecheck ✅  build ✅  test ✅ (477 total; +19 crewTraits: rollTraits seeded/distinct/
+  no-greedy+green/deterministic; every modifier no-op-without-trait + correct-with; familyStrength/
+  familyExpenses/resolveLaw wiring; loyalty events move morale + clamp + Loyal-shield; loyaltyStatus
+  bands; ties propagate ally/rival one-hop; conflict death shakes a tied ally; crewReadout shape).
+  gangsters.test recruit-upkeep retuned; onboarding starting-crew extort retuned (+0.32). /src/sim
+  Phaser-free invariant green; the 458-test base otherwise untouched and all green.
+- Commit: rts14: Crew Traits & Loyalties — green

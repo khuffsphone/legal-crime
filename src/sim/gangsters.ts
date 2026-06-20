@@ -15,6 +15,7 @@ import {
   MUTINY_THRESHOLD_FRACTION,
 } from './constants';
 import { clampDirty } from './laundering';
+import { memberLoyaltyDelta, desertionChanceFactor } from './traits';
 import { Rng } from './rng';
 import { allFamilies, type Family, type GameState } from './types';
 
@@ -85,10 +86,12 @@ export function resolveLoyalty(state: GameState): void {
 
   for (const family of allFamilies(state)) {
     const cashPositive = family.cash >= 0;
-    const delta = loyaltyDelta(cashPositive, family.heat);
 
-    // 1. Drift loyalties (no RNG).
-    for (const g of family.gangsters) g.loyalty = clampLoyalty(g.loyalty + delta);
+    // 1. Drift loyalties per member (no RNG). RTS-14: Cool ignore heat, Loyal soften losses; a
+    //    trait-less member uses the legacy loyaltyDelta exactly.
+    for (const g of family.gangsters) {
+      g.loyalty = clampLoyalty(g.loyalty + memberLoyaltyDelta(g, cashPositive, family.heat));
+    }
 
     // 2. Coordinated mutiny takes precedence over solo desertion.
     if (mutinyConditionMet(family) && rng.chance(MUTINY_CHANCE)) {
@@ -109,7 +112,7 @@ export function resolveLoyalty(state: GameState): void {
     // 3. Per-gangster desertion.
     const survivors: Family['gangsters'] = [];
     for (const g of family.gangsters) {
-      const chance = desertionChance(g.loyalty);
+      const chance = desertionChance(g.loyalty) * desertionChanceFactor(g); // RTS-14: Loyal resist
       if (chance > 0 && rng.chance(chance)) {
         state.log.push({
           tick: state.tick,
