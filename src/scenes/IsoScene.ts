@@ -34,13 +34,15 @@ import {
   hqTileOf,
   laidOutBusinessIds,
   businessTileOf,
+  realtimeHudView,
   type GameState,
   type MapLayout,
   type Selection,
   type NavGrid,
   type MovableUnit,
 } from '../sim';
-import { NOIR_PALETTE, NOIR_FONT } from './theme';
+import { NOIR_PALETTE, NOIR_FONT, heatLabel, federalWarningLabel, shockFlavor } from './theme';
+import type { ShockKind } from '../sim';
 
 const COLS = 16;
 const ROWS = 16;
@@ -87,6 +89,8 @@ export class IsoScene extends Phaser.Scene {
   private pressX = 0;
   private pressY = 0;
   private statusText?: Phaser.GameObjects.Text;
+  private hudPanel?: Phaser.GameObjects.Text;
+  private warningBanner?: Phaser.GameObjects.Text;
   private robbedCollectors = new Set<string>();
   private collectorId?: string;
 
@@ -353,6 +357,7 @@ export class IsoScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     const dt = delta / 1000;
     this.updateUnits(dt);
+    this.refreshHud();
 
     const cam = this.cameras.main;
     const k = this.cursors;
@@ -380,7 +385,46 @@ export class IsoScene extends Phaser.Scene {
       .text(12, 54, 'nothing selected', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone })
       .setScrollFactor(0)
       .setDepth(100000);
+
+    // RTS-6 real-time HUD: week countdown + player ledger + mutiny/shock lines, refreshed each
+    // frame from the pure realtimeHudView selector.
+    this.hudPanel = this.add
+      .text(12, 80, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog })
+      .setScrollFactor(0)
+      .setDepth(100000);
+    this.warningBanner = this.add
+      .text(12, 0, '', {
+        fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.blood, fontStyle: 'bold',
+      })
+      .setScrollFactor(0)
+      .setDepth(100000)
+      .setVisible(false);
     void ISO_TILE_HALF_HEIGHT;
+  }
+
+  /** Pull the real-time HUD view-model and paint the week timer, ledger, and alerts (RTS-6). */
+  private refreshHud(): void {
+    if (!this.hudPanel) return;
+    const hud = realtimeHudView(this.state);
+    const p = hud.player;
+    const lines = [
+      `WEEK ${hud.week}   next settlement in ${hud.weekCountdownLabel}`,
+      `Clean $${p.cleanCash} · Dirty $${p.dirtyCash}   Heat ${p.heat} (${heatLabel(p.heat)})` +
+        (p.debt > 0 ? `   Debt $${p.debt}` : ''),
+      `Federal exposure ${p.federalExposure}/100 — tier ${p.federalTier}` +
+        (p.bustArmed ? '  ⚠ WARRANT ISSUED' : ''),
+      `Crew ${p.crew}` + (p.mutinyImminent ? `  ⚠ MUTINY BREWING (${p.mutinyRisk})` : ''),
+    ];
+    if (hud.shocks.length > 0) {
+      lines.push('Shocks: ' + hud.shocks.map((s) => `${shockFlavor(s.kind as ShockKind)} (${s.ticksRemaining})`).join(', '));
+    }
+    this.hudPanel.setText(lines.join('\n'));
+
+    const warn = p.federalTier > 0 ? federalWarningLabel(p.federalTier) : null;
+    if (this.warningBanner) {
+      this.warningBanner.setVisible(!!warn);
+      if (warn) this.warningBanner.setText(warn).setPosition(12, this.scale.height - 28);
+    }
   }
 
   private refreshStatus(action?: string): void {

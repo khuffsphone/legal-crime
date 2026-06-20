@@ -911,3 +911,42 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   victim; extortAtTile targets the right building, no-op on empty ground, control-gated block).
   /src/sim Phaser-free invariant green; the 355-test base untouched and all green.
 - Commit: rts5: Economy-on-Map Integration — green
+
+## RTS-6 — Real-Time Presentation of Existing Systems — GREEN  (2026-06-20)
+- Summary: The existing federal / mutiny / shock / week-settlement systems are now surfaced in
+  the live RTS HUD — read-only, via a new PURE selector module `src/sim/hud.ts`. realtimeHudView
+  builds a HUD snapshot from the EXISTING selectors (federalExposure + fedWarningTier +
+  fedWarningMessage for the 50/70/85 ladder; atRiskCount + mutinyConditionMet for mutiny;
+  state.activeShocks for shocks; secondsUntilNextWeek + weekProgress for the week-timer
+  countdown), with a formatCountdown("M:SS") helper, plus topFederalWarning / anyMutinyPrimed
+  convenience selectors. Nothing recomputes sim logic — the HUD shows exactly what the tick
+  resolves. IsoScene paints a screen-fixed HUD (week countdown, clean/dirty ledger, heat label,
+  federal exposure + WARRANT flag, crew + MUTINY-brewing alert, active shocks) refreshed each
+  frame, plus a noir federal-warning banner. /src/sim stays Phaser-free.
+- Files: src/sim/hud.ts (new), src/sim/index.ts (exports), src/scenes/IsoScene.ts (HUD panel +
+  warning banner, refreshHud each frame using theme flavor: heatLabel / federalWarningLabel /
+  shockFlavor); new tests/hud.test.ts. No federal/mutiny/shock/clock LOGIC changed — the HUD only
+  reads the existing selectors.
+
+═══ HUD VIEW-MODEL API — THE RTS-6 CONTRACT (RTS-7 art reads the same model) ═══
+- realtimeHudView(state, weekDuration=WEEK_DURATION_SECONDS): HudView {
+    week, status, lossReason, secondsUntilNextWeek, weekProgress, weekCountdownLabel,
+    player: FamilyHudView, rivals: FamilyHudView[], shocks: { kind, ticksRemaining }[] }
+  FamilyHudView { familyId, name, isPlayer, cash, cleanCash, dirtyCash, heat, debt,
+    federalExposure, federalTier, federalMessage, bustArmed, mutinyRisk, mutinyImminent, crew }
+- formatCountdown(seconds): "M:SS" · topFederalWarning(state): {tier,message}|null ·
+  anyMutinyPrimed(state): boolean. All pure reads — realtimeHudView never mutates state.
+- Decisions: the HUD is a pure SELECTOR over the existing sim (no new game logic), so federal/
+  mutiny/shock behaviour is unchanged and the same numbers the tick computes are surfaced — the
+  tests drive the REAL-TIME DRIVER (update with short weeks) and assert the federal ladder arms,
+  mutiny flags, and a shock ages out exactly as the existing logic dictates. The week countdown
+  is derived from the clock and honors a configured weekDuration (pacing knob). Noir flavor
+  (labels/banner) stays in /src/scenes theme; sim-level messages stay terse. HUD rendering is
+  human-validated; the view-model is fully asserted.
+- Gate: typecheck ✅  build ✅  test ✅ (379 total; +10 hud: formatCountdown incl. clamp; week
+  countdown reflects WEEK_DURATION + configured short week + progress; federal ladder tier/message
+  at each band + clear state + null banner; federal arming UNDER update() (bustArmed + log);
+  mutiny risk count + imminent flag matching mutinyConditionMet + loyal-crew zero; boom shock
+  surfaces + ages out under update(); full snapshot shape + pure-read no-mutation). /src/sim
+  Phaser-free invariant green; the 369-test base untouched and all green.
+- Commit: rts6: Real-Time Presentation — green
