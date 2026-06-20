@@ -1,25 +1,30 @@
-// RTS-10 — procedural Fedora-Noir art. Phaser-only (lives in /src/scenes); generates all city
+// RTS-10/15 — procedural Fedora-Noir art. Phaser-only (lives in /src/scenes); generates all city
 // art from vector Graphics at runtime — NO external assets. Bakes reusable textures for unit
-// figures + the protection coin, and draws parametric iso buildings/tiles into a scene. The
-// palette is CANON's: soot, brick, brass, blood, fog, bone.
+// figures, the protection coin, tiles, and the RTS-15 effect sprites (greenback, banknote, soft
+// glow). Colours follow docs/VISUAL_DIRECTION.md exact hex ROLES: a ~90% soot+brick world with
+// brass (player/money), rival-red identity, and danger-red reserved for motion only.
 
 import Phaser from 'phaser';
 
 export const PAL = {
-  ink: 0x14110f,
-  soot: 0x0d0b0a,
-  charcoal: 0x26211c,
-  slate: 0x32302b,
+  // world / structure (the spec's dominant tones)
+  soot: 0x16130f,
+  ink: 0x0d0b0a, // deepest shadow
+  charcoal: 0x241c17,
+  slate: 0x322a22,
   fog: 0x9a8f80,
-  brass: 0xc79a4b,
-  brassDim: 0x8a6a30,
-  blood: 0x8a2b22,
-  bloodDim: 0x5e1d18,
-  brick: 0x6e3b30,
-  brickDark: 0x4c2a23,
+  brick: 0x7e3326, // lit wall (spec brickLight)
+  brickDark: 0x5a241b, // shadow wall (spec brickDark)
   bone: 0xe8e2d4,
   skin: 0xc9a883,
   windowLit: 0xe8c87a,
+  // state / identity — never decoration
+  brass: 0xb8862b, // player + money/value
+  brassDim: 0x7c5c1d,
+  blood: 0x9e1b1b, // RIVAL identity (static)
+  bloodDim: 0x5e1414,
+  danger: 0xe11d1d, // DANGER motion only
+  cashGreen: 0x4e8b5a, // cash in motion
 } as const;
 
 /** Texture keys baked once at boot. */
@@ -31,6 +36,9 @@ export const TEX = {
   coin: 'lcr_coin',
   tileStreet: 'lcr_tile_street',
   tileLot: 'lcr_tile_lot',
+  greenback: 'lcr_greenback',
+  note: 'lcr_note',
+  glow: 'lcr_glow',
 } as const;
 
 const ISO_HW = 64; // tile half-width
@@ -155,6 +163,46 @@ function bakeTile(scene: Phaser.Scene, key: string, base: number, accent: number
   g.destroy();
 }
 
+/** A small greenback for the cash trail / banked arc (RTS-15). */
+function bakeGreenback(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.greenback)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  g.fillStyle(PAL.cashGreen, 1);
+  g.fillRoundedRect(0, 0, 14, 8, 2);
+  g.lineStyle(1, 0x2f5e3a, 1);
+  g.strokeRoundedRect(0, 0, 14, 8, 2);
+  g.fillStyle(0x2f5e3a, 1);
+  g.fillCircle(7, 4, 2);
+  g.generateTexture(TEX.greenback, 14, 8);
+  g.destroy();
+}
+
+/** A grab-able banknote that scatters from a robbed collector (RTS-15). */
+function bakeNote(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.note)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  g.fillStyle(PAL.cashGreen, 1);
+  g.fillRect(0, 0, 16, 9);
+  g.fillStyle(PAL.bone, 0.7);
+  g.fillRect(6, 2, 4, 5);
+  g.generateTexture(TEX.note, 16, 9);
+  g.destroy();
+}
+
+/** A soft radial glow (white, fading out) — tinted per use. Glows are soft alpha, never fills. */
+function bakeGlow(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.glow)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const R = 32;
+  for (let r = R; r > 0; r--) {
+    const a = (1 - r / R) ** 2 * 0.5; // soft falloff
+    g.fillStyle(0xffffff, a);
+    g.fillCircle(R, R, r);
+  }
+  g.generateTexture(TEX.glow, R * 2, R * 2);
+  g.destroy();
+}
+
 /** Bake every reusable texture once (idempotent). */
 export function buildCityTextures(scene: Phaser.Scene): void {
   bakeFigure(scene, TEX.collector, { coat: PAL.brassDim, coatDark: 0x6a4f24, bag: true, hatBand: PAL.brass });
@@ -164,6 +212,9 @@ export function buildCityTextures(scene: Phaser.Scene): void {
   bakeCoin(scene);
   bakeTile(scene, TEX.tileStreet, PAL.charcoal, PAL.slate, PAL.soot);
   bakeTile(scene, TEX.tileLot, 0x221d18, PAL.charcoal, PAL.ink);
+  bakeGreenback(scene);
+  bakeNote(scene);
+  bakeGlow(scene);
 }
 
 /** Texture key for a unit by role (faction colour is conveyed by the foot-ring in the scene). */

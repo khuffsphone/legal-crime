@@ -1409,3 +1409,57 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   gangsters.test recruit-upkeep retuned; onboarding starting-crew extort retuned (+0.32). /src/sim
   Phaser-free invariant green; the 458-test base otherwise untouched and all green.
 - Commit: rts14: Crew Traits & Loyalties — green
+
+## RTS-15 — Visual Elevation: Fedora Noir — GREEN  (2026-06-20)
+- Summary: Elevated the procedural art to the documented Fedora-Noir visual spec — presentation/
+  render only; no economic settlement or mechanic logic touched, no raster assets (all vector/
+  procedural). First ingested the spec: /docs/VISUAL_DIRECTION.md committed as the visual bible
+  (the brief's paste placeholder arrived EMPTY, so it was distilled faithfully from the spec
+  embedded inline in the brief — noted in the doc's provenance header). Then implemented against it.
+  1. EXACT PALETTE — new PURE, unit-tested src/scenes/visualSpec.ts encodes the spec's named hex
+     ROLES (soot #16130f, brickDark #5a241b, brickLight #7e3326, brass #b8862b player/money, rival
+     #9e1b1b identity, danger #e11d1d motion-only, cashGreen #4e8b5a) + motion timings + thresholds.
+     cityArt.PAL was remapped to these exact hexes, recolouring the whole world/figures at once
+     (~90% soot+brick). The two reds are SPLIT by role — rival-red is static identity, danger-red
+     is motion only (muzzle flash, klaxon, ambush, rejected marker); brass/rival/danger/cashGreen
+     are state-only. CANON's NOIR_PALETTE (theme.ts, locked + tested) is preserved for HUD text.
+  2. THE SIX JUICE BEATS — The Lean (brick-dust puffs + a thumping "NOW PAYING" stamp + coin
+     burst), Banked (greenbacks arc to the HQ vault + a 90ms 1.04x camera punch + satchel deflate),
+     Cash Trail (greenback breadcrumbs dropped ~5/sec, fading over 2s), Ambush (danger-red muzzle
+     flash + 3× 6px shakes + 7 grab-able banknotes scattering), Federal Ladder (bar via
+     federalBarColor reddening at 50/70/85 + a pulsing danger-red KLAXON vignette at tier 3),
+     Day↔Night veil (kept). New baked effect textures: greenback, banknote, soft radial glow.
+  3. CREW/LOYALTY VISUALS — the [K] roster now renders per-member animated rows by loyalty band:
+     loyaltyBob 2.4s (loyal), waverRoll 3.2s (wavering), disloyalPulse 1.8s (disloyal); a 1.2s
+     crimson wrongedFlash border when a member's loyalty drops; and the MUTINY TELEGRAPH — a
+     "<NAME> READY TO BETRAY — ACT NOW (settles in M:SS)" banner with a real countdown (the
+     defection resolves at the next week settlement), earned like the run-2 threat telegraph.
+  4. STATE INDICATORS — selection ring (brass, ≥1.3s pulse), the protection "%" coin spins on
+     MOTION.coinSpin with a soft brass glow, the cash satchel scales in 3 tiers (satchelTier), the
+     two-stage danger ring (amber threatened → danger-red ambush via dangerStageColor), move
+     markers brass (valid) / danger (rejected).
+  5. GEOMETRY/MOTION DISCIPLINE — two flat tones per face + hard edges retained; glows are soft
+     radial-alpha textures only; motion budget honoured (only ambush/klaxon run fast ≤1.1s, every
+     idle loop ≥1.3s — asserted in the visualSpec tests).
+- Files: docs/VISUAL_DIRECTION.md (new, committed separately as `docs: add Fedora Noir visual
+  bible`), src/scenes/visualSpec.ts (new, pure + tested), src/scenes/cityArt.ts (spec PAL +
+  greenback/note/glow textures), src/scenes/IsoScene.ts (palette routing, the six beats, crew
+  animations + mutiny telegraph + klaxon, satchel tiers, two-stage ring); new tests/visualSpec.test.ts.
+  No /src/sim changes — sim Phaser-free invariant intact.
+
+═══ VISUAL SPEC API — THE RTS-15 PURE CONTRACT (src/scenes/visualSpec.ts) ═══
+- SPEC palette roles (exact hexes) + STATE_ONLY_ROLES + hexNum. MOTION timings (loyaltyBob 2400,
+  waverRoll 3200, disloyalPulse 1800, wrongedFlash 1200, coinSpin 2600, cashTrail 2000, bankedPunch
+  90, leanBeat 800, dayNight 9000). DANGER_LOOP_MAX_MS 1100 / IDLE_LOOP_MIN_MS 1300; motionIsDanger.
+  factionColor · satchelTier (≥250→2, ≥600→3) · dangerStageColor (ambush→danger, else brass) ·
+  federalBarColor (tier 0/1/2/3) · loyaltyMotion(status).
+- Decisions: the visual spec is a PURE module in /src/scenes (Phaser-free, node-testable like
+  theme/assets) so the palette rules ("state-only", "two reds never share a role") and motion
+  budget are unit-asserted; cityArt.PAL remaps to the spec hexes so one change recolours every
+  figure/building/tile; NOIR_PALETTE (CANON, theme.test-locked) stays for text. All rendering is
+  human-validated; the spec module is fully asserted.
+- Gate: typecheck ✅  build ✅  test ✅ (488 total; +11 visualSpec: exact role hexes; two-reds-
+  distinct; state-only roles ≠ world tones; hexNum; motion budget danger-vs-idle + all loyalty
+  loops idle-slow; factionColor; satchelTier bands; dangerStageColor stages; federalBarColor tiers;
+  loyaltyMotion). /src/sim Phaser-free invariant green; the 477-test base untouched and all green.
+- Commit: rts15: Visual Elevation — Fedora Noir — green

@@ -73,6 +73,15 @@ import {
   TEX,
   PAL,
 } from './cityArt';
+import {
+  SPEC,
+  MOTION,
+  hexNum,
+  satchelTier,
+  dangerStageColor,
+  federalBarColor,
+  loyaltyMotion,
+} from './visualSpec';
 
 const COLS = 16;
 const ROWS = 16;
@@ -113,7 +122,7 @@ interface UnitView {
   dangerRing?: Phaser.GameObjects.Ellipse;
 }
 
-interface BizMarker { coin: Phaser.GameObjects.Image; roofX: number; roofY: number; }
+interface BizMarker { coin: Phaser.GameObjects.Image; glow?: Phaser.GameObjects.Image; roofX: number; roofY: number; }
 
 export class IsoScene extends Phaser.Scene {
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -126,6 +135,7 @@ export class IsoScene extends Phaser.Scene {
   private pressX = 0;
   private pressY = 0;
   private greaseIndex = 0;
+  private lastTrailAt = 0;
   private robbedCollectors = new Set<string>();
 
   // HUD objects
@@ -139,12 +149,17 @@ export class IsoScene extends Phaser.Scene {
   private feedLines: Phaser.GameObjects.Text[] = [];
   private feedVisible = true;
   private crewTitle?: Phaser.GameObjects.Text;
-  private crewPanel?: Phaser.GameObjects.Text;
+  private crewRows: Phaser.GameObjects.Text[] = [];
+  private crewWrong: Phaser.GameObjects.Rectangle[] = [];
   private crewVisible = true;
+  private crewLastLoyalty = new Map<string, number>();
+  private crewFlashUntil = new Map<string, number>();
+  private mutinyBanner?: Phaser.GameObjects.Text;
   private tooltipBg?: Phaser.GameObjects.Graphics;
   private tooltipText?: Phaser.GameObjects.Text;
   private legend?: Phaser.GameObjects.Container;
   private nightVeil?: Phaser.GameObjects.Rectangle;
+  private klaxon?: Phaser.GameObjects.Graphics;
   private objTitle?: Phaser.GameObjects.Text;
   private objDetail?: Phaser.GameObjects.Text;
   private highlight?: Phaser.GameObjects.Ellipse;
@@ -261,11 +276,15 @@ export class IsoScene extends Phaser.Scene {
         const c = gridToScreen(t.gx, t.gy);
         const styleKey = biz.kind === 'front' ? 'storefront' : biz.kind === 'speakeasy' || biz.kind === 'numbers' ? 'speakeasy' : 'warehouse';
         const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], depthValue(t.gx, t.gy) * 10 + 5);
+        const glow = this.add
+          .image(roof.roofX, roof.roofY - 6, TEX.glow)
+          .setDepth(depthValue(t.gx, t.gy) * 10 + 6)
+          .setTint(hexNum(SPEC.brass)).setScale(0.7).setVisible(false);
         const coin = this.add
           .image(roof.roofX, roof.roofY - 6, TEX.coin)
           .setDepth(depthValue(t.gx, t.gy) * 10 + 7)
           .setVisible(false);
-        this.bizMarkers.set(biz.id, { coin, roofX: roof.roofX, roofY: roof.roofY });
+        this.bizMarkers.set(biz.id, { coin, glow, roofX: roof.roofX, roofY: roof.roofY });
       }
     }
 
@@ -356,48 +375,93 @@ export class IsoScene extends Phaser.Scene {
 
       if (v.cashTag && v.dangerRing) {
         const carry = collectorCarryView(v.unit);
-        v.cashTag.setVisible(carry.vulnerable).setPosition(s.x, s.y - 40).setDepth(depth + 1);
+        // The satchel grows in 3 tiers with the take; the tag scales with it (state = brass).
+        const tier = carry.vulnerable ? satchelTier(carry.carrying) : 1;
+        v.cashTag.setVisible(carry.vulnerable).setPosition(s.x, s.y - 40).setDepth(depth + 1)
+          .setScale(0.88 + tier * 0.12);
         const safe = !!v.unit.protectedRun;
         if (carry.vulnerable) v.cashTag.setText(safe ? `$${carry.carrying} ✓ SAFE` : `$${carry.carrying}`);
         const threat = carry.vulnerable ? threats.get(v.unit.id) : undefined;
         if (safe && carry.vulnerable) {
           // Tutorial run: a steady brass ring reads as "guaranteed home" even as the rival hunts.
-          v.dangerRing.setStrokeStyle(3, PAL.brass, 0.9).setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
-          v.cashTag.setColor(NOIR_PALETTE.brass);
+          v.dangerRing.setStrokeStyle(3, hexNum(SPEC.brass), 0.9).setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
+          v.cashTag.setColor(SPEC.brass);
         } else if (threat) {
-          const col = threat.level === 'ambush' ? PAL.blood : PAL.brass;
-          v.dangerRing.setStrokeStyle(3, col, pulse).setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
-          v.cashTag.setColor(threat.level === 'ambush' ? NOIR_PALETTE.blood : NOIR_PALETTE.brass);
+          // Two-stage danger ring: amber when threatened, danger-red MOTION at ambush range.
+          const col = hexNum(dangerStageColor(threat.level));
+          v.dangerRing.setStrokeStyle(3, col, threat.level === 'ambush' ? 0.6 + 0.4 * pulse : 0.85)
+            .setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
+          v.cashTag.setColor(threat.level === 'ambush' ? SPEC.danger : SPEC.brass);
         } else {
           v.dangerRing.setVisible(false);
-          v.cashTag.setColor(NOIR_PALETTE.brass);
+          v.cashTag.setColor(SPEC.brass);
         }
+        // Cash trail: a carrying collector drops faint greenback breadcrumbs (~2s fade).
+        if (carry.vulnerable && moving) this.dropGreenback(s.x, s.y, depth - 3);
       }
     }
 
-    // animate protection coins over player-extorted fronts
+    // Protection coins spin slowly (idle ≥1.3s) over player-extorted fronts, with a soft glow.
+    const spinAngle = ((now % MOTION.coinSpin) / MOTION.coinSpin) * 360;
     for (const [bid, m] of this.bizMarkers) {
       const insp = inspectBusiness(this.state, bid);
       const on = !!insp?.payingProtection;
       m.coin.setVisible(on);
+      if (m.glow) m.glow.setVisible(on);
       if (on) {
-        m.coin.setAngle((now / 6) % 360);
-        m.coin.setY(m.roofY - 6 + Math.sin(now / 300) * 2);
+        m.coin.setAngle(spinAngle).setY(m.roofY - 6 + Math.sin(now / 700) * 2);
+        if (m.glow) m.glow.setAlpha(0.25 + 0.1 * Math.sin(now / 700));
       }
     }
   }
 
+  /** Cash trail (RTS-15): drop a fading greenback breadcrumb, throttled to ~5/sec. */
+  private dropGreenback(x: number, y: number, depth: number): void {
+    if (this.time.now - this.lastTrailAt < 200) return;
+    this.lastTrailAt = this.time.now;
+    const gb = this.add.image(x + Phaser.Math.Between(-4, 4), y - 6, TEX.greenback)
+      .setDepth(depth).setAngle(Phaser.Math.Between(-30, 30)).setAlpha(0.9);
+    this.tweens.add({ targets: gb, alpha: 0, y: y + 2, duration: MOTION.cashTrail, onComplete: () => gb.destroy() });
+  }
+
+  /** Ambush beat (RTS-15): a danger-red muzzle flash, three 6px shakes, and grab-able banknotes
+   * scattering from the robbed collector. */
   private flashAmbush(ev: InterceptionEvent): void {
     if (this.robbedCollectors.has(ev.collectorId)) return;
     this.robbedCollectors.add(ev.collectorId);
     const v = this.units.find((u) => u.unit.id === ev.collectorId);
     if (!v) return;
     const s = unitScreenPos(v.unit);
-    const burst = this.add.circle(s.x, s.y - 8, 8).setStrokeStyle(4, PAL.blood, 1).setDepth(100001);
-    this.tweens.add({ targets: burst, scale: 7, alpha: 0, duration: 650, onComplete: () => burst.destroy() });
-    this.cameras.main.shake(240, 0.005);
+
+    // muzzle flash — danger-red, soft radial, brief (motion = danger).
+    const flashGlow = this.add.image(s.x + 8, s.y - 14, TEX.glow).setTint(hexNum(SPEC.danger)).setScale(0.4).setDepth(100001);
+    this.tweens.add({ targets: flashGlow, scale: 1.1, alpha: 0, duration: 180, onComplete: () => flashGlow.destroy() });
+    const ring = this.add.circle(s.x, s.y - 8, 8).setStrokeStyle(4, hexNum(SPEC.danger), 1).setDepth(100001);
+    this.tweens.add({ targets: ring, scale: 7, alpha: 0, duration: 600, onComplete: () => ring.destroy() });
+
+    // three sharp 6px shakes.
+    const cam = this.cameras.main;
+    cam.shake(80, 0.006);
+    this.time.delayedCall(110, () => cam.shake(80, 0.006));
+    this.time.delayedCall(220, () => cam.shake(80, 0.006));
+
+    // grab-able banknotes scatter.
+    for (let i = 0; i < 7; i++) {
+      const note = this.add.image(s.x, s.y - 10, TEX.note).setDepth(100001).setAngle(Phaser.Math.Between(0, 360));
+      this.tweens.add({
+        targets: note,
+        x: s.x + Phaser.Math.Between(-46, 46),
+        y: s.y + Phaser.Math.Between(-10, 26),
+        angle: Phaser.Math.Between(-180, 180),
+        alpha: 0,
+        duration: 900 + i * 40,
+        ease: 'Cubic.Out',
+        onComplete: () => note.destroy(),
+      });
+    }
+
     const flash = this.add
-      .text(s.x, s.y - 50, `ROBBED  $${ev.amount}`, { fontFamily: NOIR_FONT, fontSize: '18px', color: NOIR_PALETTE.blood, fontStyle: 'bold' })
+      .text(s.x, s.y - 50, `ROBBED  $${ev.amount}`, { fontFamily: NOIR_FONT, fontSize: '18px', color: SPEC.danger, fontStyle: 'bold' })
       .setOrigin(0.5, 1).setDepth(100002);
     this.tweens.add({ targets: flash, y: s.y - 96, alpha: 0, duration: 1900, onComplete: () => flash.destroy() });
     if (v.cashTag) v.cashTag.setVisible(false);
@@ -405,14 +469,39 @@ export class IsoScene extends Phaser.Scene {
     this.setStatus(`collector ambushed — $${ev.amount} gone to ${ev.attackerFaction}`);
   }
 
+  /** Banked beat (RTS-15): coins arc to the HQ vault, a 90ms 1.04x camera punch, satchel deflates. */
   private flashDeposit(collectorId: string, banked: number): void {
     const v = this.units.find((u) => u.unit.id === collectorId);
     if (!v) return;
     const s = unitScreenPos(v.unit);
+    const hq = hqTileOf(this.layout, 'player');
+    const vault = hq ? gridToScreen(hq.gx, hq.gy) : { x: s.x, y: s.y - 40 };
+
+    // coins (greenbacks) arc from the collector to the vault.
+    for (let i = 0; i < 6; i++) {
+      const coin = this.add.image(s.x, s.y - 10, TEX.greenback).setDepth(100001).setTint(hexNum(SPEC.cashGreen));
+      this.tweens.add({
+        targets: coin,
+        x: vault.x,
+        y: vault.y - 24,
+        scale: 0.6,
+        alpha: { from: 1, to: 0.2 },
+        delay: i * 45,
+        duration: 520,
+        ease: 'Cubic.In',
+        onComplete: () => coin.destroy(),
+      });
+    }
+    // 90ms 1.04x camera punch.
+    const cam = this.cameras.main;
+    const z = cam.zoom;
+    this.tweens.add({ targets: cam, zoom: z * 1.04, duration: MOTION.bankedPunch, yoyo: true, ease: 'Quad.Out' });
+
+    if (v.cashTag) v.cashTag.setVisible(false); // satchel deflates
     const flash = this.add
-      .text(s.x, s.y - 50, `+ $${banked} BANKED`, { fontFamily: NOIR_FONT, fontSize: '16px', color: NOIR_PALETTE.brass, fontStyle: 'bold' })
+      .text(vault.x, vault.y - 40, `+ $${banked} BANKED`, { fontFamily: NOIR_FONT, fontSize: '16px', color: SPEC.cashGreen, fontStyle: 'bold' })
       .setOrigin(0.5, 1).setDepth(100002);
-    this.tweens.add({ targets: flash, y: s.y - 92, alpha: 0, duration: 1700, onComplete: () => flash.destroy() });
+    this.tweens.add({ targets: flash, y: vault.y - 70, alpha: 0, duration: 1600, onComplete: () => flash.destroy() });
     this.setStatus(`collector reached HQ — banked $${banked}`);
   }
 
@@ -451,7 +540,7 @@ export class IsoScene extends Phaser.Scene {
   private drawTargetMarker(tile: { gx: number; gy: number }, ok: boolean): void {
     const c = gridToScreen(tile.gx, tile.gy);
     const corners = tileCorners(tile.gx, tile.gy).map((pt) => ({ x: pt.x - c.x, y: pt.y - c.y }));
-    const mark = this.add.polygon(c.x, c.y, corners).setStrokeStyle(3, ok ? PAL.brass : PAL.blood, 1).setDepth(depthValue(tile.gx, tile.gy) * 10 + 9);
+    const mark = this.add.polygon(c.x, c.y, corners).setStrokeStyle(3, ok ? hexNum(SPEC.brass) : hexNum(SPEC.danger), 1).setDepth(depthValue(tile.gx, tile.gy) * 10 + 9);
     this.tweens.add({ targets: mark, scale: ok ? 0.4 : 1, alpha: 0, duration: 650, onComplete: () => mark.destroy() });
   }
 
@@ -469,12 +558,30 @@ export class IsoScene extends Phaser.Scene {
     const insp = inspectBusiness(this.state, obj.targetBusinessId);
     if (insp?.payingProtection) {
       this.seedBackPay(obj.targetBusinessId);
-      this.floatText(c.x, c.y - 30, 'NOW PAYS PROTECTION', NOIR_PALETTE.brass);
+      this.leanBeat(c.x, c.y);
       this.setStatus(`${insp.name} pays protection — collect the take with [C]`);
     } else {
-      this.floatText(c.x, c.y - 30, 'RESISTED — try again', NOIR_PALETTE.blood);
+      this.floatText(c.x, c.y - 30, 'RESISTED — try again', SPEC.danger);
       this.setStatus('they held out — extortion is a roll, press [E] again');
     }
+  }
+
+  /** The Lean (RTS-15): a brick-dust shudder, a thumping "NOW PAYING" stamp, and a coin burst. */
+  private leanBeat(x: number, y: number): void {
+    // brick-dust puffs (fog motes drifting up and fading).
+    for (let i = 0; i < 8; i++) {
+      const dust = this.add.circle(x + Phaser.Math.Between(-22, 22), y + Phaser.Math.Between(-6, 10), Phaser.Math.Between(1, 3), PAL.fog, 0.6).setDepth(100001);
+      this.tweens.add({ targets: dust, y: dust.y - Phaser.Math.Between(14, 30), alpha: 0, duration: 700 + i * 30, onComplete: () => dust.destroy() });
+    }
+    // coin burst (brass = money state).
+    for (let i = 0; i < 6; i++) {
+      const coin = this.add.image(x, y - 8, TEX.coin).setDepth(100001).setScale(0.6);
+      this.tweens.add({ targets: coin, x: x + Phaser.Math.Between(-30, 30), y: y - Phaser.Math.Between(18, 40), alpha: 0, angle: Phaser.Math.Between(-180, 180), duration: 700, ease: 'Cubic.Out', onComplete: () => coin.destroy() });
+    }
+    // "NOW PAYING" stamp — thumps on big then settles.
+    const stamp = this.add.text(x, y - 34, 'NOW PAYING', { fontFamily: NOIR_FONT, fontSize: '17px', color: SPEC.brass, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002).setScale(2.2).setAlpha(0);
+    this.tweens.add({ targets: stamp, scale: 1, alpha: 1, duration: MOTION.leanBeat * 0.35, ease: 'Back.Out' });
+    this.tweens.add({ targets: stamp, alpha: 0, y: y - 54, delay: 900, duration: 500, onComplete: () => stamp.destroy() });
   }
 
   /** [C] — send a collector from the first district that has player takings waiting. */
@@ -663,39 +770,78 @@ export class IsoScene extends Phaser.Scene {
       this.feedLines.push(this.add.text(0, 32 + i * 16, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000).setOrigin(1, 0));
     }
     this.nightVeil = this.add.rectangle(0, 0, 6000, 4000, 0x0a1020, 0).setOrigin(0, 0).setScrollFactor(0).setDepth(99980);
+    this.klaxon = this.add.graphics().setScrollFactor(0).setDepth(99985);
 
-    // RTS-14 crew roster (bottom-left, names · traits · loyalty read; toggle with [K]).
-    this.crewTitle = this.add.text(12, 0, 'YOUR CREW  [K]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 1).setScrollFactor(0).setDepth(100000);
-    this.crewPanel = this.add.text(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setOrigin(0, 1).setScrollFactor(0).setDepth(100000);
+    // RTS-14/15 crew roster (bottom-left; per-member animated rows; toggle with [K]).
+    this.crewTitle = this.add.text(12, 0, 'YOUR CREW  [K]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0).setScrollFactor(0).setDepth(100000);
+    for (let i = 0; i < 8; i++) {
+      this.crewWrong.push(this.add.rectangle(8, 0, 320, 16).setOrigin(0, 0.5).setStrokeStyle(2, hexNum(SPEC.danger), 1).setScrollFactor(0).setDepth(99999).setVisible(false));
+      this.crewRows.push(this.add.text(14, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(100000));
+    }
+    // Mutiny telegraph banner (top-centre, under the objective) — legible, earned, with a countdown.
+    this.mutinyBanner = this.add.text(this.scale.width / 2, 60, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
   }
 
   private toggleCrew(): void {
     this.crewVisible = !this.crewVisible;
     this.crewTitle?.setVisible(this.crewVisible);
-    this.crewPanel?.setVisible(this.crewVisible);
+    for (const r of this.crewRows) r.setVisible(this.crewVisible && r.text !== '');
   }
 
   private static crewGlyph(status: string): string {
     return status === 'loyal' ? '●' : status === 'wavering' ? '◐' : '○';
   }
 
-  /** Paint the crew roster: each member by name, traits, and loyalty read (RTS-14). */
+  /** Paint the crew roster with per-member loyalty animation (RTS-15): loyaltyBob / waverRoll /
+   * disloyalPulse, a crimson wrongedFlash when a member's loyalty drops, and the mutiny telegraph. */
   private refreshCrew(): void {
-    if (!this.crewPanel || !this.crewTitle || !this.crewVisible) return;
+    if (!this.crewTitle) return;
     const rows = crewReadout(this.state.player);
-    const bottom = this.scale.height - 40; // sit above the federal warning banner
-    const lines = rows.length === 0
-      ? ['(no crew — recruit muscle)']
-      : rows.map((r) => {
-          const tr = r.traitLabels.length ? ` [${r.traitLabels.join(', ')}]` : '';
-          return `${IsoScene.crewGlyph(r.status)} ${r.name}${tr} — ${r.status} (${r.loyalty})`;
-        });
-    this.crewPanel.setText(lines.join('\n')).setPosition(12, bottom);
-    // tint the roster by the unhappiest member
-    const worst = rows.some((r) => r.status === 'disloyal') ? NOIR_PALETTE.blood
-      : rows.some((r) => r.status === 'wavering') ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
-    this.crewPanel.setColor(worst);
-    this.crewTitle.setPosition(12, bottom - this.crewPanel.height - 2);
+    const now = this.time.now;
+    const baseY = this.scale.height - 30 - rows.length * 18;
+    this.crewTitle.setPosition(12, baseY - 18).setVisible(this.crewVisible);
+
+    let mostUrgent: { name: string } | null = null;
+    for (let i = 0; i < this.crewRows.length; i++) {
+      const row = this.crewRows[i];
+      const wrong = this.crewWrong[i];
+      const r = rows[i];
+      if (!r || !this.crewVisible) { row.setVisible(false); wrong.setVisible(false); continue; }
+
+      // wronged flash: arm a 1.2s crimson border when a member's loyalty just dropped.
+      const prev = this.crewLastLoyalty.get(r.id);
+      if (prev !== undefined && r.loyalty < prev) this.crewFlashUntil.set(r.id, now + MOTION.wrongedFlash);
+      this.crewLastLoyalty.set(r.id, r.loyalty);
+
+      const color = r.status === 'disloyal' ? SPEC.danger : r.status === 'wavering' ? SPEC.brass : SPEC.bone;
+      const tr = r.traitLabels.length ? ` [${r.traitLabels.join(', ')}]` : '';
+      const y = baseY + i * 18;
+
+      // band animation (all idle-slow except the disloyal pulse, still ≥1.3s): bob / roll / pulse.
+      let dx = 0, dy = 0, scale = 1;
+      const phase = (k: number) => (now / MOTION[loyaltyMotion(r.status)]) * Math.PI * 2 + k;
+      if (r.status === 'loyal') dy = Math.sin(phase(i)) * 1.2;
+      else if (r.status === 'wavering') dx = Math.sin(phase(i)) * 2;
+      else { scale = 1 + 0.05 * Math.sin(phase(i)); mostUrgent = mostUrgent ?? { name: r.name }; }
+
+      row.setText(`${IsoScene.crewGlyph(r.status)} ${r.name}${tr} — ${r.status} (${r.loyalty})`)
+        .setColor(color).setPosition(14 + dx, y + dy).setScale(scale).setVisible(true);
+
+      const flashing = (this.crewFlashUntil.get(r.id) ?? 0) > now;
+      wrong.setPosition(8 + dx, y + dy).setVisible(flashing)
+        .setStrokeStyle(2, hexNum(SPEC.danger), flashing ? 0.5 + 0.5 * Math.abs(Math.sin(now / 150)) : 1);
+    }
+
+    // Mutiny telegraph: a disloyal member may walk at the next settlement — name it + countdown.
+    if (this.mutinyBanner) {
+      if (mostUrgent && this.crewVisible) {
+        const countdown = realtimeHudView(this.state).weekCountdownLabel;
+        this.mutinyBanner.setText(`⚠ ${mostUrgent.name.toUpperCase()} READY TO BETRAY — ACT NOW  (settles in ${countdown})`)
+          .setPosition(this.scale.width / 2, 60).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 300)));
+      } else {
+        this.mutinyBanner.setVisible(false);
+      }
+    }
   }
 
   private refreshHud(): void {
@@ -724,18 +870,19 @@ export class IsoScene extends Phaser.Scene {
       this.weekBar.fillStyle(PAL.charcoal, 1).fillRect(12, 92, 316, 6);
       this.weekBar.fillStyle(PAL.brass, 1).fillRect(12, 92, 316 * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 6);
     }
-    // federal exposure ladder bar with 50/70/85 ticks
+    // federal exposure ladder bar — reddens by tier at 50/70/85 (spec colours).
     if (this.fedBar) {
       const x = 12, y = 110, w = 316;
       this.fedBar.clear();
       this.fedBar.fillStyle(PAL.charcoal, 1).fillRect(x, y, w, 8);
-      const col = p.federalTier >= 3 ? PAL.blood : p.federalTier >= 2 ? 0xb5502a : p.federalTier >= 1 ? PAL.brass : PAL.brassDim;
-      this.fedBar.fillStyle(col, 1).fillRect(x, y, w * Phaser.Math.Clamp(p.federalExposure / 100, 0, 1), 8);
-      this.fedBar.lineStyle(1, PAL.bone, 0.7);
+      this.fedBar.fillStyle(hexNum(federalBarColor(p.federalTier)), 1).fillRect(x, y, w * Phaser.Math.Clamp(p.federalExposure / 100, 0, 1), 8);
+      this.fedBar.lineStyle(1, hexNum(SPEC.bone), 0.7);
       for (const mk of [FED_T1, FED_T2, FED_T3]) {
         this.fedBar.beginPath(); this.fedBar.moveTo(x + (w * mk) / 100, y - 2); this.fedBar.lineTo(x + (w * mk) / 100, y + 10); this.fedBar.strokePath();
       }
     }
+    // Klaxon vignette: at tier 3 (exposure ≥ 85) the screen edge pulses danger-red.
+    this.refreshKlaxon(p.federalTier >= 3);
     this.hudPanel.setColor(p.federalTier >= 2 || danger ? '#d98a6a' : NOIR_PALETTE.bone);
 
     const warn = p.federalTier > 0 ? this.fedLine(p.federalTier) : danger ? 'A COLLECTOR IS UNDER THREAT — get it to HQ' : null;
@@ -747,6 +894,19 @@ export class IsoScene extends Phaser.Scene {
       // surface shocks alongside selection status
     }
     void shockFlavor; void ISO_TILE_HEIGHT;
+  }
+
+  /** Klaxon vignette (RTS-15): a danger-red edge that pulses when a federal bust is imminent. */
+  private refreshKlaxon(on: boolean): void {
+    if (!this.klaxon) return;
+    this.klaxon.clear();
+    if (!on) return;
+    const w = this.scale.width, h = this.scale.height;
+    const a = 0.2 + 0.35 * Math.abs(Math.sin(this.time.now / 250));
+    for (let i = 0; i < 5; i++) {
+      this.klaxon.lineStyle(30 - i * 5, hexNum(SPEC.danger), a * (0.1 + i * 0.05));
+      this.klaxon.strokeRect(i * 3, i * 3, w - i * 6, h - i * 6);
+    }
   }
 
   private fedLine(tier: number): string {
