@@ -29,11 +29,13 @@ export function unitDistance(a: MovableUnit, b: MovableUnit): number {
   return Math.hypot(a.pos.gx - b.pos.gx, a.pos.gy - b.pos.gy);
 }
 
-/** Whether `enforcer` (hostile muscle) is positioned to ambush `collector` this instant. */
+/** Whether `enforcer` (hostile muscle) is positioned to ambush `collector` this instant. A
+ * protectedRun collector (RTS-12 tutorial safety net) can never be intercepted. */
 export function canIntercept(enforcer: MovableUnit, collector: MovableUnit): boolean {
   return (
     enforcer.role === 'enforcer' &&
     isCarryingCollector(collector) &&
+    !collector.protectedRun &&
     areHostile(enforcer, collector) &&
     unitDistance(enforcer, collector) <= INTERCEPT_RADIUS
   );

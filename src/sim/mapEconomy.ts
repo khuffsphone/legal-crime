@@ -151,6 +151,13 @@ export function startCollectorRun(
   collector.originDistrictId = districtId;
   if (!issueMove(collector, hq, grid)) return { unit: null, carrying: 0 };
 
+  // Tutorial safety net (RTS-12): the first run(s) ride home un-robbable so a new player isn't
+  // punished by a mechanic they haven't been taught. Spent one per dispatched run.
+  if (state.tutorialFreeRuns > 0) {
+    collector.protectedRun = true;
+    state.tutorialFreeRuns -= 1;
+  }
+
   for (const b of targets) b.uncollected = 0; // the take is now in transit
   state.units.push(collector);
 

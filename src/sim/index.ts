@@ -94,6 +94,8 @@ export {
   hasEstablishedIncome,
   suggestedExtortTarget,
   hasCarryingCollector,
+  nextRunIsProtected,
+  carryingRunIsProtected,
   firstObjective,
   type Objective,
   type ObjectiveStep,

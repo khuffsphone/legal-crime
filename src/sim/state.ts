@@ -66,7 +66,7 @@ function makeFamily(id: string, name: string, isPlayer: boolean): Family {
  */
 export function createInitialState(
   seed: number,
-  options?: { shocks?: boolean; startingCrew?: boolean },
+  options?: { shocks?: boolean; startingCrew?: boolean; tutorialFreeRuns?: number },
 ): GameState {
   const rng = new Rng(seedToCursor(seed));
 
@@ -119,6 +119,7 @@ export function createInitialState(
     shocksEnabled: options?.shocks ?? false,
     weekElapsed: 0,
     units: [],
+    tutorialFreeRuns: options?.tutorialFreeRuns ?? 0,
     incidents: [],
     incidentSeq: 0,
     incidentLogCursor: 0,

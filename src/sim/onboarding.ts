@@ -46,6 +46,18 @@ export function hasCarryingCollector(state: GameState, familyId: string): boolea
   return state.units.some((u) => u.role === 'collector' && u.factionId === familyId && (u.carrying ?? 0) > 0);
 }
 
+/** Whether the NEXT collector run will ride home protected (a tutorial free-run remains). */
+export function nextRunIsProtected(state: GameState): boolean {
+  return state.tutorialFreeRuns > 0;
+}
+
+/** Whether the family's currently-carrying collector is on a protected (safe) run. */
+export function carryingRunIsProtected(state: GameState, familyId: string): boolean {
+  return state.units.some(
+    (u) => u.role === 'collector' && u.factionId === familyId && (u.carrying ?? 0) > 0 && !!u.protectedRun,
+  );
+}
+
 export type ObjectiveStep = 'extort' | 'collect' | 'protect' | 'grow';
 
 export interface Objective {
@@ -83,20 +95,26 @@ export function firstObjective(state: GameState): Objective {
   }
 
   if (hasCarryingCollector(state, id)) {
+    const safe = carryingRunIsProtected(state, id);
     return {
       step: 'protect',
-      title: 'WALK THE TAKE TO HQ',
-      detail: 'Your collector is carrying cash. Keep it moving to your HQ — a rival who catches it on the street takes the lot.',
+      title: safe ? 'SAFE PASSAGE — FIRST RUN' : 'WALK THE TAKE TO HQ',
+      detail: safe
+        ? 'Your first paycheck is guaranteed home. See how the rival enforcer hunts it? Next time, send the collector when the coast is clear — or escort it with your crew.'
+        : 'Your collector is carrying cash. Keep it clear of the rival enforcer — if he catches it on the street, he takes the lot.',
       targetBusinessId: null,
       done: false,
     };
   }
 
   if (totalUncollected(state, id) > 0) {
+    const safe = nextRunIsProtected(state);
     return {
       step: 'collect',
       title: 'COLLECT THE TAKE',
-      detail: 'Your front is paying. Press [C] to send a collector to gather the takings and walk them to HQ.',
+      detail: safe
+        ? "Takings are piling up — that's money you're owed but don't have yet. Press [C] to send a collector; your first run rides home SAFE."
+        : "Takings are piling up — money you're owed but don't have. Press [C] to send a collector, but watch the rival: time the run when he's away.",
       targetBusinessId: null,
       done: false,
     };
@@ -105,7 +123,7 @@ export function firstObjective(state: GameState): Objective {
   return {
     step: 'grow',
     title: "YOU'RE EARNING",
-    detail: 'Reinvest in rackets and spread the bribes — The Beat, The Bench, City Hall, The Bureau — before the heat finds you.',
+    detail: 'Now grow: press [R] to open a racket and [G] to grease the four channels — The Beat, The Bench, City Hall, The Bureau — before the heat finds you.',
     targetBusinessId: null,
     done: true,
   };

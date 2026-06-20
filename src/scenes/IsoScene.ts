@@ -34,6 +34,9 @@ import {
   processCollectorArrivals,
   pendingCollection,
   extortAtTile,
+  applyCommand,
+  affordableOperation,
+  strongholdDistrict,
   firstObjective,
   hqTileOf,
   businessTileOf,
@@ -57,8 +60,9 @@ import {
   type IncidentRecord,
   type IncidentSeverity,
   type ShockKind,
+  type BribeChannel,
 } from '../sim';
-import { NOIR_PALETTE, NOIR_FONT, heatLabel, shockFlavor } from './theme';
+import { NOIR_PALETTE, NOIR_FONT, heatLabel, shockFlavor, bribeChannelLabel } from './theme';
 import {
   buildCityTextures,
   figureKeyForRole,
@@ -119,10 +123,12 @@ export class IsoScene extends Phaser.Scene {
   private selection: Selection = emptySelection();
   private pressX = 0;
   private pressY = 0;
+  private greaseIndex = 0;
   private robbedCollectors = new Set<string>();
 
   // HUD objects
   private hudPanel?: Phaser.GameObjects.Text;
+  private uncollectedText?: Phaser.GameObjects.Text;
   private fedBar?: Phaser.GameObjects.Graphics;
   private weekBar?: Phaser.GameObjects.Graphics;
   private statusText?: Phaser.GameObjects.Text;
@@ -148,7 +154,9 @@ export class IsoScene extends Phaser.Scene {
     cam.setBackgroundColor(PAL.soot);
 
     // RTS-11: start with a small loyal crew so the opening is fair (muscle + defense).
-    this.state = createInitialState(1, { startingCrew: true });
+    // RTS-12: a small loyal crew (fair opening) + one protected collector run (first paycheck
+    // is guaranteed home so a new player isn't robbed before being taught the counter).
+    this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1 });
     this.layout = buildMapLayout(this.state, COLS, ROWS);
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
 
@@ -322,9 +330,14 @@ export class IsoScene extends Phaser.Scene {
       if (v.cashTag && v.dangerRing) {
         const carry = collectorCarryView(v.unit);
         v.cashTag.setVisible(carry.vulnerable).setPosition(s.x, s.y - 40).setDepth(depth + 1);
-        if (carry.vulnerable) v.cashTag.setText(`$${carry.carrying}`);
+        const safe = !!v.unit.protectedRun;
+        if (carry.vulnerable) v.cashTag.setText(safe ? `$${carry.carrying} ✓ SAFE` : `$${carry.carrying}`);
         const threat = carry.vulnerable ? threats.get(v.unit.id) : undefined;
-        if (threat) {
+        if (safe && carry.vulnerable) {
+          // Tutorial run: a steady brass ring reads as "guaranteed home" even as the rival hunts.
+          v.dangerRing.setStrokeStyle(3, PAL.brass, 0.9).setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
+          v.cashTag.setColor(NOIR_PALETTE.brass);
+        } else if (threat) {
           const col = threat.level === 'ambush' ? PAL.blood : PAL.brass;
           v.dangerRing.setStrokeStyle(3, col, pulse).setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
           v.cashTag.setColor(threat.level === 'ambush' ? NOIR_PALETTE.blood : NOIR_PALETTE.brass);
@@ -442,10 +455,39 @@ export class IsoScene extends Phaser.Scene {
     for (const d of this.state.districts) {
       if (pendingCollection(this.state, 'player', d.id) > 0) {
         const run = startCollectorRun(this.state, this.layout, 'player', d.id, this.navGrid);
-        if (run.unit) { this.attachView(run.unit, 'player'); this.setStatus(`collector dispatched from ${d.name} — walk it home`); return; }
+        if (run.unit) {
+          this.attachView(run.unit, 'player');
+          const safe = run.unit.protectedRun ? ' (SAFE first run)' : '';
+          this.setStatus(`collector dispatched from ${d.name} — walk it home${safe}`);
+          return;
+        }
       }
     }
     this.setStatus('nothing to collect yet — takings build each week after a shakedown');
+  }
+
+  /** [R] — reinvest: open the priciest racket you can afford in your strongest district. */
+  private commandReinvest(): void {
+    const kind = affordableOperation(this.state.player.cash);
+    if (!kind) { this.setStatus('not enough clean cash to open a racket yet'); return; }
+    const d = strongholdDistrict(this.state, 'player');
+    applyCommand(this.state, { type: 'establishOperation', familyId: 'player', districtId: d.id, kind });
+    this.state = harvestIncidents(this.state);
+    const hq = hqTileOf(this.layout, 'player');
+    if (hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, `OPENED ${kind.toUpperCase()} RACKET`, NOIR_PALETTE.brass); }
+    this.setStatus(`opened a ${kind} racket in ${d.name}`);
+  }
+
+  /** [G] — grease: bump the next of the four bribe channels by $10/wk (cycles through them). */
+  private commandGrease(): void {
+    const channels: BribeChannel[] = ['police', 'judges', 'politicians', 'feds'];
+    const ch = channels[this.greaseIndex % channels.length];
+    this.greaseIndex += 1;
+    const cur = this.state.player.bribes[ch];
+    applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: ch, amount: cur + 10 });
+    this.state = harvestIncidents(this.state);
+    const paid = this.state.player.bribes[ch] > cur;
+    this.setStatus(paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`);
   }
 
   /** Give a freshly-shaken front a little back-pay so the collect step is immediately playable. */
@@ -539,6 +581,8 @@ export class IsoScene extends Phaser.Scene {
     });
     this.input.keyboard?.on('keydown-E', () => this.commandExtort());
     this.input.keyboard?.on('keydown-C', () => this.commandCollect());
+    this.input.keyboard?.on('keydown-R', () => this.commandReinvest());
+    this.input.keyboard?.on('keydown-G', () => this.commandGrease());
     this.input.keyboard?.on('keydown-L', () => this.toggleFeed());
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
     this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
@@ -572,6 +616,8 @@ export class IsoScene extends Phaser.Scene {
     this.hudPanel = this.add.text(12, 34, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, lineSpacing: 3 }).setScrollFactor(0).setDepth(100000);
     this.weekBar = this.add.graphics().setScrollFactor(0).setDepth(100000);
     this.fedBar = this.add.graphics().setScrollFactor(0).setDepth(100000);
+    // Cash-flow legibility (RTS-12): the uncollected pile the player is owed but doesn't have.
+    this.uncollectedText = this.add.text(12, 128, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
     this.statusText = this.add.text(12, 156, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
     this.warningBanner = this.add.text(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.blood, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000).setVisible(false);
 
@@ -589,9 +635,18 @@ export class IsoScene extends Phaser.Scene {
     const danger = anyCollectorInDanger(this.state);
     this.hudPanel.setText([
       `Clean $${p.cleanCash}    Dirty $${p.dirtyCash}`,
-      `Heat ${p.heat} (${heatLabel(p.heat)})    Crew ${p.crew}` + (p.debt > 0 ? `    Debt $${p.debt}` : ''),
+      `Heat ${p.heat} (${heatLabel(p.heat)})    Crew ${p.crew}    Upkeep $${p.weeklyUpkeep}/wk` + (p.debt > 0 ? `    Debt $${p.debt}` : ''),
       `Week ${hud.week} — next in ${hud.weekCountdownLabel}`,
     ].join('\n'));
+
+    // Uncollected readout — why clean drifts: takings you're owed but haven't collected yet.
+    if (this.uncollectedText) {
+      if (p.uncollected > 0) {
+        this.uncollectedText.setText(`Uncollected $${p.uncollected} waiting — press [C] to collect`).setColor(NOIR_PALETTE.brass);
+      } else {
+        this.uncollectedText.setText('Uncollected $0 — all takings banked').setColor(NOIR_PALETTE.fog);
+      }
+    }
 
     // week countdown bar
     if (this.weekBar) {
@@ -633,7 +688,7 @@ export class IsoScene extends Phaser.Scene {
     const sel = this.selection.ids;
     const base = sel.length === 0 ? 'Click a unit to select · right-click to move' : `selected: ${sel.join(', ')}`;
     const sh = this.state.activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ');
-    const hint = '  ·  [E] shake down · [C] collect';
+    const hint = '  ·  [E] shake down · [C] collect · [R] reinvest · [G] grease';
     this.statusText.setText((action ? `${base}  ·  ${action}` : base + hint) + (sh ? `   |  ${sh}` : ''));
   }
 
@@ -690,7 +745,8 @@ export class IsoScene extends Phaser.Scene {
       '',
       'CONTROLS',
       '  left-click select · shift adds · right-click move · drag pan · wheel zoom',
-      '  [E] shake down · [C] collect · [L] the wire · [H] this help · [B] card view',
+      '  [E] shake down · [C] collect · [R] reinvest · [G] grease a channel',
+      '  [L] the wire · [H] this help · [B] card view',
     ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
     const hint = this.add.text(0, h / 2 - 26, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
     this.legend = this.add.container(cx, cy, [bg, title, body, hint]).setScrollFactor(0).setDepth(100100);

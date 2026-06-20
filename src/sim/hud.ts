@@ -10,6 +10,8 @@ import { secondsUntilNextWeek, weekProgress } from './clock';
 import { federalExposure, fedWarningTier, fedWarningMessage } from './federal';
 import { atRiskCount, mutinyConditionMet } from './gangsters';
 import { cleanCash } from './laundering';
+import { familyExpenses } from './economy';
+import { totalUncollected } from './collection';
 import { allFamilies, type Family, type GameState, type GameStatus, type LossReason } from './types';
 
 export interface FamilyHudView {
@@ -31,6 +33,11 @@ export interface FamilyHudView {
   mutinyRisk: number;
   mutinyImminent: boolean;
   crew: number;
+  /** Takings piled up at the family's businesses, not yet collected (RTS-12). Money it is owed
+   * but does not have — a collector run must gather it. */
+  uncollected: number;
+  /** Per-week expenses (crew upkeep + standing bribe retainer) — the bleed on clean cash. */
+  weeklyUpkeep: number;
 }
 
 export interface ShockHudView {
@@ -60,8 +67,9 @@ export function formatCountdown(seconds: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-/** The HUD snapshot for one family — federal ladder + mutiny risk + the money ledger. */
-export function familyHudView(family: Family): FamilyHudView {
+/** The HUD snapshot for one family — federal ladder + mutiny risk + the money ledger. The
+ * `uncollected` total is passed in (it needs world state) and defaults to 0. */
+export function familyHudView(family: Family, uncollected = 0): FamilyHudView {
   const exposure = federalExposure(family);
   const tier = fedWarningTier(exposure);
   return {
@@ -80,6 +88,8 @@ export function familyHudView(family: Family): FamilyHudView {
     mutinyRisk: atRiskCount(family),
     mutinyImminent: mutinyConditionMet(family),
     crew: family.gangsters.length,
+    uncollected,
+    weeklyUpkeep: familyExpenses(family),
   };
 }
 
@@ -99,8 +109,8 @@ export function realtimeHudView(
     secondsUntilNextWeek: secs,
     weekProgress: weekProgress(state, weekDuration),
     weekCountdownLabel: formatCountdown(secs),
-    player: familyHudView(state.player),
-    rivals: state.rivals.map(familyHudView),
+    player: familyHudView(state.player, totalUncollected(state, state.player.id)),
+    rivals: state.rivals.map((r) => familyHudView(r, totalUncollected(state, r.id))),
     shocks: state.activeShocks.map((s) => ({ kind: s.kind, ticksRemaining: s.ticksRemaining })),
   };
 }

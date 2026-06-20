@@ -135,6 +135,10 @@ export interface GameState {
    * via `update(state, dt)`, independent of the week clock; the economic tick never touches
    * them. Empty until the RTS control layer (RTS-3+) spawns units. */
   units: MovableUnit[];
+  /** Tutorial safety net (RTS-12): how many upcoming collector runs are guaranteed safe from
+   * interception. startCollectorRun marks a run protected and decrements this while > 0, so a
+   * new player's first paycheck cannot be robbed before they're taught the counter. Default 0. */
+  tutorialFreeRuns: number;
   /** Causal incident ledger (RTS-9): a bounded, curated, newest-last list of structured records
    * projected from `log` + settlement summaries. Additive observe layer — no mechanic writes it;
    * the ledger functions do. Empty by default. */

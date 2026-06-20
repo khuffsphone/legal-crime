@@ -31,6 +31,10 @@ export interface MovableUnit {
   carrying?: number;
   /** District a collector's take was gathered from (RTS-5) — governs the deposit skim. */
   originDistrictId?: string;
+  /** Tutorial safety net (RTS-12): a protected collector cannot be intercepted/robbed, so a new
+   * player's first paycheck is guaranteed home. Set by startCollectorRun while the world has
+   * tutorial free-runs left; normal risk resumes once they are spent. */
+  protectedRun?: boolean;
 }
 
 /** Create an idle unit standing at tile (gx, gy). Plain mover — no faction/role (RTS-2/3). */

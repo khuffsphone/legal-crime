@@ -1244,3 +1244,58 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   muscle 0.95, min-gate now successes>failures). /src/sim Phaser-free invariant green; the
   425-test base otherwise untouched and all green.
 - Commit: rts11: Onboarding & Early-Game Tuning — green
+
+## RTS-12 — Defense Tutorial & Cash Legibility — GREEN  (2026-06-20)
+- Summary: Fixed two UAT feel-bads from the first minute — the first paycheck being robbed with
+  no taught counter, and clean cash bleeding invisibly — plus surfaced the grow actions in the
+  iso scene. Observe/guide/tune only; tick/applyCommand settlement untouched, /src/sim Phaser-free.
+  1. TUTORIAL DEFENSE / FIRST-RUN SAFE NET — new additive GameState.tutorialFreeRuns (default 0)
+     + MovableUnit.protectedRun. createInitialState gains { tutorialFreeRuns? } (RNG-neutral).
+     startCollectorRun marks a dispatched run protectedRun and spends one free-run while > 0;
+     interception.canIntercept now refuses to rob a protectedRun collector — so a new player's
+     FIRST paycheck is guaranteed home even with an enemy on top of it. Normal interception risk
+     resumes once the free-run is spent. The defense is TAUGHT: the collect objective tells the
+     player the first run is SAFE and that future runs must be timed when the rival is away (the
+     danger ring telegraphs it), and the protect objective reads "SAFE PASSAGE — FIRST RUN" with
+     the lesson to time/escort. In the scene the protected collector wears a steady brass ring +
+     a "$X ✓ SAFE" tag while the rival visibly hunts it (teaching the threat without the loss).
+  2. CASH LEGIBILITY — FamilyHudView gains uncollected (totalUncollected) and weeklyUpkeep
+     (familyExpenses). The HUD now shows "Upkeep $Y/wk" and a prominent brass "Uncollected $X
+     waiting — press [C] to collect" readout, so the player always sees WHY clean cash drifts
+     (upkeep) and that money is owed but not yet banked. The collect objective reframes takings
+     as "money you're owed but don't have — collect before upkeep outruns income."
+  3. GROW IS ACTIONABLE IN THE ISO VIEW — [R] reinvest (opens the priciest affordable racket in
+     your strongest district via establishOperation) and [G] grease (cycles the four channels,
+     +$10/wk each via setBribe) are wired into IsoScene with status/float beats; the grow
+     objective now points at these reachable keys instead of the [B] card view only.
+- Files: src/sim/types.ts (+tutorialFreeRuns), src/sim/movement.ts (+protectedRun), src/sim/
+  state.ts (+tutorialFreeRuns option/init), src/sim/mapEconomy.ts (mark+spend protected run),
+  src/sim/interception.ts (canIntercept skips protected), src/sim/hud.ts (+uncollected, +weekly
+  Upkeep), src/sim/onboarding.ts (+nextRunIsProtected/carryingRunIsProtected, defense + first-run
+  messaging, grow→[R]/[G]), src/sim/index.ts (exports), src/scenes/IsoScene.ts (tutorialFreeRuns
+  on; uncollected/upkeep HUD readout; protected-collector SAFE visual; [R]/[G] actions; legend/
+  hints); new tests/tutorialDefense.test.ts. No settlement logic changed.
+
+═══ RTS-12 PURE CONTRACT (tutorial state, cash readouts, defense hints) ═══
+- STATE (additive): GameState.tutorialFreeRuns:number (default 0) · MovableUnit.protectedRun?:boolean.
+  createInitialState(seed, { shocks?, startingCrew?, tutorialFreeRuns? }) — all RNG-neutral.
+- INTERCEPTION: canIntercept(enforcer, collector) is false when collector.protectedRun — so
+  detect/resolveInterceptions never rob a protected run. startCollectorRun sets protectedRun and
+  decrements tutorialFreeRuns on dispatch while > 0.
+- HUD: FamilyHudView.uncollected (totalUncollected) + .weeklyUpkeep (familyExpenses); familyHudView
+  (family, uncollected=0).
+- ONBOARDING: nextRunIsProtected(state) · carryingRunIsProtected(state, familyId); firstObjective
+  collect/protect detail now teach first-run safety + timing, grow detail names [R]/[G].
+- Decisions: the safety net is a TUTORIAL flag on the spatial layer (interception lives in the
+  real-time driver, not tick), default 0 so every prior interception/determinism test is unchanged;
+  the telegraph still SHOWS on a protected run so the player learns the threat without paying for
+  it. uncollected/upkeep are pure read selectors. [R]/[G] dispatch the existing establishOperation/
+  setBribe commands (correctness unchanged). New logic asserted; scene visuals human-validated.
+- Gate: typecheck ✅  build ✅  test ✅ (451 total; +13 tutorialDefense: tutorialFreeRuns default/
+  option/RNG-neutral; startCollectorRun marks+spends a protected run, next run unprotected;
+  canIntercept + resolveInterceptions refuse a protected collector (vs. an unprotected control);
+  the first dispatched run banks even with an enemy point-blank; HUD uncollected + weeklyUpkeep
+  (60 for two guards) + default 0; nextRun/carryingRunIsProtected; collect promises SAFE first run,
+  protect reads SAFE PASSAGE vs the normal warning, grow names [R]/[G]). /src/sim Phaser-free
+  invariant green; the 438-test base untouched and all green.
+- Commit: rts12: Defense Tutorial & Cash Legibility — green
