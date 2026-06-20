@@ -35,11 +35,16 @@ import {
   laidOutBusinessIds,
   businessTileOf,
   realtimeHudView,
+  collectorCarryView,
+  threatenedCollectors,
+  anyCollectorInDanger,
   type GameState,
   type MapLayout,
   type Selection,
   type NavGrid,
   type MovableUnit,
+  type ThreatView,
+  type InterceptionEvent,
 } from '../sim';
 import { NOIR_PALETTE, NOIR_FONT, heatLabel, federalWarningLabel, shockFlavor } from './theme';
 import {
@@ -79,11 +84,14 @@ const BLOCKS: Block[] = [
   { gx: 9, gy: 9, height: 40, color: NOIR_PALETTE.charcoal },
 ];
 
-/** A unit and its render objects: a selection ring (ground) + a token marker. */
+/** A unit and its render objects: a selection ring (ground) + a token marker, plus optional
+ * collector-only legibility props (a cash tag that follows it, a danger ring when threatened). */
 interface UnitView {
   unit: MovableUnit;
   ring: Phaser.GameObjects.Ellipse;
   marker: Phaser.GameObjects.Container;
+  cashTag?: Phaser.GameObjects.Text;
+  dangerRing?: Phaser.GameObjects.Ellipse;
 }
 
 export class IsoScene extends Phaser.Scene {
@@ -197,13 +205,25 @@ export class IsoScene extends Phaser.Scene {
     this.attachMarker(unit, color);
   }
 
-  /** Give an existing world unit (already on state.units) a selection ring + token marker. */
+  /** Give an existing world unit (already on state.units) a selection ring + token marker, and
+   * for collectors the RTS-8 legibility props: a cash tag that follows it and a danger ring. */
   private attachMarker(unit: MovableUnit, color: string): void {
     const ring = this.add
       .ellipse(0, 4, 30, 16)
       .setStrokeStyle(2, hex(NOIR_PALETTE.brass), 1)
       .setVisible(false);
-    this.units.push({ unit, ring, marker: this.makeMarker(color, unit.id, isoUnitKeyForRole(unit.role)) });
+    const view: UnitView = { unit, ring, marker: this.makeMarker(color, unit.id, isoUnitKeyForRole(unit.role)) };
+    if (unit.role === 'collector') {
+      view.dangerRing = this.add
+        .ellipse(0, 4, 40, 22)
+        .setStrokeStyle(3, hex(NOIR_PALETTE.blood), 1)
+        .setVisible(false);
+      view.cashTag = this.add
+        .text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' })
+        .setOrigin(0.5, 1)
+        .setVisible(false);
+    }
+    this.units.push(view);
   }
 
   /** A unit marker: a real iso sprite (RTS-7, bottom-center) when its texture loaded, otherwise
@@ -230,39 +250,73 @@ export class IsoScene extends Phaser.Scene {
 
     // Advance the whole real-time world (movement + interception + week clock).
     const res = advanceWorld(this.state, dt);
-    for (const ev of res.interceptions) this.flashAmbush(ev.collectorId);
+    for (const ev of res.interceptions) this.flashAmbush(ev);
     // RTS-5: bank any collector that reached its HQ this frame.
     for (const dep of processCollectorArrivals(this.state, this.layout)) {
       this.flashDeposit(dep.collectorId, dep.banked);
     }
+
+    // RTS-8 legibility/tension: which carrying collectors are threatened, by id.
+    const threats = new Map<string, ThreatView>(
+      threatenedCollectors(this.state).map((t) => [t.collectorId, t]),
+    );
+    const pulse = 0.55 + 0.45 * Math.abs(Math.sin(this.time.now / 200)); // 0.1..1 throb
 
     for (const v of this.units) {
       const s = unitScreenPos(v.unit);
       const t = v.unit.pos;
       const depth = depthValue(Math.round(t.gx), Math.round(t.gy)) * 10 + 8;
       v.marker.setPosition(s.x, s.y).setDepth(depth);
-      v.ring.setPosition(s.x, s.y + 4).setDepth(depth - 1).setVisible(isSelected(this.selection, v.unit.id));
+
+      const selected = isSelected(this.selection, v.unit.id);
+      v.ring.setPosition(s.x, s.y + 4).setDepth(depth - 1).setVisible(selected);
+      if (selected) v.ring.setAlpha(pulse); // RTS-8: selected units throb so the command reads
+
+      // RTS-8 collector legibility: a cash tag follows a carrying collector; a danger ring throbs
+      // (amber when an enforcer is approaching, blood-red when an ambush is imminent).
+      if (v.cashTag && v.dangerRing) {
+        const carry = collectorCarryView(v.unit);
+        v.cashTag.setVisible(carry.vulnerable).setPosition(s.x, s.y - 42).setDepth(depth + 1);
+        if (carry.vulnerable) v.cashTag.setText(`$${carry.carrying}`);
+
+        const threat = carry.vulnerable ? threats.get(v.unit.id) : undefined;
+        if (threat) {
+          const danger = threat.level === 'ambush' ? NOIR_PALETTE.blood : NOIR_PALETTE.brass;
+          v.dangerRing.setStrokeStyle(3, hex(danger), pulse)
+            .setPosition(s.x, s.y + 4).setDepth(depth - 1).setVisible(true);
+          v.cashTag.setColor(danger);
+        } else {
+          v.dangerRing.setVisible(false);
+          v.cashTag.setColor(NOIR_PALETTE.brass);
+        }
+      }
     }
   }
 
-  /** Render the ambush: a noir flash over the robbed collector (RTS-4). */
-  private flashAmbush(collectorId: string): void {
-    if (this.robbedCollectors.has(collectorId)) return;
-    this.robbedCollectors.add(collectorId);
-    const v = this.units.find((u) => u.unit.id === collectorId);
+  /** Render the ambush as a real beat: an expanding shock ring, a camera shake, and the stolen
+   * amount called out over the robbed collector (RTS-8 presentation of the RTS-4 event). */
+  private flashAmbush(ev: InterceptionEvent): void {
+    if (this.robbedCollectors.has(ev.collectorId)) return;
+    this.robbedCollectors.add(ev.collectorId);
+    const v = this.units.find((u) => u.unit.id === ev.collectorId);
     if (!v) return;
     const s = unitScreenPos(v.unit);
+
+    // Expanding shock ring.
+    const burst = this.add.circle(s.x, s.y - 6, 8).setStrokeStyle(4, hex(NOIR_PALETTE.blood), 1).setDepth(100001);
+    this.tweens.add({ targets: burst, scale: 6, alpha: 0, duration: 600, onComplete: () => burst.destroy() });
+    this.cameras.main.shake(220, 0.004);
+
     const flash = this.add
-      .text(s.x, s.y - 44, '— ROBBED —', {
-        fontFamily: NOIR_FONT,
-        fontSize: '16px',
-        color: NOIR_PALETTE.blood,
-        fontStyle: 'bold',
+      .text(s.x, s.y - 48, `— ROBBED  $${ev.amount} —`, {
+        fontFamily: NOIR_FONT, fontSize: '17px', color: NOIR_PALETTE.blood, fontStyle: 'bold',
       })
       .setOrigin(0.5, 1)
-      .setDepth(100001);
-    this.tweens.add({ targets: flash, y: s.y - 80, alpha: 0, duration: 1600, onComplete: () => flash.destroy() });
-    this.refreshStatus('collector ambushed — the take is gone');
+      .setDepth(100002);
+    this.tweens.add({ targets: flash, y: s.y - 92, alpha: 0, duration: 1800, onComplete: () => flash.destroy() });
+    if (v.cashTag) v.cashTag.setVisible(false);
+    if (v.dangerRing) v.dangerRing.setVisible(false);
+    this.refreshStatus(`collector ambushed — $${ev.amount} gone to ${ev.attackerFaction}`);
   }
 
   /** Render a safe deposit: a brass flash over the collector that banked its take (RTS-5). */
@@ -315,10 +369,27 @@ export class IsoScene extends Phaser.Scene {
   private commandMove(p: Phaser.Input.Pointer): void {
     if (this.selection.ids.length === 0) return;
     const target = screenToTile(p.worldX, p.worldY);
-    if (!isCommandableTile(target, this.navGrid)) return;
+    if (!isCommandableTile(target, this.navGrid)) {
+      this.drawTargetMarker(target, false); // RTS-8: an invalid target reads as a rejected click
+      return;
+    }
     const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, target, this.navGrid);
+    this.drawTargetMarker(target, res.moved.length > 0);
     this.refreshStatus(`moving ${res.moved.length} → (${target.gx},${target.gy})` +
       (res.failed.length ? ` · ${res.failed.length} blocked` : ''));
+  }
+
+  /** RTS-8 command feedback: a brief marker at the clicked tile so the player sees the command
+   * register — a brass diamond on a valid move, a blood X on a rejected one. */
+  private drawTargetMarker(tile: { gx: number; gy: number }, ok: boolean): void {
+    const c = gridToScreen(tile.gx, tile.gy);
+    const color = ok ? NOIR_PALETTE.brass : NOIR_PALETTE.blood;
+    const corners = tileCorners(tile.gx, tile.gy).map((pt) => ({ x: pt.x - c.x, y: pt.y - c.y }));
+    const mark = this.add
+      .polygon(c.x, c.y, corners)
+      .setStrokeStyle(3, hex(color), 1)
+      .setDepth(depthValue(tile.gx, tile.gy) * 10 + 9);
+    this.tweens.add({ targets: mark, scale: ok ? 0.4 : 1, alpha: 0, duration: 650, onComplete: () => mark.destroy() });
   }
 
   // ── map ────────────────────────────────────────────────────────────────────────────────
@@ -439,11 +510,13 @@ export class IsoScene extends Phaser.Scene {
     void ISO_TILE_HALF_HEIGHT;
   }
 
-  /** Pull the real-time HUD view-model and paint the week timer, ledger, and alerts (RTS-6). */
+  /** Pull the real-time HUD view-model and paint the week timer, ledger, and alerts (RTS-6),
+   * with RTS-8 emphasis: federal colour rises with tier, a collector-in-danger alert surfaces. */
   private refreshHud(): void {
     if (!this.hudPanel) return;
     const hud = realtimeHudView(this.state);
     const p = hud.player;
+    const danger = anyCollectorInDanger(this.state);
     const lines = [
       `WEEK ${hud.week}   next settlement in ${hud.weekCountdownLabel}`,
       `Clean $${p.cleanCash} · Dirty $${p.dirtyCash}   Heat ${p.heat} (${heatLabel(p.heat)})` +
@@ -452,10 +525,13 @@ export class IsoScene extends Phaser.Scene {
         (p.bustArmed ? '  ⚠ WARRANT ISSUED' : ''),
       `Crew ${p.crew}` + (p.mutinyImminent ? `  ⚠ MUTINY BREWING (${p.mutinyRisk})` : ''),
     ];
+    if (danger) lines.push('⚠ A COLLECTOR IS UNDER THREAT — get it to HQ');
     if (hud.shocks.length > 0) {
       lines.push('Shocks: ' + hud.shocks.map((s) => `${shockFlavor(s.kind as ShockKind)} (${s.ticksRemaining})`).join(', '));
     }
     this.hudPanel.setText(lines.join('\n'));
+    // The ledger panel tints toward blood as federal pressure / collector danger climbs.
+    this.hudPanel.setColor(p.federalTier >= 2 || danger ? NOIR_PALETTE.blood : NOIR_PALETTE.fog);
 
     const warn = p.federalTier > 0 ? federalWarningLabel(p.federalTier) : null;
     if (this.warningBanner) {

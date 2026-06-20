@@ -1015,3 +1015,53 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   and captures input. The economic settlement (tick / applyCommand) was never modified — new
   systems wired to spatial triggers and reused the existing crediting/skim/federal/mutiny/shock
   logic verbatim. RUN_LOG remained append-only.
+
+## RTS-8 — Game-Feel & Legibility — GREEN  (2026-06-20)
+- Summary: Made the signature collector-run-and-ambush loop READABLE and TENSE — presentation,
+  feedback, and feel only; NO new mechanics and NO economy/settlement change. New PURE,
+  Phaser-free, unit-tested module `src/sim/gamefeel.ts` exposes READ-ONLY derived views over
+  existing spatial state (reusing the RTS-4 interception predicates): collectorCarryView /
+  carryingCollectors (the value walking the map + whether it is robbable in transit) and a
+  positions-based threat selector — collectorThreat / threatenedCollectors / anyCollectorInDanger
+  — that flags a carrying collector with a hostile enforcer in the proximity band (threatLevel:
+  safe / threatened ≤ DANGER_RADIUS / ambush ≤ INTERCEPT_RADIUS). IsoScene renders the feel:
+    1. COLLECTOR LEGIBILITY — a "$X" cash tag follows a carrying collector (hidden when empty).
+    2. TENSION CUES — a throbbing danger ring on a threatened collector, amber when an enforcer
+       approaches, blood-red at ambush range; the cash tag recolours with the threat.
+    3. THE AMBUSH MOMENT — interception is a beat: an expanding shock ring + a camera shake +
+       "— ROBBED  $amount —" called out over the collector (reuses the RTS-4 InterceptionEvent).
+    4. COMMAND FEEDBACK — the selection ring throbs; a move drops a brass diamond at the target
+       tile (a blood X on a rejected/blocked click) so the command visibly registers.
+    5. STATE READABILITY — the HUD adds a "collector under threat" alert and tints the ledger
+       toward blood as federal pressure / collector danger climbs.
+  /src/sim stays Phaser-free; the economic settlement and all mechanic logic are untouched.
+- Files: src/sim/gamefeel.ts (new), src/sim/constants.ts (+DANGER_RADIUS), src/sim/index.ts
+  (gamefeel exports), src/scenes/IsoScene.ts (cash tag + danger ring per collector, threat-driven
+  cues, ambush burst/shake/amount, move-target marker, selection-ring throb, HUD emphasis); new
+  tests/gamefeel.test.ts. No economic/mechanic logic changed.
+
+═══ GAME-FEEL DERIVED-VIEW API — THE RTS-8 SELECTORS (read-only; future HUD/AI can reuse) ═══
+- CONSTANTS: DANGER_RADIUS = 2.5 tiles (proximity-warning band, wider than INTERCEPT_RADIUS 0.75).
+- CARRY VIEW (src/sim/gamefeel.ts):
+    collectorCarryView(unit): { id, carrying, vulnerable }   // vulnerable = collector & carrying>0
+    carryingCollectors(state): CollectorCarryView[]           // the values walking the map
+- THREAT VIEW (positions-based; reuses areHostile/unitDistance/isCarryingCollector):
+    threatLevelForDistance(d): 'ambush'|'threatened'|'safe'   // ≤INTERCEPT_RADIUS / ≤DANGER_RADIUS
+    isThreatTo(other, collector): boolean                     // a hostile ENFORCER only
+    collectorThreat(collector, units): ThreatView { collectorId, carrying, nearestEnemyId,
+        distance, level }                                     // nearest hostile enforcer + level
+    threatenedCollectors(state): ThreatView[]                 // carrying collectors not 'safe'
+    anyCollectorInDanger(state): boolean                      // HUD alert pip
+  All pure reads — never mutate state; deterministic (nearest by distance, ties by array order).
+- Decisions: feel is built entirely from READ-ONLY selectors so no mechanic or economy number
+  moves — the threat band is a presentation widening of the RTS-4 ambush radius, not a gameplay
+  change (interception still fires only at INTERCEPT_RADIUS). Threats come from hostile enforcers
+  (who can actually ambush), matching canIntercept. Empty collectors are always 'safe' (nothing at
+  stake). The pure selectors are fully asserted; the Phaser rendering (tags, rings, burst, shake,
+  markers, HUD tint) is human-validated.
+- Gate: typecheck ✅  build ✅  test ✅ (402 total; +13 gamefeel: carry view for carrying/empty/
+  non-collector + carryingCollectors filter; threatLevelForDistance band boundaries (inclusive);
+  isThreatTo hostile-enforcer-only; collectorThreat threatened/ambush/safe + nearest-of-several +
+  empty-always-safe; threatenedCollectors flags-exactly-the-right-ones + none-when-far +
+  determinism). /src/sim Phaser-free invariant green; the 389-test base untouched and all green.
+- Commit: rts8: Game-Feel & Legibility — green

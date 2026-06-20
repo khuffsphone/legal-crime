@@ -67,6 +67,18 @@ export {
   type InterceptionEvent,
 } from './interception';
 export {
+  collectorCarryView,
+  carryingCollectors,
+  isThreatTo,
+  threatLevelForDistance,
+  collectorThreat,
+  threatenedCollectors,
+  anyCollectorInDanger,
+  type CollectorCarryView,
+  type ThreatView,
+  type ThreatLevel,
+} from './gamefeel';
+export {
   formatCountdown,
   familyHudView,
   realtimeHudView,

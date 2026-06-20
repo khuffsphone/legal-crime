@@ -177,3 +177,7 @@ export const PICK_RADIUS = 0.7; // tiles
 // of a carrying collector robs it; the ambush adds this much heat to the attacking family.
 export const INTERCEPT_RADIUS = 0.75; // tiles
 export const INTERCEPT_HEAT = 4; // heat the attacker draws for the robbery
+
+// RTS-8 — game-feel. Proximity-warning band (wider than INTERCEPT_RADIUS): a carrying collector
+// with a hostile enforcer within this distance is flagged "threatened" before the ambush lands.
+export const DANGER_RADIUS = 2.5; // tiles
