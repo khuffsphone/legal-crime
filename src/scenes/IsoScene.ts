@@ -32,6 +32,9 @@ import {
   buildMapLayout,
   startCollectorRun,
   processCollectorArrivals,
+  pendingCollection,
+  extortAtTile,
+  firstObjective,
   hqTileOf,
   businessTileOf,
   businessAtTile,
@@ -116,7 +119,6 @@ export class IsoScene extends Phaser.Scene {
   private selection: Selection = emptySelection();
   private pressX = 0;
   private pressY = 0;
-  private collectorId?: string;
   private robbedCollectors = new Set<string>();
 
   // HUD objects
@@ -132,6 +134,9 @@ export class IsoScene extends Phaser.Scene {
   private tooltipText?: Phaser.GameObjects.Text;
   private legend?: Phaser.GameObjects.Container;
   private nightVeil?: Phaser.GameObjects.Rectangle;
+  private objTitle?: Phaser.GameObjects.Text;
+  private objDetail?: Phaser.GameObjects.Text;
+  private highlight?: Phaser.GameObjects.Ellipse;
 
   constructor() {
     super('IsoScene');
@@ -142,7 +147,8 @@ export class IsoScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBackgroundColor(PAL.soot);
 
-    this.state = createInitialState(1);
+    // RTS-11: start with a small loyal crew so the opening is fair (muscle + defense).
+    this.state = createInitialState(1, { startingCrew: true });
     this.layout = buildMapLayout(this.state, COLS, ROWS);
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
 
@@ -157,7 +163,37 @@ export class IsoScene extends Phaser.Scene {
     this.setupSelectionInput();
     this.setupHoverTooltip();
     this.drawHud();
+    this.buildObjective();
     this.buildLegend();
+  }
+
+  // ── onboarding objective (RTS-11) ────────────────────────────────────────────────────────
+
+  private buildObjective(): void {
+    // A pulsing world-space ring over the suggested first target.
+    this.highlight = this.add.ellipse(0, 0, 96, 50).setStrokeStyle(3, PAL.brass, 1).setVisible(false);
+    // A persistent top-centre objective banner.
+    this.objTitle = this.add.text(this.scale.width / 2, 12, '', { fontFamily: NOIR_FONT, fontSize: '16px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
+    this.objDetail = this.add.text(this.scale.width / 2, 34, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, align: 'center', wordWrap: { width: 520 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
+  }
+
+  private refreshObjective(): void {
+    if (!this.objTitle || !this.objDetail || !this.highlight) return;
+    const o = firstObjective(this.state);
+    const cx = this.scale.width / 2;
+    this.objTitle.setText(`▶  ${o.title}`).setPosition(cx, 12).setColor(o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass);
+    this.objDetail.setText(o.detail).setPosition(cx, 34);
+
+    if (o.step === 'extort' && o.targetBusinessId) {
+      const t = businessTileOf(this.layout, o.targetBusinessId);
+      if (t) {
+        const c = gridToScreen(t.gx, t.gy);
+        const pulse = 1 + 0.12 * Math.sin(this.time.now / 180);
+        this.highlight.setVisible(true).setPosition(c.x, c.y + 4).setScale(pulse).setDepth(depthValue(t.gx, t.gy) * 10 + 9);
+        return;
+      }
+    }
+    this.highlight.setVisible(false);
   }
 
   // ── the city ─────────────────────────────────────────────────────────────────────────────
@@ -219,18 +255,16 @@ export class IsoScene extends Phaser.Scene {
   // ── units ────────────────────────────────────────────────────────────────────────────────
 
   private spawnUnits(): void {
-    this.addUnit(spawnUnit('muscle-1', 6, 2), 'player');
-    this.addUnit(spawnUnit('muscle-2', 7, 2), 'player');
+    // Your two starting button men, near the home front (the player drives the first move now).
+    this.addUnit(spawnUnit('muscle-1', 3, 2), 'player');
+    this.addUnit(spawnUnit('muscle-2', 4, 2), 'player');
+    // A rival enforcer prowls — the threat your collector must dodge once cash is on the street.
+    this.addUnit(spawnEnforcer('rival-gun', 14, 1, 'rival-a', 2.2), 'rival');
+  }
 
-    const front = this.state.districts[0].businesses[0];
-    front.extortedBy = 'player';
-    front.uncollected = 600;
-    const run = startCollectorRun(this.state, this.layout, 'player', 'district-0', this.navGrid);
-    if (run.unit) {
-      this.collectorId = run.unit.id;
-      this.attachView(run.unit, 'player');
-    }
-    this.addUnit(spawnEnforcer('rival-gun', 14, 1, 'rival-a', 2.4), 'rival');
+  /** The nearest player collector currently carrying a take, if any (the rival's prey). */
+  private playerCarrier(): MovableUnit | undefined {
+    return this.state.units.find((u) => u.role === 'collector' && u.factionId === 'player' && (u.carrying ?? 0) > 0);
   }
 
   private addUnit(unit: MovableUnit, faction: 'player' | 'rival'): void {
@@ -256,10 +290,10 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private updateUnits(dt: number): void {
-    // rival hunts a carrying collector
-    const collector = this.collectorId ? this.state.units.find((u) => u.id === this.collectorId) : undefined;
+    // rival hunts whichever player collector is carrying cash
+    const collector = this.playerCarrier();
     const gun = this.state.units.find((u) => u.id === 'rival-gun');
-    if (collector && gun && (collector.carrying ?? 0) > 0) issueMove(gun, unitTile(collector), this.navGrid);
+    if (collector && gun) issueMove(gun, unitTile(collector), this.navGrid);
 
     const obs = observeWorld(this.state, dt);
     this.state = obs.state;
@@ -381,6 +415,52 @@ export class IsoScene extends Phaser.Scene {
     this.tweens.add({ targets: mark, scale: ok ? 0.4 : 1, alpha: 0, duration: 650, onComplete: () => mark.destroy() });
   }
 
+  // ── guided onboarding actions (RTS-11) ───────────────────────────────────────────────────
+
+  /** [E] — lean on the suggested front. Shows a clear success / "resisted" beat either way. */
+  private commandExtort(): void {
+    const obj = firstObjective(this.state);
+    if (obj.step !== 'extort' || !obj.targetBusinessId) { this.setStatus('no shakedown target — expand your turf first'); return; }
+    const tile = businessTileOf(this.layout, obj.targetBusinessId);
+    if (!tile) return;
+    extortAtTile(this.state, this.layout, 'player', tile);
+    this.state = harvestIncidents(this.state); // log the attempt into The Wire
+    const c = gridToScreen(tile.gx, tile.gy);
+    const insp = inspectBusiness(this.state, obj.targetBusinessId);
+    if (insp?.payingProtection) {
+      this.seedBackPay(obj.targetBusinessId);
+      this.floatText(c.x, c.y - 30, 'NOW PAYS PROTECTION', NOIR_PALETTE.brass);
+      this.setStatus(`${insp.name} pays protection — collect the take with [C]`);
+    } else {
+      this.floatText(c.x, c.y - 30, 'RESISTED — try again', NOIR_PALETTE.blood);
+      this.setStatus('they held out — extortion is a roll, press [E] again');
+    }
+  }
+
+  /** [C] — send a collector from the first district that has player takings waiting. */
+  private commandCollect(): void {
+    for (const d of this.state.districts) {
+      if (pendingCollection(this.state, 'player', d.id) > 0) {
+        const run = startCollectorRun(this.state, this.layout, 'player', d.id, this.navGrid);
+        if (run.unit) { this.attachView(run.unit, 'player'); this.setStatus(`collector dispatched from ${d.name} — walk it home`); return; }
+      }
+    }
+    this.setStatus('nothing to collect yet — takings build each week after a shakedown');
+  }
+
+  /** Give a freshly-shaken front a little back-pay so the collect step is immediately playable. */
+  private seedBackPay(businessId: string): void {
+    for (const d of this.state.districts) {
+      const b = d.businesses.find((x) => x.id === businessId);
+      if (b) { b.uncollected = (b.uncollected ?? 0) + 320; return; }
+    }
+  }
+
+  private floatText(x: number, y: number, text: string, color: string): void {
+    const t = this.add.text(x, y, text, { fontFamily: NOIR_FONT, fontSize: '15px', color, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002);
+    this.tweens.add({ targets: t, y: y - 36, alpha: 0, duration: 1500, onComplete: () => t.destroy() });
+  }
+
   // ── hover tooltip ────────────────────────────────────────────────────────────────────────
 
   private setupHoverTooltip(): void {
@@ -457,6 +537,8 @@ export class IsoScene extends Phaser.Scene {
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       cam.setZoom(Phaser.Math.Clamp(cam.zoom - dy * 0.001, MIN_ZOOM, MAX_ZOOM));
     });
+    this.input.keyboard?.on('keydown-E', () => this.commandExtort());
+    this.input.keyboard?.on('keydown-C', () => this.commandCollect());
     this.input.keyboard?.on('keydown-L', () => this.toggleFeed());
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
     this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
@@ -466,6 +548,7 @@ export class IsoScene extends Phaser.Scene {
     const dt = delta / 1000;
     this.updateUnits(dt);
     this.refreshHud();
+    this.refreshObjective();
     this.refreshFeed();
     this.refreshNight();
 
@@ -550,7 +633,8 @@ export class IsoScene extends Phaser.Scene {
     const sel = this.selection.ids;
     const base = sel.length === 0 ? 'Click a unit to select · right-click to move' : `selected: ${sel.join(', ')}`;
     const sh = this.state.activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ');
-    this.statusText.setText((action ? `${base}  ·  ${action}` : base) + (sh ? `   |  ${sh}` : ''));
+    const hint = '  ·  [E] shake down · [C] collect';
+    this.statusText.setText((action ? `${base}  ·  ${action}` : base + hint) + (sh ? `   |  ${sh}` : ''));
   }
 
   private toggleFeed(): void {
@@ -596,16 +680,17 @@ export class IsoScene extends Phaser.Scene {
       'Prohibition Chicago. You run a crew. Build an empire before the law,',
       'your rivals, or your own men put you in the river.',
       '',
-      'THE LOOP',
-      '  • Shake down a storefront → a brass % means it pays protection.',
-      '  • A COLLECTOR walks the take through the streets to your HQ.',
+      'THE LOOP  (follow the ▶ objective up top)',
+      '  • [E] Shake down the glowing storefront → a brass % means it pays.',
+      '    It can take a try or two — extortion is a roll, not a promise.',
+      '  • [C] Send a COLLECTOR — it walks the take through the streets to HQ.',
       '  • Guard it — a rival enforcer who catches it steals the cash.',
       '  • Bank it, reinvest in rackets, and bribe the four channels:',
       '    The Beat · The Bench · City Hall · The Bureau.',
       '',
       'CONTROLS',
       '  left-click select · shift adds · right-click move · drag pan · wheel zoom',
-      '  [L] the wire (incident feed) · [H] this help · [B] card view',
+      '  [E] shake down · [C] collect · [L] the wire · [H] this help · [B] card view',
     ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
     const hint = this.add.text(0, h / 2 - 26, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
     this.legend = this.add.container(cx, cy, [bg, title, body, hint]).setScrollFactor(0).setDepth(100100);

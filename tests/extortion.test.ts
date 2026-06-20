@@ -24,19 +24,21 @@ function extort(familyId: string, businessId: string): ExtortCommand {
 }
 
 describe('extortSuccessChance', () => {
-  it('equals control/100 with no muscle', () => {
+  it('scales from EXTORT_BASE_CHANCE at 0 control to 1.0 at full control (RTS-11 floor)', () => {
     const s = createInitialState(1);
     s.districts[0].businesses = [front('f1', 100)];
-    s.districts[0].control.player = 40;
-    expect(extortSuccessChance(s, 'player', 'f1')).toBeCloseTo(0.4, 6);
+    s.districts[0].control.player = 40; // 0.5 + 0.4*0.5 = 0.70
+    expect(extortSuccessChance(s, 'player', 'f1')).toBeCloseTo(0.7, 6);
+    s.districts[0].control.player = 0;
+    expect(extortSuccessChance(s, 'player', 'f1')).toBeCloseTo(0.5, 6);
   });
 
   it('adds a muscle bonus of 0.04 per skill point and clamps to 1', () => {
     const s = createInitialState(1);
     s.districts[0].businesses = [front('f1', 100)];
-    s.districts[0].control.player = 50;
-    s.player.gangsters = [guard('g1', 5, 'district-0')]; // +0.20
-    expect(extortSuccessChance(s, 'player', 'f1')).toBeCloseTo(0.7, 6);
+    s.districts[0].control.player = 50; // base 0.75
+    s.player.gangsters = [guard('g1', 5, 'district-0')]; // +0.20 -> 0.95
+    expect(extortSuccessChance(s, 'player', 'f1')).toBeCloseTo(0.95, 6);
 
     s.districts[0].control.player = 100;
     s.player.gangsters = [guard('g1', 10, 'district-0')]; // 1.0 + 0.4 -> clamp 1
@@ -100,14 +102,15 @@ describe('extort command — resolution', () => {
     for (let seed = 0; seed < 60; seed++) {
       const s = createInitialState(seed);
       s.districts[0].businesses = [front('f1', 100)];
-      s.districts[0].control.player = EXTORT_MIN_CONTROL; // chance 0.2
+      s.districts[0].control.player = EXTORT_MIN_CONTROL; // 0.5 + 0.2*0.5 = 0.60
       applyCommand(s, extort('player', 'f1'));
       if (s.districts[0].businesses[0].extortedBy === 'player') successes++;
       else failures++;
     }
-    // At 0.2 we expect mostly failures but some successes — both branches exercised.
-    expect(successes).toBeGreaterThan(0);
-    expect(failures).toBeGreaterThan(successes);
+    // RTS-11: at the minimum gate the floor makes the roll lean favorable (≈0.60), but it is
+    // still a roll — both branches occur, with successes the majority.
+    expect(successes).toBeGreaterThan(failures);
+    expect(failures).toBeGreaterThan(0);
   });
 
   it('is deterministic: same seed yields the same extortion outcome', () => {

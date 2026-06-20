@@ -91,6 +91,15 @@ export {
   type DistrictInspection,
 } from './inspect';
 export {
+  hasEstablishedIncome,
+  suggestedExtortTarget,
+  hasCarryingCollector,
+  firstObjective,
+  type Objective,
+  type ObjectiveStep,
+  type ExtortTarget,
+} from './onboarding';
+export {
   formatCountdown,
   familyHudView,
   realtimeHudView,

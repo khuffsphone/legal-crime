@@ -6,6 +6,10 @@ import type { OperationKind } from './types';
 export const EXTORT_RATE = 0.3; // fraction of front base income paid to extorter
 export const EXTORT_MIN_CONTROL = 20; // min control points to extort in a district
 export const EXTORT_HEAT = 3; // heat per tick per extorted business
+// RTS-11 onboarding tuning: extortion success scales from EXTORT_BASE_CHANCE (at 0 control) up
+// to 1.0 (at full control), plus the muscle bonus. The floor makes a first racket reliably
+// achievable in a try or two so a new player establishes income before the failure timers bite.
+export const EXTORT_BASE_CHANCE = 0.5; // success floor at zero control (was effectively 0)
 
 export const OPERATION_COST: Record<OperationKind, number> = {
   numbers: 500,

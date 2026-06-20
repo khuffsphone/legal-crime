@@ -11,6 +11,7 @@ import {
   CONTROL_MAX,
   EXPAND_BASE_GAIN,
   EXPAND_COST,
+  EXTORT_BASE_CHANCE,
   EXTORT_HEAT,
   EXTORT_MIN_CONTROL,
   GANGSTER_UPKEEP_PER_SKILL,
@@ -173,9 +174,10 @@ export function muscleInDistrict(family: Family, districtId: string): number {
 }
 
 /**
- * Probability an extortion attempt succeeds: control/100 plus a muscle bonus, clamped to
- * [0, 1]. With full control (100) and no muscle the chance is exactly 1 (guaranteed); the
- * muscle term lets weaker footholds still push toward success.
+ * Probability an extortion attempt succeeds. Scales from EXTORT_BASE_CHANCE (at zero control)
+ * linearly up to 1 (at full control), plus a muscle bonus of 0.04 per guarding-skill point,
+ * clamped to [0, 1]. The base floor (RTS-11) makes a first racket reliably achievable in a try
+ * or two; with full control (100) the chance is still exactly 1 (guaranteed).
  */
 export function extortSuccessChance(
   state: GameState,
@@ -189,7 +191,7 @@ export function extortSuccessChance(
     const fam = findFamily(state, familyId);
     return fam ? muscleInDistrict(fam, found.district.id) : 0;
   })();
-  const raw = control / 100 + 0.04 * muscle;
+  const raw = EXTORT_BASE_CHANCE + (control / 100) * (1 - EXTORT_BASE_CHANCE) + 0.04 * muscle;
   return raw < 0 ? 0 : raw > 1 ? 1 : raw;
 }
 

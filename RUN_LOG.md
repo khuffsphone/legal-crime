@@ -1183,3 +1183,64 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   police + control; dispatched-collector integration). /src/sim Phaser-free invariant green; the
   415-test base untouched and all green.
 - Commit: rts10: Vision Pass — Living City — green
+
+## RTS-11 — Onboarding & Early-Game Tuning — GREEN  (2026-06-20)
+- Summary: Fixed the punishing/opaque opening so a new player can reliably establish income in
+  the first minute, WITHOUT dumbing the systems down — onramp tuning + guidance/feedback only;
+  the economic settlement (tick) and command correctness are unchanged. Three pure, unit-tested
+  levers + scene UX:
+  1. EARLY-GAME FAIRNESS — extortion now has a success FLOOR. extortSuccessChance scales from
+     EXTORT_BASE_CHANCE (0.5) at zero control up to 1.0 at full control, plus the 0.04/skill
+     muscle bonus (was control/100, i.e. ~0.30 at the home front). The home front (control 30)
+     is now a 0.65 first roll → ~0.88 cumulative over two tries; with the new starting crew's
+     muscle it is ~0.89 on the FIRST press. Full-control (100) is still guaranteed (1.0).
+  2. STARTING CREW — createInitialState gains an additive { startingCrew?: boolean } that seeds
+     the player with two loyal guards (skill 3, loyalty 70, guarding district-0). FIXED stats,
+     no RNG draw → the seeded PRNG cursor and every determinism test are byte-identical with or
+     without it; default OFF so all prior tests are untouched. The live scene turns it ON. Gives
+     extortion muscle + defense (familyStrength 6) and a non-zero crew; two guards (< MUTINY_MIN_
+     CREW 3) cannot mutiny early.
+  3. ONBOARDING GUIDANCE (pure src/sim/onboarding.ts + IsoScene render) — firstObjective(state)
+     drives a persistent top-centre ▶ objective banner and a pulsing highlight over the suggested
+     first target: extort → collect → protect → grow. suggestedExtortTarget points at the first
+     legal front; hasEstablishedIncome / hasCarryingCollector gate the steps. The player presses
+     [E] to shake down the glowing front and [C] to send a collector — both guided by the
+     objective; a successful shakedown seeds a little back-pay so [C] is immediately playable.
+  4. READABLE FAILURE — [E] shows a clear beat either way: "NOW PAYS PROTECTION" (brass) on
+     success or "RESISTED — try again" (blood) on a failed roll, plus a status line saying
+     extortion is a roll; both land in The Wire (ledger extort-success/extort-fail).
+  5. PACING SANITY — WEEK_DURATION_SECONDS 120 (2 min, room to breathe), MOVE_SPEED 2.5 (a
+     collector crosses the map in ~8s) left as-is; federal exposure stays low for a fresh player
+     (low heat/dirty) and the live scene keeps shocks OFF, so no random gang-war "river" death
+     ambushes a defenseless opening. Documented, not changed.
+- Files: src/sim/constants.ts (+EXTORT_BASE_CHANCE), src/sim/commands.ts (extortSuccessChance
+  floor formula), src/sim/state.ts (+startingCrew option, fixed crew), src/sim/onboarding.ts
+  (new, pure), src/sim/index.ts (exports), src/scenes/IsoScene.ts (startingCrew on; player-driven
+  [E] extort / [C] collect with success/resisted beats; ▶ objective banner + pulsing target
+  highlight; rival hunts any carrying collector; legend/hints updated); updated tests/
+  extortion.test.ts (new tuned-chance assertions); new tests/onboarding.test.ts. tick/applyCommand
+  settlement logic unchanged.
+
+═══ ONBOARDING API — THE RTS-11 PURE CONTRACT (tutorials / objective UI / AI hints) ═══
+- TUNING: EXTORT_BASE_CHANCE = 0.5. extortSuccessChance = clamp(BASE + (control/100)*(1-BASE) +
+  0.04*muscle, 0, 1). createInitialState(seed, { shocks?, startingCrew? }) — startingCrew seeds
+  two fixed guards on the player (no RNG draw; default off).
+- ONBOARDING (src/sim/onboarding.ts):
+    hasEstablishedIncome(state, familyId): boolean   (extorts a front OR owns an op)
+    suggestedExtortTarget(state, familyId): { businessId, districtId, districtName } | null
+    hasCarryingCollector(state, familyId): boolean
+    firstObjective(state): { step:'extort'|'collect'|'protect'|'grow', title, detail,
+        targetBusinessId, done }   — the single next move to teach. Pure read.
+- Decisions: the floor is a TUNING constant (not a rewrite) — extortion still gates on control,
+  still rolls, still deterministic; only the probability shifts. The starting crew is additive +
+  RNG-neutral so it changes the game's ONRAMP without perturbing any determinism test. All new
+  logic is pure and asserted; the scene wiring (banner, highlight, [E]/[C], beats) is human-
+  validated.
+- Gate: typecheck ✅  build ✅  test ✅ (438 total; +13 onboarding: startingCrew seeds 2 loyal
+  guards / none by default / RNG cursor unchanged / gives +0.24 home muscle; extort floor scales
+  BASE→1.0 + home-front 0.65 favorable; hasEstablishedIncome + suggestedExtortTarget home-front /
+  advances after extort / null below gate; firstObjective extort→collect→protect→grow + [E]/[C]
+  details + done; empty-collector not carrying). extortion.test retuned (control 40→0.70, 0→0.50,
+  muscle 0.95, min-gate now successes>failures). /src/sim Phaser-free invariant green; the
+  425-test base otherwise untouched and all green.
+- Commit: rts11: Onboarding & Early-Game Tuning — green

@@ -66,13 +66,24 @@ function makeFamily(id: string, name: string, isPlayer: boolean): Family {
  */
 export function createInitialState(
   seed: number,
-  options?: { shocks?: boolean },
+  options?: { shocks?: boolean; startingCrew?: boolean },
 ): GameState {
   const rng = new Rng(seedToCursor(seed));
 
   const player = makeFamily('player', 'Player Family', true);
   const rivalA = makeFamily('rival-a', 'The Moretti Family', false);
   const rivalB = makeFamily('rival-b', 'The Kowalski Crew', false);
+
+  // RTS-11 onboarding: optionally seed the player with a small loyal crew so a new player has
+  // muscle for the first shakedown AND some defense, instead of starting helpless. Stats are
+  // FIXED (no RNG draw), so the seeded PRNG cursor — and every determinism test — is unchanged
+  // whether or not the crew is requested. Two guards (< MUTINY_MIN_CREW) cannot mutiny early.
+  if (options?.startingCrew) {
+    player.gangsters.push(
+      { id: 'player-g-0', name: 'Sal', skill: 3, loyalty: 70, upkeep: 30, assignment: { type: 'guard', districtId: 'district-0' } },
+      { id: 'player-g-1', name: 'Vito', skill: 3, loyalty: 70, upkeep: 30, assignment: { type: 'guard', districtId: 'district-0' } },
+    );
+  }
 
   const districts: District[] = DISTRICT_NAMES.map((name, di) => {
     const id = `district-${di}`;
