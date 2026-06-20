@@ -108,6 +108,9 @@ export function createInitialState(
     shocksEnabled: options?.shocks ?? false,
     weekElapsed: 0,
     units: [],
+    incidents: [],
+    incidentSeq: 0,
+    incidentLogCursor: 0,
     log: [],
   };
 }

@@ -105,7 +105,21 @@ export {
   type DepositEvent,
   type ExtortAtTileResult,
 } from './mapEconomy';
-export { update, type UpdateResult } from './realtime';
+export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
+export {
+  recordIncident,
+  harvestIncidents,
+  isLedgerKind,
+  recentIncidents,
+  incidentsByType,
+  lastIncident,
+  incidentCount,
+  INCIDENT_CAP,
+  type IncidentRecord,
+  type IncidentInput,
+  type IncidentType,
+  type IncidentSeverity,
+} from './ledger';
 export {
   emptySelection,
   selectOnly,

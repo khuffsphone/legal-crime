@@ -1065,3 +1065,62 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   empty-always-safe; threatenedCollectors flags-exactly-the-right-ones + none-when-far +
   determinism). /src/sim Phaser-free invariant green; the 389-test base untouched and all green.
 - Commit: rts8: Game-Feel & Legibility — green
+
+## RTS-9 — Incident Ledger & Causal Readout — GREEN  (2026-06-20)
+- Summary: Made cause-and-effect legible across a playthrough — an OBSERVE/record/display layer
+  that records what ALREADY happens; NO new mechanics, NO economy/settlement change. New PURE,
+  Phaser-free module `src/sim/ledger.ts`: a bounded, sequence-stamped IncidentRecord list lives
+  on GameState (additive: incidents / incidentSeq / incidentLogCursor, all default empty/0 so the
+  402 deep-equals still hold). `recordIncident(state, input)` is PURE — returns a NEW state with
+  the record appended (monotonic seq, capped to INCIDENT_CAP). `harvestIncidents(state)` PURELY
+  projects new `state.log` entries (the structured GameEvents every mechanic already writes) into
+  curated incidents via a kind→type/severity map, advancing a cursor so nothing is re-projected.
+  Selectors: recentIncidents (newest-first), incidentsByType, lastIncident, incidentCount,
+  isLedgerKind. A NON-INVASIVE wrapper `updateAndObserve(state, dt)` in realtime.ts runs the
+  UNCHANGED update(), harvests the resulting logs, and — when a week settles — records a curated
+  settlement summary with the player's clean/dirty/heat/exposure deltas (snapshotted around the
+  untouched tick). IsoScene drives the world through updateAndObserve and renders a toggleable
+  ([L]) top-right incident feed, newest-first, colour-coded by severity (danger=blood,
+  warning=brass, gain=bone, info=fog). /src/sim stays Phaser-free; tick/applyCommand untouched.
+- Files: src/sim/ledger.ts (new), src/sim/realtime.ts (+updateAndObserve/ObserveResult; update()
+  unchanged), src/sim/types.ts (+incidents/incidentSeq/incidentLogCursor, type-only IncidentRecord
+  import), src/sim/state.ts (init the 3 fields), src/sim/index.ts (exports), src/scenes/IsoScene.ts
+  (observe driver + incident-feed panel + [L] toggle); new tests/ledger.test.ts. No mechanic logic
+  changed — the ledger reads state.log + player snapshots only.
+
+═══ INCIDENT LEDGER SCHEMA & API — THE RTS-9 CONTRACT (replay / debrief / AI can reuse) ═══
+- RECORD: IncidentRecord { seq:number (monotonic, stable across cap), week:number (state.tick),
+  type:IncidentType, severity:'info'|'gain'|'warning'|'danger', summary:string, data?:object }.
+- TYPES: collector_run · robbery · deposit · settlement · federal_warning · federal_warrant ·
+  federal_cooldown · bust · raid · mutiny · desertion · loan · shock · extortion · game_over.
+- STATE (additive): incidents:IncidentRecord[] · incidentSeq:number · incidentLogCursor:number.
+- PRIMITIVE: recordIncident(state, {type,severity,summary,week?,data?}) → NEW state (pure; capped
+  at INCIDENT_CAP=200; seq monotonic).
+- HARVEST: harvestIncidents(state) → NEW state — projects new log entries (curated kinds only) and
+  advances incidentLogCursor; idempotent. isLedgerKind(kind) exposes the curated set.
+  Source-log kinds mapped: collector-dispatched→collector_run, interception→robbery,
+  collector-deposit→deposit, fed-warning→federal_warning, fed-armed→federal_warrant,
+  fed-cooldown→federal_cooldown, raid-bust→bust, raid-cash/raid-operation→raid, mutiny→mutiny,
+  desertion→desertion, auto-loan→loan, shock/shock-audit-seizure/shock-speakeasy-raid→shock,
+  extort-success/extort-fail→extortion, game-over→game_over.
+- DRIVER: updateAndObserve(state, dt[, weekDuration]) → { result:UpdateResult, state:NEW state }.
+  Runs the unchanged update(), harvests logs, and on a week boundary records a `settlement`
+  incident with {cleanDelta,dirtyDelta,heatDelta,exposureDelta,heat,exposure,weeksFired}.
+- SELECTORS: recentIncidents(state,n) (newest-first) · incidentsByType(state,type) · lastIncident
+  · incidentCount(state, type?).
+- Decisions: the ledger is a PURE PROJECTION of the event log every mechanic already writes, plus
+  a snapshot-based settlement delta — so zero settlement/mechanic code changed and the additive
+  GameState fields keep all prior determinism deep-equals (both sides start []/0/0; tick/update
+  never touch them; only the ledger functions do). recordIncident returns a NEW state (per spec)
+  and the scene reassigns this.state each frame (shallow clone shares units/districts/log refs, so
+  the live world continues). Bounded at 200 with a monotonic seq so identities survive the cap.
+  The feed rendering ([L] toggle, severity colours) is human-validated; the ledger + selectors +
+  observe wiring are fully asserted.
+- Gate: typecheck ✅  build ✅  test ✅ (415 total; +13 ledger: recordIncident pure-append +
+  original-unchanged + correct record; monotonic seq; default vs explicit week; cap keeps last N
+  with seq still climbing + stable first/last; recentIncidents newest-first + n=0 + byType + counts
+  + lastIncident undefined-when-empty; harvest projects curated-only + advances cursor + idempotent
+  + isLedgerKind; updateAndObserve real robbery (amount+attacker) + deposit + weekly settlement
+  delta + federal-warning crossing + determinism). /src/sim Phaser-free invariant green; the
+  402-test base untouched and all green.
+- Commit: rts9: Incident Ledger & Causal Readout — green

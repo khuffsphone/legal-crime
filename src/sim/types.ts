@@ -2,6 +2,7 @@
 // See LEGAL_CRIME_DESIGN.md §3.
 
 import type { MovableUnit } from './movement';
+import type { IncidentRecord } from './ledger';
 
 export type GameStatus = 'playing' | 'won' | 'lost';
 export type LossReason = 'bankrupt' | 'dead' | 'busted';
@@ -134,6 +135,15 @@ export interface GameState {
    * via `update(state, dt)`, independent of the week clock; the economic tick never touches
    * them. Empty until the RTS control layer (RTS-3+) spawns units. */
   units: MovableUnit[];
+  /** Causal incident ledger (RTS-9): a bounded, curated, newest-last list of structured records
+   * projected from `log` + settlement summaries. Additive observe layer — no mechanic writes it;
+   * the ledger functions do. Empty by default. */
+  incidents: IncidentRecord[];
+  /** Monotonic incident sequence counter (RTS-9). Never decreases, even when old incidents are
+   * dropped by the cap — so a record's seq is a stable identity. */
+  incidentSeq: number;
+  /** How far into `log` the ledger harvester has already projected (RTS-9). */
+  incidentLogCursor: number;
   log: GameEvent[];
 }
 

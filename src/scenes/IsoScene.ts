@@ -27,7 +27,9 @@ import {
   clearSelection,
   isSelected,
   createInitialState,
-  update as advanceWorld,
+  updateAndObserve as observeWorld,
+  harvestIncidents,
+  recentIncidents,
   buildMapLayout,
   startCollectorRun,
   processCollectorArrivals,
@@ -45,6 +47,8 @@ import {
   type MovableUnit,
   type ThreatView,
   type InterceptionEvent,
+  type IncidentRecord,
+  type IncidentSeverity,
 } from '../sim';
 import { NOIR_PALETTE, NOIR_FONT, heatLabel, federalWarningLabel, shockFlavor } from './theme';
 import {
@@ -108,6 +112,9 @@ export class IsoScene extends Phaser.Scene {
   private warningBanner?: Phaser.GameObjects.Text;
   private robbedCollectors = new Set<string>();
   private collectorId?: string;
+  private feedTitle?: Phaser.GameObjects.Text;
+  private feedLines: Phaser.GameObjects.Text[] = [];
+  private feedVisible = true;
 
   private loadedIso: Set<string> = new Set();
 
@@ -248,13 +255,17 @@ export class IsoScene extends Phaser.Scene {
       issueMove(gun, unitTile(collector), this.navGrid);
     }
 
-    // Advance the whole real-time world (movement + interception + week clock).
-    const res = advanceWorld(this.state, dt);
+    // Advance the whole real-time world (movement + interception + week clock) AND observe it
+    // into the incident ledger (RTS-9). updateAndObserve returns a new state — reassign it.
+    const obs = observeWorld(this.state, dt);
+    this.state = obs.state;
+    const res = obs.result;
     for (const ev of res.interceptions) this.flashAmbush(ev);
-    // RTS-5: bank any collector that reached its HQ this frame.
+    // RTS-5: bank any collector that reached its HQ this frame, then harvest those deposit logs.
     for (const dep of processCollectorArrivals(this.state, this.layout)) {
       this.flashDeposit(dep.collectorId, dep.banked);
     }
+    this.state = harvestIncidents(this.state);
 
     // RTS-8 legibility/tension: which carrying collectors are threatened, by id.
     const threats = new Map<string, ThreatView>(
@@ -460,12 +471,14 @@ export class IsoScene extends Phaser.Scene {
     });
 
     this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
+    this.input.keyboard?.on('keydown-L', () => this.toggleFeed()); // RTS-9: toggle incident feed
   }
 
   update(_time: number, delta: number): void {
     const dt = delta / 1000;
     this.updateUnits(dt);
     this.refreshHud();
+    this.refreshIncidentFeed();
 
     const cam = this.cameras.main;
     const k = this.cursors;
@@ -484,7 +497,7 @@ export class IsoScene extends Phaser.Scene {
       12,
       12,
       `LEGAL CRIME — Isometric (2:1, ${ISO_TILE_HEIGHT * 2}×${ISO_TILE_HEIGHT} tiles)\n` +
-        'left-click = select (shift = add) · right-click = move · drag = pan · wheel = zoom · [B] card view',
+        'left-click = select (shift = add) · right-click = move · drag = pan · wheel = zoom · [L] incidents · [B] card view',
       { fontFamily: NOIR_FONT, fontSize: '14px', color: NOIR_PALETTE.brass },
     );
     t.setScrollFactor(0).setDepth(100000);
@@ -507,7 +520,55 @@ export class IsoScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(100000)
       .setVisible(false);
+
+    // RTS-9 incident feed (top-right, newest first, severity-coloured, toggle with [L]).
+    this.feedTitle = this.add
+      .text(0, 12, 'INCIDENTS  [L]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' })
+      .setScrollFactor(0)
+      .setDepth(100000)
+      .setOrigin(1, 0);
+    for (let i = 0; i < 9; i++) {
+      this.feedLines.push(
+        this.add
+          .text(0, 34 + i * 16, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog })
+          .setScrollFactor(0)
+          .setDepth(100000)
+          .setOrigin(1, 0),
+      );
+    }
     void ISO_TILE_HALF_HEIGHT;
+  }
+
+  /** Toggle the incident feed (RTS-9) so it can be hidden to declutter the map. */
+  private toggleFeed(): void {
+    this.feedVisible = !this.feedVisible;
+    this.feedTitle?.setVisible(this.feedVisible);
+    for (const line of this.feedLines) line.setVisible(this.feedVisible);
+  }
+
+  private static feedColor(sev: IncidentSeverity): string {
+    switch (sev) {
+      case 'danger': return NOIR_PALETTE.blood;
+      case 'warning': return NOIR_PALETTE.brass;
+      case 'gain': return NOIR_PALETTE.bone;
+      default: return NOIR_PALETTE.fog;
+    }
+  }
+
+  /** Paint the recent incidents into the feed, newest first, coloured by severity (RTS-9). */
+  private refreshIncidentFeed(): void {
+    if (!this.feedVisible || this.feedLines.length === 0) return;
+    const right = this.scale.width - 12;
+    this.feedTitle?.setPosition(right, 12);
+    const recent: IncidentRecord[] = recentIncidents(this.state, this.feedLines.length);
+    for (let i = 0; i < this.feedLines.length; i++) {
+      const line = this.feedLines[i];
+      const rec = recent[i];
+      line.setPosition(right, 34 + i * 16);
+      if (!rec) { line.setText(''); continue; }
+      const summary = rec.summary.length > 52 ? rec.summary.slice(0, 51) + '…' : rec.summary;
+      line.setText(`[w${rec.week}] ${summary}`).setColor(IsoScene.feedColor(rec.severity));
+    }
   }
 
   /** Pull the real-time HUD view-model and paint the week timer, ledger, and alerts (RTS-6),
