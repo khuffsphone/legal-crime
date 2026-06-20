@@ -950,3 +950,68 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   surfaces + ages out under update(); full snapshot shape + pure-read no-mutation). /src/sim
   Phaser-free invariant green; the 369-test base untouched and all green.
 - Commit: rts6: Real-Time Presentation — green
+
+## RTS-7 — Isometric Art Pipeline — GREEN  (2026-06-20)
+- Summary: The drop-in iso art pipeline at the canonical 2:1 / 128×64 spec locked by RTS-1. New
+  PURE, Phaser-free module `src/scenes/isoAssets.ts`: an ISO_ASSET_MANIFEST (tiles / buildings /
+  units) carrying each texture's exact filename, public path, placeholder color+label, and the
+  anchoring contract (tiles origin 0.5/0.5; buildings & units origin 0.5/1.0 bottom-center; 128px
+  base for a 1×1 footprint), plus resolveIsoSprite — the graceful fallback that returns the real
+  sprite when its texture loaded and a labeled colored placeholder otherwise (so the scene ALWAYS
+  renders). IsoScene now preloads every iso texture (a loaderror handler swallows missing files),
+  computes the loaded-key set, and renders ground tiles / buildings / unit markers as sprites when
+  present, falling back to the existing RTS-1 placeholder polygons/discs when not. public/assets/
+  iso/{tile,building,unit}/ created with a README documenting the projection spec + exact expected
+  filenames. /src/sim untouched and Phaser-free.
+- Files: src/scenes/isoAssets.ts (new), src/scenes/IsoScene.ts (preload + sprite/placeholder
+  rendering for tiles, buildings, unit markers), public/assets/iso/README.md (+ tile/building/unit
+  dirs); new tests/isoAssets.test.ts. No /src/sim changes.
+
+═══ ISO ART CONTRACT — THE RTS-7 SPEC (drop real PNGs here; they auto-replace placeholders) ═══
+- TILE DIMENSIONS: 128 × 64 px (ISO_TILE_PX_WIDTH × ISO_TILE_PX_HEIGHT), 2:1 dimetric.
+- PLACEMENT: sprite drawn at the tile CENTER (gridToScreen(gx,gy)).
+- ANCHOR: tiles origin (0.5, 0.5); buildings & units origin (0.5, 1.0) = bottom-center.
+- SIZING: 1×1 building base = 128px wide (N×N scales ×N); units ~64px base; trim margins to the
+  diamond footprint.
+- PATHS (public/, filename == texture key + .png):
+    tile/      LCR_iso_tile_cobble · LCR_iso_tile_street
+    building/  LCR_iso_bldg_hq · LCR_iso_bldg_storefront · LCR_iso_bldg_speakeasy ·
+               LCR_iso_bldg_gamblinghall · LCR_iso_bldg_warehouse
+    unit/      LCR_iso_unit_collector · LCR_iso_unit_enforcer · LCR_iso_unit_thug
+- API: resolveIsoSprite(key, loaded) → {sprite,def} | {placeholder,def?,color,label} ·
+  isoAssetUrl(def) = assets/iso/<kind>/<file> · isoBuildingKeyForKind(kind) · isoUnitKeyForRole(role)
+  · allIsoAssetKeys() (preloader). Mirrors the Phase-20 fallback pattern, iso-scoped.
+- Decisions: art pipeline lives in /src/scenes (presentation), keeping /src/sim pure; the resolver
+  is pure and unit-tested headlessly (loaded-vs-missing-vs-unknown, no throw). Preload uses a
+  loaderror no-op so absent PNGs never crash the build/run — placeholders cover them. Final visual
+  quality is human-validated; the spec, paths, anchoring, and fallback are asserted.
+- Gate: typecheck ✅  build ✅ (renders with placeholders; no art required) test ✅ (389 total;
+  +10 isoAssets: 128×64 2:1 spec; tile-centered vs building/unit bottom-center anchors; 128px
+  building base; assets/iso/<kind>/ urls + exact filenames; allIsoAssetKeys; resolveIsoSprite
+  sprite-when-loaded / placeholder-when-missing / placeholder-for-unknown-no-throw; kind→building
+  + role→unit key maps). /src/sim Phaser-free invariant green; the 379-test base untouched and all
+  green.
+- Commit: rts7: Isometric Art Pipeline — green
+
+## ═══ RTS CONVERSION ARC — COMPLETE (RTS-0 → RTS-7 all GREEN) ═══  (2026-06-20)
+- The isometric real-time RTS conversion is fully delivered on branch rts/isometric-conversion,
+  built ON TOP of the preserved Phase 0–20 economic simulation (the pure /src/sim engine was
+  WRAPPED and driven, never rewritten; the sim-Phaser-free invariant held every phase).
+- Arc summary:
+    RTS-0 Continuous Loop & Week-Timer — advanceClock fires the existing tick on a real clock.
+    RTS-1 Isometric World Foundation — pure 2:1 / 128×64 projection + depth-sort + iso scene.
+    RTS-2 Spatial Units & Movement — arc-length movement (frame-rate independent) + BFS pathfinding.
+    RTS-3 Selection & Command — pure selection set, hit-testing, click-to-move resolution.
+    RTS-4 Interception & Ambush — hostile enforcer robs a carrying collector; cash → attacker.
+    RTS-5 Economy-on-Map — businesses/HQ on tiles; collector walks the take to HQ, banks via the
+          EXISTING collection rules; extortion targets a building; control-gated.
+    RTS-6 Real-Time Presentation — federal ladder / mutiny / shocks / week countdown in a live HUD.
+    RTS-7 Isometric Art Pipeline — drop-in 128×64 sprite spec with graceful placeholder fallback.
+- Test count: 328 (start of this run) → 389 green (+61 across RTS-3..7: selection 15, interception
+  12, mapEconomy 14, hud 10, isoAssets 10). Full suite typecheck + build + test green.
+- Architectural law upheld throughout: all real-time spatial logic (clock, movement, pathfinding,
+  selection, interception, map-economy, HUD selectors) is PURE in /src/sim, advanced via
+  update(state, dt) and unit-tested by stepping dt with seeded-RNG determinism; Phaser only renders
+  and captures input. The economic settlement (tick / applyCommand) was never modified — new
+  systems wired to spatial triggers and reused the existing crediting/skim/federal/mutiny/shock
+  logic verbatim. RUN_LOG remained append-only.

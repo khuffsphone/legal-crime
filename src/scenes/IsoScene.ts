@@ -42,6 +42,13 @@ import {
   type MovableUnit,
 } from '../sim';
 import { NOIR_PALETTE, NOIR_FONT, heatLabel, federalWarningLabel, shockFlavor } from './theme';
+import {
+  ISO_ASSET_MANIFEST,
+  allIsoAssetKeys,
+  isoAssetUrl,
+  resolveIsoSprite,
+  isoUnitKeyForRole,
+} from './isoAssets';
 import type { ShockKind } from '../sim';
 
 const COLS = 16;
@@ -94,13 +101,27 @@ export class IsoScene extends Phaser.Scene {
   private robbedCollectors = new Set<string>();
   private collectorId?: string;
 
+  private loadedIso: Set<string> = new Set();
+
   constructor() {
     super('IsoScene');
+  }
+
+  /** RTS-7: attempt to load every iso texture. Missing files fire 'loaderror' and are simply
+   * skipped — the scene falls back to placeholders, so it always renders. */
+  preload(): void {
+    this.load.on('loaderror', () => { /* missing art is expected; placeholder will cover it */ });
+    for (const def of ISO_ASSET_MANIFEST) {
+      this.load.image(def.key, isoAssetUrl(def));
+    }
   }
 
   create(): void {
     const cam = this.cameras.main;
     cam.setBackgroundColor(NOIR_PALETTE.ink);
+
+    // Which iso textures actually loaded — drives the sprite-vs-placeholder choice (RTS-7).
+    this.loadedIso = new Set(allIsoAssetKeys().filter((k) => this.textures.exists(k)));
 
     this.drawGround();
     this.drawBlocks(BLOCKS);
@@ -182,19 +203,21 @@ export class IsoScene extends Phaser.Scene {
       .ellipse(0, 4, 30, 16)
       .setStrokeStyle(2, hex(NOIR_PALETTE.brass), 1)
       .setVisible(false);
-    this.units.push({ unit, ring, marker: this.makeMarker(color, unit.id) });
+    this.units.push({ unit, ring, marker: this.makeMarker(color, unit.id, isoUnitKeyForRole(unit.role)) });
   }
 
-  /** A token (disc + drop shadow + label) standing in for a real unit sprite (RTS-7). */
-  private makeMarker(color: string, label: string): Phaser.GameObjects.Container {
+  /** A unit marker: a real iso sprite (RTS-7, bottom-center) when its texture loaded, otherwise
+   * a disc token. Either way a drop shadow + id label sit with it. */
+  private makeMarker(color: string, label: string, spriteKey: string): Phaser.GameObjects.Container {
     const shadow = this.add.ellipse(0, 4, 26, 13, hex(NOIR_PALETTE.ink), 0.45);
-    const disc = this.add
-      .circle(0, -10, 9, hex(color), 1)
-      .setStrokeStyle(2, hex(NOIR_PALETTE.bone), 0.9);
+    const res = resolveIsoSprite(spriteKey, this.loadedIso);
+    const body: Phaser.GameObjects.GameObject = res.kind === 'sprite'
+      ? this.add.image(0, 2, res.key).setOrigin(0.5, 1)
+      : this.add.circle(0, -10, 9, hex(color), 1).setStrokeStyle(2, hex(NOIR_PALETTE.bone), 0.9);
     const tag = this.add
       .text(0, -30, label, { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone })
       .setOrigin(0.5, 1);
-    return this.add.container(0, 0, [shadow, disc, tag]);
+    return this.add.container(0, 0, [shadow, body, tag]);
   }
 
   private updateUnits(dt: number): void {
@@ -304,13 +327,20 @@ export class IsoScene extends Phaser.Scene {
     for (let gx = 0; gx < COLS; gx++) {
       for (let gy = 0; gy < ROWS; gy++) {
         const c = gridToScreen(gx, gy);
+        const depth = depthValue(gx, gy) * 10;
+        const key = (gx + gy) % 2 === 0 ? 'LCR_iso_tile_cobble' : 'LCR_iso_tile_street';
+        const res = resolveIsoSprite(key, this.loadedIso);
+        if (res.kind === 'sprite') {
+          this.add.image(c.x, c.y, key).setOrigin(0.5, 0.5).setDisplaySize(128, 64).setDepth(depth);
+          continue;
+        }
+        // Placeholder: the diamond polygon (RTS-1 look) until real tile art is dropped in.
         const corners = tileCorners(gx, gy);
         const pts = corners.map((pt) => ({ x: pt.x - c.x, y: pt.y - c.y }));
-        const checker = (gx + gy) % 2 === 0 ? NOIR_PALETTE.charcoal : NOIR_PALETTE.ink;
-        const tile = this.add
-          .polygon(c.x, c.y, pts, hex(checker), 1)
-          .setStrokeStyle(1, hex(NOIR_PALETTE.fog), 0.25);
-        tile.setDepth(depthValue(gx, gy) * 10);
+        this.add
+          .polygon(c.x, c.y, pts, hex(res.color), 1)
+          .setStrokeStyle(1, hex(NOIR_PALETTE.fog), 0.25)
+          .setDepth(depth);
       }
     }
   }
@@ -318,6 +348,13 @@ export class IsoScene extends Phaser.Scene {
   private drawBlocks(blocks: Block[]): void {
     for (const b of blocks) {
       const c = gridToScreen(b.gx, b.gy);
+      const d0 = depthValue(b.gx, b.gy) * 10 + 5;
+      // RTS-7: a real building sprite (bottom-center at the tile) replaces the placeholder box.
+      const res = resolveIsoSprite('LCR_iso_bldg_warehouse', this.loadedIso);
+      if (res.kind === 'sprite') {
+        this.add.image(c.x, c.y, res.key).setOrigin(0.5, 1).setDepth(d0);
+        continue;
+      }
       const corners = tileCorners(b.gx, b.gy).map((p) => ({ x: p.x - c.x, y: p.y - c.y }));
 
       const top = corners; // [top,right,bottom,left] of the tile diamond
