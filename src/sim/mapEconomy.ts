@@ -12,6 +12,7 @@ import {
   COLLECT_HEAT,
   EXTORT_MIN_CONTROL,
   HEAT_MAX,
+  ROUTE_DANGER_RADIUS,
 } from './constants';
 import {
   collectibleBusinesses,
@@ -20,6 +21,7 @@ import {
   uncollectedOf,
 } from './collection';
 import { applyCommand, muscleInDistrict } from './commands';
+import { hostileEnforcerNear } from './gamefeel';
 import { creditCrimeIncome } from './laundering';
 import { controlOf } from './territory';
 import { Rng } from './rng';
@@ -175,6 +177,9 @@ export function startCollectorRun(
  * district's police presence and the family's heat/muscle set the safe fraction, a seeded skim
  * is taken off the top, and the surviving amount is credited as dirty money (creditCrimeIncome).
  * Returns the banked amount. The collector is emptied either way. Mutates state (+ RNG cursor).
+ *
+ * A protectedRun (RTS-12/13 tutorial) banks the FULL carried amount with NO skim and draws no
+ * RNG — so the "✓ SAFE" promise is exact: the player gets every dollar they were shown.
  */
 export function depositCollector(state: GameState, collector: MovableUnit): number {
   const family = collector.factionId ? findFamily(state, collector.factionId) : undefined;
@@ -186,7 +191,7 @@ export function depositCollector(state: GameState, collector: MovableUnit): numb
 
   const district = state.districts.find((d) => d.id === collector.originDistrictId);
   let banked = carried;
-  if (district) {
+  if (district && !collector.protectedRun) {
     const muscle = muscleInDistrict(family, district.id);
     const safety = collectionSafety(district.policePresence, family.heat, muscle);
     const rng = new Rng(state.rngState);
@@ -228,6 +233,43 @@ export function processCollectorArrivals(state: GameState, layout: MapLayout): D
     events.push({ collectorId: u.id, familyId: u.factionId!, banked });
   }
   return events;
+}
+
+// ── dispatch telegraph (RTS-13 run-2 ramp) ───────────────────────────────────────────────────
+
+export interface DispatchThreat {
+  /** True when a hostile enforcer is positioned to catch a run sent right now. */
+  hot: boolean;
+  /** The threatening enforcer's id, if hot. */
+  enemyId: string | null;
+}
+
+/**
+ * Whether it is risky to send a collector THIS INSTANT: "hot" when a hostile enforcer is within
+ * ROUTE_DANGER_RADIUS of the family's HQ or of any business with takings waiting (the run's
+ * endpoints). Lets the UI coach a new player to WAIT for the coast to clear before [C] — turning
+ * the jump from a guaranteed first run to full stakes into a timing skill they can read. Pure.
+ */
+export function dispatchThreat(
+  state: GameState,
+  layout: MapLayout,
+  familyId: string,
+  radius: number = ROUTE_DANGER_RADIUS,
+): DispatchThreat {
+  const points: GridPos[] = [];
+  const hq = hqTileOf(layout, familyId);
+  if (hq) points.push(hq);
+  for (const d of state.districts) {
+    for (const b of collectibleBusinesses(state, familyId, d.id)) {
+      const t = businessTileOf(layout, b.id);
+      if (t) points.push(t);
+    }
+  }
+  for (const p of points) {
+    const enemy = hostileEnforcerNear(state, familyId, p, radius);
+    if (enemy) return { hot: true, enemyId: enemy.id };
+  }
+  return { hot: false, enemyId: null };
 }
 
 // ── extortion on the map ────────────────────────────────────────────────────────────────────

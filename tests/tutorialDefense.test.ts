@@ -8,6 +8,7 @@ import {
 import { canIntercept, resolveInterceptions } from '../src/sim/interception';
 import { spawnCollector, spawnEnforcer } from '../src/sim/movement';
 import { realtimeHudView, familyHudView } from '../src/sim/hud';
+import { STARTING_CREW_UPKEEP } from '../src/sim/constants';
 import {
   nextRunIsProtected,
   carryingRunIsProtected,
@@ -88,7 +89,8 @@ describe('uncollected & upkeep on the HUD (cash legibility)', () => {
     s.player.gangsters = crew.player.gangsters;
     const hud = realtimeHudView(s);
     expect(hud.player.uncollected).toBe(450);
-    expect(hud.player.weeklyUpkeep).toBe(60); // two guards × upkeep 30
+    // RTS-13: the tutorial crew works cheap (STARTING_CREW_UPKEEP) so the early bleed is gentle.
+    expect(hud.player.weeklyUpkeep).toBe(2 * STARTING_CREW_UPKEEP); // 30, not 60
   });
 
   it('familyHudView defaults uncollected to 0 when not supplied', () => {

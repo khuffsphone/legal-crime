@@ -32,6 +32,7 @@ import {
   buildMapLayout,
   startCollectorRun,
   processCollectorArrivals,
+  dispatchThreat,
   pendingCollection,
   extortAtTile,
   applyCommand,
@@ -143,6 +144,7 @@ export class IsoScene extends Phaser.Scene {
   private objTitle?: Phaser.GameObjects.Text;
   private objDetail?: Phaser.GameObjects.Text;
   private highlight?: Phaser.GameObjects.Ellipse;
+  private routeWarn?: Phaser.GameObjects.Ellipse;
 
   constructor() {
     super('IsoScene');
@@ -180,28 +182,49 @@ export class IsoScene extends Phaser.Scene {
   private buildObjective(): void {
     // A pulsing world-space ring over the suggested first target.
     this.highlight = this.add.ellipse(0, 0, 96, 50).setStrokeStyle(3, PAL.brass, 1).setVisible(false);
+    // A blood ring over the prowling enforcer when the route is hot (RTS-13 timing telegraph).
+    this.routeWarn = this.add.ellipse(0, 0, 44, 24).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
     // A persistent top-centre objective banner.
     this.objTitle = this.add.text(this.scale.width / 2, 12, '', { fontFamily: NOIR_FONT, fontSize: '16px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
-    this.objDetail = this.add.text(this.scale.width / 2, 34, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, align: 'center', wordWrap: { width: 520 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
+    this.objDetail = this.add.text(this.scale.width / 2, 34, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, align: 'center', wordWrap: { width: 560 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
   }
 
   private refreshObjective(): void {
-    if (!this.objTitle || !this.objDetail || !this.highlight) return;
+    if (!this.objTitle || !this.objDetail || !this.highlight || !this.routeWarn) return;
     const o = firstObjective(this.state);
     const cx = this.scale.width / 2;
-    this.objTitle.setText(`▶  ${o.title}`).setPosition(cx, 12).setColor(o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass);
-    this.objDetail.setText(o.detail).setPosition(cx, 34);
+    const pulse = 1 + 0.12 * Math.sin(this.time.now / 180);
+    let detail = o.detail;
+    this.highlight.setVisible(false);
+    this.routeWarn.setVisible(false);
 
     if (o.step === 'extort' && o.targetBusinessId) {
       const t = businessTileOf(this.layout, o.targetBusinessId);
       if (t) {
         const c = gridToScreen(t.gx, t.gy);
-        const pulse = 1 + 0.12 * Math.sin(this.time.now / 180);
         this.highlight.setVisible(true).setPosition(c.x, c.y + 4).setScale(pulse).setDepth(depthValue(t.gx, t.gy) * 10 + 9);
-        return;
+      }
+    } else if (o.step === 'collect') {
+      // RTS-13 run-2 ramp: read the route and coach the player to WAIT for clear (unless the
+      // next run is still a guaranteed tutorial run).
+      const threat = dispatchThreat(this.state, this.layout, 'player');
+      const protectedNext = this.state.tutorialFreeRuns > 0;
+      if (!protectedNext) {
+        detail = `${o.detail}\n` + (threat.hot
+          ? 'ROUTE: ⚠ HOT — a rival enforcer is prowling. WAIT for it to wander off, THEN press [C].'
+          : 'ROUTE: ✓ CLEAR — the coast is clear, press [C] to send now.');
+        if (threat.hot && threat.enemyId) {
+          const enemy = this.state.units.find((u) => u.id === threat.enemyId);
+          if (enemy) {
+            const c = gridToScreen(enemy.pos.gx, enemy.pos.gy);
+            this.routeWarn.setVisible(true).setPosition(c.x, c.y + 2).setScale(pulse)
+              .setDepth(depthValue(Math.round(enemy.pos.gx), Math.round(enemy.pos.gy)) * 10 + 9);
+          }
+        }
       }
     }
-    this.highlight.setVisible(false);
+    this.objTitle.setText(`▶  ${o.title}`).setPosition(cx, 12).setColor(o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass);
+    this.objDetail.setText(detail).setPosition(cx, 34);
   }
 
   // ── the city ─────────────────────────────────────────────────────────────────────────────
@@ -452,13 +475,21 @@ export class IsoScene extends Phaser.Scene {
 
   /** [C] — send a collector from the first district that has player takings waiting. */
   private commandCollect(): void {
+    const hotBefore = dispatchThreat(this.state, this.layout, 'player').hot; // before the source empties
     for (const d of this.state.districts) {
       if (pendingCollection(this.state, 'player', d.id) > 0) {
         const run = startCollectorRun(this.state, this.layout, 'player', d.id, this.navGrid);
         if (run.unit) {
           this.attachView(run.unit, 'player');
-          const safe = run.unit.protectedRun ? ' (SAFE first run)' : '';
-          this.setStatus(`collector dispatched from ${d.name} — walk it home${safe}`);
+          if (run.unit.protectedRun) {
+            this.setStatus(`collector dispatched from ${d.name} — first run rides home SAFE`);
+          } else if (hotBefore) {
+            const c = gridToScreen(run.unit.pos.gx, run.unit.pos.gy);
+            this.floatText(c.x, c.y - 30, 'SENT INTO DANGER!', NOIR_PALETTE.blood);
+            this.setStatus(`collector sent into a HOT route from ${d.name} — keep it clear of the enforcer!`);
+          } else {
+            this.setStatus(`collector dispatched from ${d.name} — coast was clear, walk it home`);
+          }
           return;
         }
       }

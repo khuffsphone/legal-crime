@@ -1,6 +1,7 @@
 // Initial-state construction. Pure & deterministic: createInitialState(seed) always
 // produces the same world for the same seed.
 
+import { STARTING_CREW_UPKEEP } from './constants';
 import { Rng, seedToCursor } from './rng';
 import type { Business, District, Family, GameState } from './types';
 
@@ -80,8 +81,8 @@ export function createInitialState(
   // whether or not the crew is requested. Two guards (< MUTINY_MIN_CREW) cannot mutiny early.
   if (options?.startingCrew) {
     player.gangsters.push(
-      { id: 'player-g-0', name: 'Sal', skill: 3, loyalty: 70, upkeep: 30, assignment: { type: 'guard', districtId: 'district-0' } },
-      { id: 'player-g-1', name: 'Vito', skill: 3, loyalty: 70, upkeep: 30, assignment: { type: 'guard', districtId: 'district-0' } },
+      { id: 'player-g-0', name: 'Sal', skill: 3, loyalty: 70, upkeep: STARTING_CREW_UPKEEP, assignment: { type: 'guard', districtId: 'district-0' } },
+      { id: 'player-g-1', name: 'Vito', skill: 3, loyalty: 70, upkeep: STARTING_CREW_UPKEEP, assignment: { type: 'guard', districtId: 'district-0' } },
     );
   }
 

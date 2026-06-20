@@ -1299,3 +1299,51 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   protect reads SAFE PASSAGE vs the normal warning, grow names [R]/[G]). /src/sim Phaser-free
   invariant green; the 438-test base untouched and all green.
 - Commit: rts12: Defense Tutorial & Cash Legibility — green
+
+## RTS-13 — Onramp Polish — GREEN  (2026-06-20)
+- Summary: Closed three UAT watch-items on the first three minutes — the run-2 difficulty cliff,
+  the broken "✓ SAFE" dollar promise, and the idle-bleed pacing. Tuning + telegraph/guidance +
+  protected-deposit adjustment only; tick/applyCommand settlement untouched, /src/sim Phaser-free.
+  1. RUN-2 RAMP (not a cliff) — new pure selectors telegraph route danger BEFORE the cash is on
+     the street so the player practices timing under full information. gamefeel.hostileEnforcerNear
+     (nearest hostile enforcer to a grid point within a radius) + mapEconomy.dispatchThreat(state,
+     layout, familyId) → { hot, enemyId }: "hot" when a rival enforcer is within ROUTE_DANGER_
+     RADIUS (4 tiles) of the player's HQ or any business with takings (the run's endpoints). The
+     iso collect objective now reads "ROUTE: ⚠ HOT — wait for it to clear, THEN [C]" or "ROUTE:
+     ✓ CLEAR — send now", a blood ring pulses over the prowling enforcer, and pressing [C] into a
+     hot route flashes "SENT INTO DANGER!". So run #1 rehearses the loop (guaranteed), run #2
+     rehearses TIMING with a clear go/no-go read instead of a blind jump to full stakes.
+  2. ✓ SAFE PROMISE EXACT — depositCollector now banks a protectedRun's FULL carried amount with
+     NO skim and NO RNG draw, so "$320 ✓ SAFE" banks exactly $320 (was ~$305 after the deposit
+     skim). Normal (unprotected) runs still skim via the existing collection rules — the contrast
+     is asserted. The number promised equals the number received.
+  3. GENTLER EARLY BLEED — the seeded tutorial crew works cheap: STARTING_CREW_UPKEEP = 15/wk
+     each (was skill×10 = 30), halving the idle bleed to $30/wk while a new player learns the loop
+     (~100 weeks of runway on the $3000 start). A recruited gangster still costs skill × upkeep-
+     per-skill, so the pressure is real once the family grows — just not punishing in minute one.
+- Files: src/sim/constants.ts (+ROUTE_DANGER_RADIUS, +STARTING_CREW_UPKEEP), src/sim/state.ts
+  (tutorial crew uses STARTING_CREW_UPKEEP), src/sim/mapEconomy.ts (protectedRun full deposit;
+  +dispatchThreat), src/sim/gamefeel.ts (+hostileEnforcerNear), src/sim/index.ts (exports),
+  src/scenes/IsoScene.ts (collect-step route telegraph + blood ring + [C] hot warning beat);
+  new tests/onrampPolish.test.ts; updated tests/tutorialDefense.test.ts (upkeep now 2×STARTING_
+  CREW_UPKEEP). No settlement logic changed.
+
+═══ RTS-13 PURE CONTRACT (pre-dispatch telegraph, exact-safe deposit, upkeep tunables) ═══
+- CONSTANTS: ROUTE_DANGER_RADIUS = 4.0 tiles · STARTING_CREW_UPKEEP = 15 cash/wk.
+- TELEGRAPH (pure): hostileEnforcerNear(state, familyId, point, radius): MovableUnit | null ·
+  dispatchThreat(state, layout, familyId, radius=ROUTE_DANGER_RADIUS): { hot, enemyId } — hot when
+  a hostile enforcer is near the HQ or a collectible source. CLEAR when nothing is collectible.
+- DEPOSIT: depositCollector banks carried IN FULL for a protectedRun (no skim, no RNG); the
+  existing presence/heat/muscle skim still applies to normal runs.
+- Decisions: the telegraph is a READ-ONLY positional selector (no mechanic change) so run #2 is a
+  legible timing skill, not a surprise; the protected-full deposit keeps the tutorial promise
+  honest and is RNG-neutral on that path (existing interception/deposit determinism untouched);
+  the upkeep tune is a documented constant on the seeded crew only (recruit economics unchanged).
+  New logic asserted; scene telegraph visuals human-validated.
+- Gate: typecheck ✅  build ✅  test ✅ (458 total; +7 onrampPolish: protected deposit banks full
+  + no-RNG-draw + unprotected-still-skims + full end-to-end via processCollectorArrivals;
+  hostileEnforcerNear finds hostile-in-radius / ignores friend/far/non-enforcer; dispatchThreat
+  HOT near source + names enemy / CLEAR when far / CLEAR when nothing to collect / HOT near HQ).
+  tutorialDefense retuned (upkeep 30). /src/sim Phaser-free invariant green; the 451-test base
+  otherwise untouched and all green.
+- Commit: rts13: Onramp Polish — green

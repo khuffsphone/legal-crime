@@ -185,3 +185,11 @@ export const INTERCEPT_HEAT = 4; // heat the attacker draws for the robbery
 // RTS-8 — game-feel. Proximity-warning band (wider than INTERCEPT_RADIUS): a carrying collector
 // with a hostile enforcer within this distance is flagged "threatened" before the ambush lands.
 export const DANGER_RADIUS = 2.5; // tiles
+
+// RTS-13 — onramp polish. Pre-dispatch telegraph: a collector run is "hot" (risky to send) when
+// a hostile enforcer is within this distance of a collection source or the HQ, so a new player
+// can learn to TIME the run (wait for clear) instead of facing a blind cliff on run #2.
+export const ROUTE_DANGER_RADIUS = 4.0; // tiles
+// Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
+// while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
+export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)

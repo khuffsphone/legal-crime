@@ -5,6 +5,7 @@
 
 import { INTERCEPT_RADIUS, DANGER_RADIUS } from './constants';
 import { areHostile, isCarryingCollector, unitDistance } from './interception';
+import type { GridPos } from './iso';
 import type { MovableUnit } from './movement';
 import type { GameState } from './types';
 
@@ -94,4 +95,28 @@ export function threatenedCollectors(state: GameState): ThreatView[] {
 /** Whether any carrying collector is in danger right now (for a HUD alert pip). */
 export function anyCollectorInDanger(state: GameState): boolean {
   return threatenedCollectors(state).length > 0;
+}
+
+/**
+ * The nearest hostile enforcer (a unit of a DIFFERENT owned faction with the enforcer role) to a
+ * grid point, within `radius` — or null if none is close. Used to telegraph whether a collector
+ * run is risky to dispatch BEFORE the cash is on the street (RTS-13). Pure, deterministic.
+ */
+export function hostileEnforcerNear(
+  state: GameState,
+  familyId: string,
+  point: GridPos,
+  radius: number,
+): MovableUnit | null {
+  let best: MovableUnit | null = null;
+  let bestDist = Infinity;
+  for (const u of state.units) {
+    if (u.role !== 'enforcer' || !u.factionId || u.factionId === familyId) continue;
+    const d = Math.hypot(u.pos.gx - point.gx, u.pos.gy - point.gy);
+    if (d <= radius && d < bestDist) {
+      best = u;
+      bestDist = d;
+    }
+  }
+  return best;
 }

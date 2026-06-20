@@ -74,6 +74,7 @@ export {
   collectorThreat,
   threatenedCollectors,
   anyCollectorInDanger,
+  hostileEnforcerNear,
   type CollectorCarryView,
   type ThreatView,
   type ThreatLevel,
@@ -121,11 +122,13 @@ export {
   startCollectorRun,
   depositCollector,
   processCollectorArrivals,
+  dispatchThreat,
   extortAtTile,
   laidOutBusinessIds,
   type MapLayout,
   type CollectorRunResult,
   type DepositEvent,
+  type DispatchThreat,
   type ExtortAtTileResult,
 } from './mapEconomy';
 export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
