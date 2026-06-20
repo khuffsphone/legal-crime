@@ -43,6 +43,8 @@ export {
 } from './pathfinding';
 export {
   spawnUnit,
+  spawnCollector,
+  spawnEnforcer,
   unitTile,
   unitArrived,
   unitDestination,
@@ -53,7 +55,17 @@ export {
   advanceUnit,
   advanceUnits,
   type MovableUnit,
+  type UnitRole,
 } from './movement';
+export {
+  isCarryingCollector,
+  areHostile,
+  unitDistance,
+  canIntercept,
+  detectInterceptions,
+  resolveInterceptions,
+  type InterceptionEvent,
+} from './interception';
 export { update, type UpdateResult } from './realtime';
 export {
   emptySelection,

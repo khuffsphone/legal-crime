@@ -10,6 +10,10 @@ import type { GridPos, Vec2 } from './iso';
 import { gridToScreen } from './iso';
 import { findPath, type NavGrid } from './pathfinding';
 
+/** What a unit does on the map. Collectors carry cash and can be ambushed (RTS-4); enforcers
+ * are the muscle that intercept hostile collectors. Plain movers (RTS-2/3) leave this unset. */
+export type UnitRole = 'collector' | 'enforcer';
+
 export interface MovableUnit {
   id: string;
   /** Continuous grid-space position (gx, gy are fractional while between tiles). */
@@ -18,11 +22,41 @@ export interface MovableUnit {
   path: GridPos[];
   /** Movement rate in tiles per second. Defaults to MOVE_SPEED at spawn. */
   speed: number;
+  /** Owning family id (RTS-4). Undefined ⇒ neutral; two units are hostile only if both have a
+   * factionId and the ids differ. */
+  factionId?: string;
+  /** Map role (RTS-4/5). Undefined for plain RTS-2/3 movers. */
+  role?: UnitRole;
+  /** Dirty cash physically carried by a collector in transit (RTS-4/5). Absent ⇒ 0. */
+  carrying?: number;
 }
 
-/** Create an idle unit standing at tile (gx, gy). */
+/** Create an idle unit standing at tile (gx, gy). Plain mover — no faction/role (RTS-2/3). */
 export function spawnUnit(id: string, gx: number, gy: number, speed: number = MOVE_SPEED): MovableUnit {
   return { id, pos: { gx, gy }, path: [], speed };
+}
+
+/** A collector carrying `carrying` dirty cash for `factionId` (RTS-4/5). Ambush-able in transit. */
+export function spawnCollector(
+  id: string,
+  gx: number,
+  gy: number,
+  factionId: string,
+  carrying: number,
+  speed: number = MOVE_SPEED,
+): MovableUnit {
+  return { id, pos: { gx, gy }, path: [], speed, factionId, role: 'collector', carrying };
+}
+
+/** An enforcer (muscle) for `factionId` (RTS-4) — intercepts hostile collectors. */
+export function spawnEnforcer(
+  id: string,
+  gx: number,
+  gy: number,
+  factionId: string,
+  speed: number = MOVE_SPEED,
+): MovableUnit {
+  return { id, pos: { gx, gy }, path: [], speed, factionId, role: 'enforcer' };
 }
 
 /** The integer tile the unit currently occupies (its rounded position). */

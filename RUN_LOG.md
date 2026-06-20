@@ -804,3 +804,53 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   isCommandableTile open/wall/OOB). /src/sim Phaser-free invariant green; the 328-test base
   untouched and all green.
 - Commit: rts3: Selection & Command — green
+
+## RTS-4 — Interception & Ambush — GREEN  (2026-06-20)
+- Summary: The S2 collector bottleneck made spatial. New PURE, Phaser-free module
+  `src/sim/interception.ts`: a carrying collector in transit can be robbed by a hostile
+  enforcer that closes within INTERCEPT_RADIUS — the carried dirty cash is redirected to the
+  attacker's family via the SAME crediting path a safe collection uses (creditCrimeIncome),
+  the attacker draws INTERCEPT_HEAT, and the collector is stopped and emptied. The take is "in
+  transit" (not yet on anyone's books), so an ambush is not a double count — it only changes
+  WHO banks it. MovableUnit gains additive optional fields factionId / role / carrying with two
+  new constructors (spawnCollector, spawnEnforcer); plain RTS-2/3 movers leave them unset so all
+  prior determinism holds. The real-time driver `update(state, dt)` now resolves interceptions
+  AFTER movement and BEFORE the week settlement, so a robbed take can never be banked at the
+  boundary; UpdateResult gains `interceptions`. IsoScene drives all units through advanceWorld
+  and renders a noir "— ROBBED —" flash when an ambush fires (rival enforcer chases a player
+  collector across the map). /src/sim stays Phaser-free.
+- Files: src/sim/interception.ts (new), src/sim/movement.ts (+UnitRole, factionId/role/carrying,
+  spawnCollector, spawnEnforcer), src/sim/realtime.ts (resolve interceptions in update;
+  +interceptions in UpdateResult), src/sim/constants.ts (+INTERCEPT_RADIUS, +INTERCEPT_HEAT),
+  src/sim/index.ts (exports), src/scenes/IsoScene.ts (world driven by advanceWorld; ambush demo
+  + flash); new tests/interception.test.ts. No economic-settlement logic changed — interception
+  reuses creditCrimeIncome and feeds the existing dirty-cash ledger.
+
+═══ INTERCEPTION API — THE RTS-4 CONTRACT (RTS-5 spawns the carrying collectors) ═══
+- CONSTANTS: INTERCEPT_RADIUS = 0.75 (tiles), INTERCEPT_HEAT = 4 (attacker heat per robbery).
+- UNIT MODEL (additive on MovableUnit): factionId?: string · role?: 'collector'|'enforcer' ·
+  carrying?: number.  spawnCollector(id,gx,gy,factionId,carrying,speed?) ·
+  spawnEnforcer(id,gx,gy,factionId,speed?).  Two units are hostile only if both are owned and
+  by different families.
+- INTERCEPTION (src/sim/interception.ts):
+    areHostile(a,b) · isCarryingCollector(u) · unitDistance(a,b) · canIntercept(enforcer,collector)
+    detectInterceptions(units): InterceptionEvent[]      // pure, non-mutating
+    resolveInterceptions(state): InterceptionEvent[]      // credits attacker (dirty) + heat,
+                                                          // zeroes & stops collector, logs
+    InterceptionEvent { attackerId, collectorId, attackerFaction, victimFaction, amount }
+- DRIVER: update(state, dt[, weekDuration]) → { weeksFired, arrivedUnitIds, interceptions }.
+  Order each step: advance units → resolve interceptions (on new positions) → settle weeks.
+- Decisions: full-amount transfer (the collector was caught carrying it; the bottleneck/skim
+  already happened when the take was gathered) — the "reuse" of collector-bottleneck rules is
+  the dirty-money crediting path (creditCrimeIncome) + heat, identical to a deposit, so the
+  ledger stays consistent. No RNG ⇒ deterministic given positions; each collector is robbed at
+  most once per pass (carry zeroed), nearest hostile enforcer wins ties by array order. Neutral
+  (factionless) and same-faction units never trigger. Interception runs inside the pure driver
+  (tested by stepping dt); the scene flash is human-validated.
+- Gate: typecheck ✅  build ✅  test ✅ (355 total; +12 interception: hostility/carrying/distance
+  predicates; canIntercept in-range vs out-of-range/friendly/empty; resolve transfers-as-dirty +
+  clean-unchanged + heat + stop + log; robbed-at-most-once with two enforcers (nearest wins);
+  no-fire for friendly/neutral/far; determinism; detect is non-mutating; update-loop ambush under
+  stepped dt; intercept-before-settle so a robbed take isn't banked). /src/sim Phaser-free
+  invariant green; the 343-test base untouched and all green.
+- Commit: rts4: Interception & Ambush — green

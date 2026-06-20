@@ -172,3 +172,8 @@ export const ARRIVE_EPSILON = 1e-6; // tiles; within this distance a waypoint co
 // RTS-3 — selection & command. Click-picking selects the unit within this grid-space radius of
 // the click; a generous half-tile-plus so a click anywhere on a unit's tile lands the pick.
 export const PICK_RADIUS = 0.7; // tiles
+
+// RTS-4 — interception & ambush. A hostile enforcer that closes within this grid-space radius
+// of a carrying collector robs it; the ambush adds this much heat to the attacking family.
+export const INTERCEPT_RADIUS = 0.75; // tiles
+export const INTERCEPT_HEAT = 4; // heat the attacker draws for the robbery
