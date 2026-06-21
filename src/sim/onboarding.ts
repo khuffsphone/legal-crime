@@ -122,8 +122,8 @@ export function firstObjective(state: GameState): Objective {
 
   return {
     step: 'grow',
-    title: "YOU'RE EARNING",
-    detail: 'Now grow: press [R] to open a racket and [G] to grease the four channels — The Beat, The Bench, City Hall, The Bureau — before the heat finds you.',
+    title: "YOU'RE EARNING — NOW TAKE GROUND",
+    detail: 'Grow the outfit: [R] open a racket · [G] grease the four channels · [5] EXPAND your home block 30→50 to HOLD it (unlocks RAID) · [6] RECRUIT muscle toward the 12 a hit needs. Then take the fight to your rivals: [1] raid · [2] sabotage · [4] lockout · [3] assassinate.',
     targetBusinessId: null,
     done: true,
   };

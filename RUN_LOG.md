@@ -1735,3 +1735,43 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   +2 offensive: cooldown-refuses-next-offence, single-raid-softens-not-seizes). /src/sim Phaser-free
   invariant green; tick/applyCommand settlement untouched; the 528-test base green.
 - Commit: rts19: Balance & Economy Pass — green
+
+## RTS-20 — Player Verbs: Expand & Recruit — GREEN  (2026-06-21)
+- Summary: Surgical fix for an un-armed UAT blocker — the player was STRUCTURALLY STUCK in
+  ESTABLISH. RTS-19 gated RAID behind "secure a home block first" and ASSASSINATE behind "need 12
+  muscle", but there was no keybound EXPAND-CONTROL or RECRUIT verb, so those gates could NEVER be
+  cleared by a human: the player held 0 blocks forever and the whole offensive arc stayed locked.
+  The expandControl + recruitGangster sim commands already existed (the rival AI uses them); this
+  round EXPOSES them to the player. No new economic/combat logic, no re-tuning — wiring + legibility
+  + the committed QA injectors. tick/applyCommand untouched; /src/sim Phaser-free; 542 → 547 green.
+  1. [5] EXPAND (commandExpand) — invokes the existing `expandControl` for the player on the home
+     corner that still needs securing (pacing.expandTargetDistrictId → playerHomeFront's district,
+     else the strongest foothold). Real cost ($300/EXPAND_COST, +10 control + guarding muscle via the
+     unchanged command). When the block crosses CONTROL_HOLD it's HELD → a "BLOCK HELD!" beat + a
+     status line "… is YOURS — RAID is unlocked". This is the move that leaves ESTABLISH.
+  2. [6] RECRUIT (commandRecruit) — invokes the existing `recruitGangster` for the player. Real cost
+     ($400/RECRUIT_COST), seeded skill/loyalty/traits (the AI-tested path). Status reads the muscle
+     trajectory "strength X/12 toward a hit"; at ≥12 ASSASSINATE unlocks.
+  3. EXISTING commands only — no forked logic. Both verbs surfaced on the right-side BUILD BOARD
+     (new pacing.buildReadout → per-verb `✓/✗ [key] Label $cost — effect`, e.g. "secure Dockside
+     (+20 to HOLD → unlocks RAID)" and "muscle 6/12 (toward ASSASSINATE)"), drawn above the offence
+     board under the match-phase header. Also wired into the status-bar hint, the [H] legend (a new
+     "TAKE THE CITY" block + the [5]/[6] controls line), and the onboarding 'grow' objective (now
+     "YOU'RE EARNING — NOW TAKE GROUND" naming [R]/[G]/[5]/[6] then [1]–[4]).
+  4. QA INJECTORS committed (Cowork) — applyDebugScenario extended, all gated + no-op in normal play
+     and outside the browser, NO sim-rule change (pure state seeding / existing systems):
+       • ?arm=1     — a funded, established, hit-ready outfit ($12k + $3k dirty, 3 made men guarding
+         the home, district-0 HELD at 60, The Bureau greased to 20) so QA drives the full arc at once.
+       • ?debug=win — topples every rival (alive=false, HQ 0); the wrapper's evaluateEndgame resolves
+         a WIN next frame. ?debug=lose — razes the player HQ → a LOSS next frame.
+       • (alongside the existing ?debug=turf|mutiny|all[&pulses=N].)
+- Files: src/sim/pacing.ts (+buildReadout/expandTargetDistrictId/isNearlyHeld, pure), src/sim/index.ts
+  (exports), src/sim/onboarding.ts ('grow' detail names the new verbs), src/scenes/IsoScene.ts
+  (commandExpand [5] + commandRecruit [6] + keybinds + build board + status hint + legend + the
+  ?arm=1 / ?debug=win|lose QA injectors). New tests/playerVerbs.test.ts.
+- Gate: typecheck ✅  build ✅  test ✅ (547 total; +5 playerVerbs: expandControl raises the home
+  block 30→HOLD and UNLOCKS canRaid + leaves ESTABLISH; recruitGangster climbs strength to ≥12 and
+  UNLOCKS canAssassinate; buildReadout shows cost + unlock effect and updates once secured / hit-ready;
+  the full establish→contest→endgame ramp under the player's own commands). /src/sim Phaser-free
+  invariant green; tick/applyCommand + economy/heat/rival balance untouched (next pass); the 542 base green.
+- Commit: rts20: Player Verbs — Expand & Recruit — green

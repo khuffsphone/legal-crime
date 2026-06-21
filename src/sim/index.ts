@@ -194,10 +194,15 @@ export {
   offenseReadout,
   matchPhase,
   playerWeeklyNet,
+  buildReadout,
+  expandTargetDistrictId,
+  isNearlyHeld,
   type OffenseKey,
   type OffenseOption,
   type MatchPhase,
   type PhaseReadout,
+  type BuildKey,
+  type BuildOption,
 } from './pacing';
 export {
   hqIntegrityOf,

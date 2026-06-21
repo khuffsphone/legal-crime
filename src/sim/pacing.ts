@@ -11,11 +11,14 @@ import {
   ASSASSINATE_CITYHALL_CAP,
   ASSASSINATE_CITYHALL_COVER,
   ASSASSINATE_MIN_STRENGTH,
+  CONTROL_HOLD,
+  EXPAND_COST,
   LOCKOUT_COST,
   RAID_BENCH_CAP,
   RAID_BENCH_MITIGATION,
   RAID_COST,
   RAID_HEAT,
+  RECRUIT_COST,
   SABOTAGE_COST,
   SABOTAGE_HEAT,
   TURF_DOMINANCE,
@@ -25,7 +28,8 @@ import { familyNet } from './economy';
 import { allBusinesses, businessEarner } from './economy';
 import { familyStrength } from './conflict';
 import { districtsHeld } from './territoryWar';
-import { districtHolder } from './territory';
+import { controlOf, districtHolder } from './territory';
+import { playerHomeFront } from './contest';
 import { hqIntegrityOf, weakestRival } from './endgame';
 import { canRaid, canSabotage, canAssassinate, canLockout, type Gate } from './offense';
 import type { GameState } from './types';
@@ -141,3 +145,69 @@ export function matchPhase(state: GameState): PhaseReadout {
 export function playerWeeklyNet(state: GameState): number {
   return familyNet(state, state.player);
 }
+
+// ── the BUILD verbs (RTS-20) — how the player leaves ESTABLISH ─────────────────────────────────
+
+export type BuildKey = 'expand' | 'recruit';
+
+export interface BuildOption {
+  key: BuildKey;
+  label: string;
+  hotkey: string;
+  cost: number;
+  /** Whether the player can afford it right now. */
+  affordable: boolean;
+  /** A short "what this gets you / unlocks" line (drives the build board). */
+  effect: string;
+  /** The district the expand would target (its name), or null for recruit. */
+  target: string | null;
+}
+
+/** The district an EXPAND would push: the home corner still to secure (so it can be HELD), else
+ * the player's strongest district (keep growing). */
+export function expandTargetDistrictId(state: GameState): string | null {
+  const home = playerHomeFront(state);
+  if (home) return home.districtId;
+  // already securing/holding — grow the strongest foothold.
+  let best: string | null = null;
+  let bestControl = -1;
+  for (const d of state.districts) {
+    const c = controlOf(d, state.player.id);
+    if (c > bestControl) { bestControl = c; best = d.id; }
+  }
+  return bestControl > 0 ? best : null;
+}
+
+/**
+ * The two BUILD verbs with live cost / affordability / effect (RTS-20) — the moves that let the
+ * player leave ESTABLISH: EXPAND control (toward HOLDING a block, which unlocks RAID) and RECRUIT
+ * muscle (toward the strength that unlocks ASSASSINATE). Pure — drives the HUD build board.
+ */
+export function buildReadout(state: GameState): BuildOption[] {
+  const p = state.player;
+  const home = playerHomeFront(state);
+  const expandId = expandTargetDistrictId(state);
+  const expandName = expandId ? (state.districts.find((d) => d.id === expandId)?.name ?? expandId) : null;
+  const expandEffect = home
+    ? `secure ${home.districtName} (+${home.needed} to HOLD → unlocks RAID)`
+    : expandName ? `grow control in ${expandName}` : 'expand your turf';
+
+  const strength = familyStrength(p);
+  const recruitEffect = strength >= ASSASSINATE_MIN_STRENGTH
+    ? `muscle ${strength} — hit-ready`
+    : `muscle ${strength}/${ASSASSINATE_MIN_STRENGTH} (toward ASSASSINATE)`;
+
+  return [
+    { key: 'expand', label: 'Expand', hotkey: '5', cost: EXPAND_COST, affordable: p.cash >= EXPAND_COST && expandId !== null, effect: expandEffect, target: expandName },
+    { key: 'recruit', label: 'Recruit', hotkey: '6', cost: RECRUIT_COST, affordable: p.cash >= RECRUIT_COST, effect: recruitEffect, target: null },
+  ];
+}
+
+/** Whether a district is one short push from being HELD (control in [CONTROL_HOLD − EXPAND_BASE, HOLD)). */
+export function isNearlyHeld(state: GameState, districtId: string): boolean {
+  const d = state.districts.find((x) => x.id === districtId);
+  if (!d) return false;
+  const c = controlOf(d, state.player.id);
+  return c > 0 && c < CONTROL_HOLD;
+}
+

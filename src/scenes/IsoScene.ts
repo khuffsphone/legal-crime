@@ -58,7 +58,16 @@ import {
   offenseReadout,
   matchPhase,
   playerWeeklyNet,
+  buildReadout,
+  expandTargetDistrictId,
   districtHolder,
+  controlOf,
+  districtsHeld,
+  familyStrength,
+  EXPAND_COST,
+  RECRUIT_COST,
+  CONTROL_HOLD,
+  ASSASSINATE_MIN_STRENGTH,
   canRaid,
   resolveRaid,
   canSabotage,
@@ -675,6 +684,41 @@ export class IsoScene extends Phaser.Scene {
     this.setStatus(paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`);
   }
 
+  // ── the build verbs (RTS-20) — how the player leaves ESTABLISH ───────────────────────────────
+
+  /** [5] EXPAND control in your home corner (toward HOLDING it → unlocks RAID), else your stronghold. */
+  private commandExpand(): void {
+    const targetId = expandTargetDistrictId(this.state);
+    if (!targetId) { this.setStatus('nowhere to expand — get a foothold first'); return; }
+    if (this.state.player.cash < EXPAND_COST) { this.setStatus(`can't afford to expand (need $${EXPAND_COST})`); return; }
+    const d = this.state.districts.find((x) => x.id === targetId)!;
+    const before = controlOf(d, 'player');
+    applyCommand(this.state, { type: 'expandControl', familyId: 'player', districtId: targetId });
+    this.state = harvestIncidents(this.state);
+    const after = controlOf(d, 'player');
+    const nowHeld = districtsHeld(this.state, 'player').some((x) => x.id === targetId);
+    const justHeld = nowHeld && before < CONTROL_HOLD;
+    const label = this.districtLabels.get(targetId);
+    if (label) this.floatText(label.x, label.y - 14, justHeld ? 'BLOCK HELD!' : `CONTROL +${after - before}`, justHeld ? SPEC.brass : NOIR_PALETTE.bone);
+    this.setStatus(justHeld
+      ? `${d.name} is YOURS (${after}) — RAID is unlocked`
+      : `expanded in ${d.name} → ${after}/${CONTROL_HOLD} control (+${after - before})`);
+  }
+
+  /** [6] RECRUIT a gangster — muscle for defense, collection, and (at strength ≥ 12) ASSASSINATION. */
+  private commandRecruit(): void {
+    if (this.state.player.cash < RECRUIT_COST) { this.setStatus(`can't afford to recruit (need $${RECRUIT_COST})`); return; }
+    const before = this.state.player.gangsters.length;
+    applyCommand(this.state, { type: 'recruitGangster', familyId: 'player' });
+    this.state = harvestIncidents(this.state);
+    const added = this.state.player.gangsters.length > before;
+    const strength = familyStrength(this.state.player);
+    const hq = hqTileOf(this.layout, 'player');
+    if (added && hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, 'NEW MUSCLE', NOIR_PALETTE.brass); }
+    const toward = strength >= ASSASSINATE_MIN_STRENGTH ? 'hit-ready' : `${strength}/${ASSASSINATE_MIN_STRENGTH} toward a hit`;
+    this.setStatus(added ? `recruited muscle — crew ${this.state.player.gangsters.length}, strength ${toward}` : 'no one to recruit right now');
+  }
+
   // ── the offensive (RTS-17) ───────────────────────────────────────────────────────────────
 
   /** [1] RAID the first rival-held/contested district by force. */
@@ -725,14 +769,34 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /**
-   * QA-only scenario hook (RTS-18). Non-invasive: reads `?debug=turf|mutiny|all[&pulses=N]` from the
-   * URL and seeds an interesting board by exercising EXISTING systems (turf pulses, loyalty seeding) —
-   * it changes NO sim rule and is a no-op in normal play (no `?debug=`) and outside the browser.
+   * QA-only scenario hooks. Non-invasive: read the URL query and seed an interesting board by
+   * exercising EXISTING systems (turf pulses, loyalty seeding, the bribe command, the endgame
+   * evaluator) — they change NO sim rule and are a no-op in normal play (no flags) and outside the
+   * browser. Supported:
+   *   • ?arm=1                       — a funded, established, hit-ready outfit (skips the build phase).
+   *   • ?debug=turf|mutiny|all[&pulses=N] — fast-forward the turf war / prime a mutiny.
+   *   • ?debug=win | ?debug=lose     — force the endgame to resolve (the wrapper reads it next frame).
    */
   private applyDebugScenario(): void {
     const search = typeof window !== 'undefined' ? (window.location?.search ?? '') : '';
     if (!search) return;
     const params = new URLSearchParams(search);
+
+    // ?arm=1 — the UAT injector: a strong, funded, established outfit so QA can drive the full arc
+    // (raid/lockout/assassinate) immediately, bypassing the economy→offense build-up.
+    if (params.get('arm') === '1') {
+      const p = this.state.player;
+      p.cash = 12000; p.dirtyCash = 3000;
+      // muscle: three made men guarding the home block → strength ≥ 12 (unlocks ASSASSINATE).
+      for (let i = 0; i < 3; i++) {
+        p.gangsters.push({ id: `player-arm-${i}`, name: 'Made Man', skill: 6, loyalty: 80, upkeep: 0, assignment: { type: 'guard', districtId: 'district-0' } });
+      }
+      const home = this.state.districts.find((d) => d.id === 'district-0');
+      if (home) home.control.player = 60; // HOLD the home block (unlocks RAID)
+      applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: 'feds', amount: 20 }); // The Bureau (unlocks LOCKOUT)
+      this.state = harvestIncidents(this.state);
+    }
+
     const debug = params.get('debug');
     if (!debug) return;
     const want = (k: string): boolean => debug === k || debug === 'all';
@@ -746,6 +810,14 @@ export class IsoScene extends Phaser.Scene {
     if (want('mutiny')) {
       // Prime a mutiny: starve the crew's loyalty so the mutiny telegraph + desertions surface.
       for (const g of this.state.player.gangsters) g.loyalty = Math.min(g.loyalty, 8);
+    }
+    if (debug === 'win') {
+      // Topple every rival; the wrapper's evaluateEndgame resolves a WIN on the next frame.
+      for (const r of this.state.rivals) { r.alive = false; r.hqIntegrity = 0; }
+    }
+    if (debug === 'lose') {
+      // Raze the player's HQ; the wrapper's evaluateEndgame resolves a LOSS on the next frame.
+      this.state.player.hqIntegrity = 0;
     }
   }
 
@@ -865,6 +937,9 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-TWO', () => this.commandSabotage());
     this.input.keyboard?.on('keydown-THREE', () => this.commandAssassinate());
     this.input.keyboard?.on('keydown-FOUR', () => this.commandLockout());
+    // RTS-20 — the build verbs (leave ESTABLISH).
+    this.input.keyboard?.on('keydown-FIVE', () => this.commandExpand());
+    this.input.keyboard?.on('keydown-SIX', () => this.commandRecruit());
   }
 
   update(_t: number, delta: number): void {
@@ -955,6 +1030,12 @@ export class IsoScene extends Phaser.Scene {
     const phase = matchPhase(this.state);
     lines.push('');
     lines.push(`— ${phase.phase.toUpperCase()} —`);
+    // RTS-20 build board: the verbs that grow the outfit out of ESTABLISH (expand → HOLD → RAID,
+    // recruit → muscle → ASSASSINATE).
+    for (const b of buildReadout(this.state)) {
+      const mark = b.affordable ? '✓' : '✗';
+      lines.push(`${mark} [${b.hotkey}] ${b.label} $${b.cost} — ${b.effect}`);
+    }
     for (const o of offenseReadout(this.state)) {
       const mark = o.available ? '✓' : '✗';
       const heat = o.heat > 0 ? ` +${o.heat}🔥` : '';
@@ -1133,7 +1214,7 @@ export class IsoScene extends Phaser.Scene {
     const sel = this.selection.ids;
     const base = sel.length === 0 ? 'Click a unit to select · right-click to move' : `selected: ${sel.join(', ')}`;
     const sh = this.state.activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ');
-    const hint = '  ·  [E] shake down · [C] collect · [R] reinvest · [G] grease';
+    const hint = '  ·  [E] shake down · [C] collect · [R] reinvest · [G] grease · [5] expand · [6] recruit';
     this.statusText.setText((action ? `${base}  ·  ${action}` : base + hint) + (sh ? `   |  ${sh}` : ''));
   }
 
@@ -1187,10 +1268,15 @@ export class IsoScene extends Phaser.Scene {
       '  • Guard it — a rival enforcer who catches it steals the cash.',
       '  • Bank it, reinvest in rackets, and bribe the four channels:',
       '    The Beat · The Bench · City Hall · The Bureau.',
+      '  • [5] EXPAND your home block 30→50 to HOLD it (unlocks RAID).',
+      '  • [6] RECRUIT muscle toward the 12 strength a hit needs.',
+      '',
+      'TAKE THE CITY  (the offence board, right)',
+      '  [1] raid · [2] sabotage · [3] assassinate · [4] lockout',
       '',
       'CONTROLS',
       '  left-click select · shift adds · right-click move · drag pan · wheel zoom',
-      '  [E] shake down · [C] collect · [R] reinvest · [G] grease a channel',
+      '  [E] shake down · [C] collect · [R] reinvest · [G] grease · [5] expand · [6] recruit',
       '  [K] your crew (names · traits · loyalty) · [L] the wire · [H] help · [B] card view',
     ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
     const hint = this.add.text(0, h / 2 - 26, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
