@@ -134,6 +134,19 @@ export {
 } from './mapEconomy';
 export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
 export {
+  federalTierLabel,
+  bribeBracket,
+  verbChipState,
+  alertCategory,
+  incidentNeedsYou,
+  FEDERAL_LADDER,
+  BRIBE_PIPS,
+  type FederalTierName,
+  type BribeBracket,
+  type VerbState,
+  type AlertCategory,
+} from './hudText';
+export {
   businessActions,
   resolveAttack,
   earningBusinesses,

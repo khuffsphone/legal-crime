@@ -1980,3 +1980,36 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   BLOOD→CONTEST→DECAPITATE + reads; offense previews state effect+retaliation from the constants;
   victoryProximity win%/lose%/leader/read). /src/sim Phaser-free; no Gangsters conflations.
 - Commit: rts23: HUD/UI Elevation & Camera Polish — green
+
+## RTS-23 (to HUD_SPEC §1–§9) — Named Ladder, Channel Brackets, Verb Chips & The Wire — GREEN  (2026-06-21)
+- Summary: Final rts23 elevation pass, built to the HUD_SPEC §-anatomy (camera nits, top bar, dials,
+  Wire, context, 4-stage phase, offense previews, win/loss proximity shipped earlier at 82540a3).
+  Adds the spec's named/labeled refinements. Pure HUD-text helpers in /src/sim (unit-tested); the
+  rest is render. tick/applyCommand untouched; /src/sim Phaser-free; four channels + 50/70/85 kept;
+  no Gangsters conflations; §5 Trade/Market explicitly DEFERRED to RTS-24 (needs new pure logic).
+  571 → 578 green (+7 hudText assertions). NOTE: HUD_SPEC.md was not in the repo / not pasted —
+  built to the brief's inline §-references and CREATED HUD_SPEC.md as the in-repo record (flagged).
+  • §1D LADDERED HEAT METER — engraved 50/70/85 ticks (brass when passed), tiny NOTICE/WATCH/RAID
+    labels under them, a ▲rising/▼cooling/◆steady arrow, and a named caption ("WATCH · exp 72/100 ▲ ·
+    raid at 85"). Pure federalTierLabel + FEDERAL_LADDER (tied to the FED_WARN_TIER constants).
+  • §2 CHANNEL BRACKETS — each dial now reads its named bracket (NONE → GREASED → ON THE TAKE → IN
+    POCKET → IRON GRIP) with a pip ladder, $X/wk, the plain payoff, and the next-bracket cost
+    (→NAME@$N); THE BUREAU rendered in federal-green with a "lowers federal exposure" hover. Pure
+    bribeBracket + BRIBE_PIPS.
+  • §3C ACTION-VERB CHIPS — offense board + business card verbs now carry a READY / CONDITIONAL /
+    LOCKED state (CONDITIONAL = only cash/cooldown away; LOCKED = a structural prereq) with the plain
+    reason. Pure verbChipState.
+  • §4 THE WIRE — a category DOT per line (money/threat/law/turf/crew, palette-coloured), an unread
+    "N NEEDS YOU" count in the title with a brass left-edge tab on each unread danger/warning item,
+    title pulse on a fresh alert, and focus-to-mark-read on [L]. Pure alertCategory + incidentNeedsYou.
+  • §0 RED DISCIPLINE honoured — static markers moved off motion-danger-red (#E11D1D): threat dots →
+    blood #8A2B22, passed heat ticks → brass, the needs-you tab → brass; danger-red stays motion-only
+    (the Wire/route/klaxon pulses).
+- Files: NEW src/sim/hudText.ts (federalTierLabel/FEDERAL_LADDER/bribeBracket/verbChipState/
+  alertCategory/incidentNeedsYou, pure), src/sim/index.ts (exports), src/scenes/IsoScene.ts (heat-meter
+  ladder labels, channel brackets + federal-green Bureau, verb-chip states, Wire dots + NEEDS-YOU).
+  NEW HUD_SPEC.md (in-repo record). New tests/hudText.test.ts.
+- Gate: typecheck ✅  build ✅  test ✅ (578; +7 hudText: named ladder = the 50/70/85 constants;
+  channel brackets NONE→IRON GRIP + next cost + pips; READY/CONDITIONAL/LOCKED chip states; Wire
+  categories + needs-you). /src/sim Phaser-free; no Gangsters conflations; §5 deferred.
+- Commit: rts23: HUD/UI Elevation & Camera Polish — green

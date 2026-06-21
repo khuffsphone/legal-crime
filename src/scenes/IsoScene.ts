@@ -61,6 +61,13 @@ import {
   hudPhase,
   offensePreview,
   victoryProximity,
+  federalTierLabel,
+  FEDERAL_LADDER,
+  bribeBracket,
+  BRIBE_PIPS,
+  verbChipState,
+  alertCategory,
+  incidentNeedsYou,
   playerWeeklyNet,
   buildReadout,
   expandTargetDistrictId,
@@ -134,9 +141,6 @@ const MAX_ZOOM = 2.6;
 const ZOOM_STEP = 0.12; // per wheel notch (fraction of current zoom)
 const CLICK_SLOP = 6;
 
-const FED_T1 = 50;
-const FED_T2 = 70;
-const FED_T3 = 85;
 
 // Subtle per-district colour identity (a tint multiplied over the cobbles).
 const DISTRICT_TINT = [0xffffff, 0xe7dcc6, 0xccd2d8, 0xe6cfae, 0xd9c6c2];
@@ -204,6 +208,7 @@ export class IsoScene extends Phaser.Scene {
   private lastPhase = '';
   private wireFlashUntil = 0;
   private lastIncidentSeq = -1;
+  private lastSeenWireSeq = -1; // §4: incidents past this seq are "unread"
   private selection: Selection = emptySelection();
   private pressX = 0;
   private pressY = 0;
@@ -1358,14 +1363,15 @@ export class IsoScene extends Phaser.Scene {
       const eta = b.affordable ? '' : IsoScene.etaTag(b.affordEtaWeeks);
       lines.push(`${mark} [${b.hotkey}] ${b.label} $${b.cost}${eta} — ${b.effect}`);
     }
-    // RTS-23 OFFENSE PREVIEWS — each verb shows cost · heat · effect · retaliation before you commit.
+    // §3C OFFENSE CHIPS — verb · cost · heat · ETA · READY/CONDITIONAL/LOCKED + effect/retaliation.
     for (const o of offenseReadout(this.state)) {
-      const mark = o.available ? '✓' : '✗';
+      const st = verbChipState(o.available, o.reason); // READY / CONDITIONAL / LOCKED
+      const mark = st === 'READY' ? '●' : st === 'CONDITIONAL' ? '◐' : '○';
       const heat = o.heat > 0 ? ` +${o.heat}🔥` : '';
       const tail = o.available ? '' : ` (${o.reason})`;
       const eta = !o.available && o.affordEtaWeeks !== 0 ? IsoScene.etaTag(o.affordEtaWeeks) : '';
       const pv = offensePreview(o.key);
-      lines.push(`${mark} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}${eta}`);
+      lines.push(`${mark} ${st} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}${eta}`);
       lines.push(`      ↳ ${pv.effect}; rival: ${pv.retaliation}`);
     }
     this.strategyPanel.setText(lines.join('\n')).setPosition(right, 276);
@@ -1542,17 +1548,37 @@ export class IsoScene extends Phaser.Scene {
     void shockFlavor; void ISO_TILE_HEIGHT; void heatLabel;
   }
 
-  /** RTS-23 — a LABELED heat meter against the 50/70/85 federal ladder: filled to exposure, ticks
-   * at the thresholds, a direction arrow, and a "raid at 85" caption. */
+  /** §1D — the LADDERED heat meter: filled to exposure, ENGRAVED ticks at 50/70/85 with their
+   * NOTICE/WATCH/RAID labels, a direction arrow, and a named caption. */
   private drawHeatMeter(g: Phaser.GameObjects.Graphics, x: number, barY: number, w: number, _heat: number, exposure: number, tier: number): void {
-    const my = barY + 28, mh = 9, mw = w - 8;
+    const my = barY + 26, mh = 8, mw = w - 8;
     g.fillStyle(PAL.charcoal, 1).fillRect(x, my, mw, mh);
     g.fillStyle(hexNum(federalBarColor(tier)), 1).fillRect(x, my, mw * Phaser.Math.Clamp(exposure / 100, 0, 1), mh);
-    g.lineStyle(1, hexNum(SPEC.bone), 0.75);
-    for (const mk of [FED_T1, FED_T2, FED_T3]) { g.beginPath(); g.moveTo(x + (mw * mk) / 100, my - 2); g.lineTo(x + (mw * mk) / 100, my + mh + 2); g.strokePath(); }
-    const dir = exposure > this.lastHeat + 0.5 ? '▲' : exposure < this.lastHeat - 0.5 ? '▼' : '◆';
-    const cap = tier >= 3 ? 'RAID AT 85 — BUST IMMINENT' : tier >= 2 ? 'agents watching (raid at 85)' : tier >= 1 ? 'questions asked (raid at 85)' : 'cool — raid at 85';
-    if (this.heatCaption) this.heatCaption.setText(`exp ${exposure}/100 ${dir} · ${cap}`).setColor(tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 2);
+    // engraved threshold ticks + tiny NOTICE/WATCH/RAID labels
+    for (const t of FEDERAL_LADDER) {
+      const tx = x + (mw * t.at) / 100;
+      const passed = exposure >= t.at;
+      g.lineStyle(1, hexNum(passed ? SPEC.brass : SPEC.bone), passed ? 0.95 : 0.7); // static: brass when passed
+      g.beginPath(); g.moveTo(tx, my - 2); g.lineTo(tx, my + mh + 2); g.strokePath();
+    }
+    // direction arrow + the named tier caption ("WATCH · exp 72/100 ▲ · raid at 85")
+    const dir = exposure > this.lastHeat + 0.5 ? '▲ rising' : exposure < this.lastHeat - 0.5 ? '▼ cooling' : '◆ steady';
+    const name = federalTierLabel(tier);
+    const cap = `${name} · exp ${exposure}/100 ${dir} · raid at 85`;
+    if (this.heatCaption) this.heatCaption.setText(cap).setColor(tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 3);
+    // the threshold labels engraved under their ticks
+    this.drawLadderLabels(g, x, my + mh + 14, mw);
+  }
+
+  /** Tiny engraved NOTICE/WATCH/RAID labels under their ladder ticks (drawn once-per-frame as text
+   * cache so we don't allocate; reuses 3 pooled labels). */
+  private ladderLabelPool: Phaser.GameObjects.Text[] = [];
+  private drawLadderLabels(_g: Phaser.GameObjects.Graphics, x: number, y: number, mw: number): void {
+    FEDERAL_LADDER.forEach((t, i) => {
+      let lbl = this.ladderLabelPool[i];
+      if (!lbl) { lbl = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '8px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000); this.ladderLabelPool[i] = lbl; }
+      lbl.setText(t.label).setPosition(x + (mw * t.at) / 100, y).setVisible(true);
+    });
   }
 
   private cellExplain(key: string, p: { cleanCash: number; dirtyCash: number; weeklyUpkeep: number; crew: number; heat: number }, net: number): string {
@@ -1569,26 +1595,31 @@ export class IsoScene extends Phaser.Scene {
 
   /** RTS-23 — the FOUR CHANNELS as labeled dials: level $/wk · what it buys · the [G] bump cost. */
   private drawChannels(g: Phaser.GameObjects.Graphics, _p: unknown): void {
-    const r = this.channelPanelRect; r.y = 64;
+    const r = this.channelPanelRect; r.y = 64; r.w = 300; r.h = 122;
     this.decoFrame(g, r.x, r.y, r.w, r.h);
     this.channelTitle?.setPosition(r.x + 8, r.y + 6);
+    const FEDERAL_GREEN = 0x5b7d6a; // §2: The Bureau reads federal-green (canon-checked accent)
     const defs: { ch: BribeChannel; name: string; buys: string }[] = [
       { ch: 'police', name: 'THE BEAT', buys: 'fewer raids' },
       { ch: 'judges', name: 'THE BENCH', buys: 'survive a bust · −raid heat' },
-      { ch: 'politicians', name: 'CITY HALL', buys: 'heat cools faster · hit cover' },
+      { ch: 'politicians', name: 'CITY HALL', buys: 'heat cools · hit cover' },
       { ch: 'feds', name: 'THE BUREAU', buys: 'fed shield · unlocks lockout' },
     ];
     const bribes = this.state.player.bribes;
     defs.forEach((d, i) => {
       const row = this.channelRows[i]; if (!row) return;
-      const y = r.y + 26 + i * 22;
+      const y = r.y + 26 + i * 23;
       const lvl = bribes[d.ch] ?? 0;
-      // a small filled "dial" pip ladder (0..5 segments by level/10)
-      const seg = Phaser.Math.Clamp(Math.round(lvl / 5), 0, 6);
+      const bracket = bribeBracket(lvl);
+      const accent = d.ch === 'feds' ? FEDERAL_GREEN : PAL.brass;
+      // named-bracket pip dial (NONE → … → IRON GRIP)
       const dotsX = r.x + 9;
-      for (let s = 0; s < 6; s++) { g.fillStyle(s < seg ? PAL.brass : PAL.charcoal, s < seg ? 0.95 : 0.7).fillRect(dotsX + s * 7, y + 3, 5, 9); }
-      row.setText(`${d.name}  $${lvl}/wk  ·  ${d.buys}`).setColor(lvl > 0 ? NOIR_PALETTE.bone : NOIR_PALETTE.fog).setPosition(dotsX + 48, y);
-      this.hudRegions.push({ x: r.x, y: y - 2, w: r.w, h: 20, explain: `${d.name}: $${lvl}/wk buys ${d.buys}. [G] bumps the next channel +$10/wk.` });
+      for (let s = 0; s < BRIBE_PIPS; s++) { g.fillStyle(s < bracket.pips ? accent : PAL.charcoal, s < bracket.pips ? 0.95 : 0.7).fillRect(dotsX + s * 7, y + 3, 5, 10); }
+      const next = bracket.nextName ? ` →${bracket.nextName}@$${bracket.nextAt}` : ' (IRON GRIP)';
+      const col = d.ch === 'feds' && lvl > 0 ? '#7da890' : lvl > 0 ? NOIR_PALETTE.bone : NOIR_PALETTE.fog;
+      row.setText(`${d.name} · ${bracket.name} $${lvl}/wk · ${d.buys}${next}`).setColor(col).setPosition(dotsX + 42, y);
+      const fedExtra = d.ch === 'feds' ? ' Greasing The Bureau lowers your federal EXPOSURE directly.' : '';
+      this.hudRegions.push({ x: r.x, y: y - 2, w: r.w, h: 21, explain: `${d.name} — ${bracket.name} ($${lvl}/wk): buys ${d.buys}. [G] greases the next channel +$10/wk.${fedExtra}` });
     });
   }
 
@@ -1635,8 +1666,11 @@ export class IsoScene extends Phaser.Scene {
         const state = shut ? 'SHUT DOWN' : b.payingProtection ? 'YOURS — paying' : b.earnerName ? `${b.earnerName}'s` : 'un-shaken';
         const stateCol = shut ? SPEC.danger : b.payingProtection ? SPEC.brass : b.earnerName ? SPEC.rival : NOIR_PALETTE.fog;
         this.ctxCardTitle.setText(`▣ ${b.name} (${b.kind}) · ${state}`).setColor(stateCol).setPosition(x + 8, y + 6).setVisible(true);
-        const ex = acts.extort.ok ? `✓ EXTORT → +30% protection income` : `✗ EXTORT (${acts.extort.reason})`;
-        const at = acts.attack.ok ? `✓ ATTACK → shut it ${ATTACK_SHUTDOWN_WEEKS}wk, +${ATTACK_HEAT}🔥` : `✗ ATTACK (${acts.attack.reason})`;
+        // §3C action-verb chips: verb · effect/cost · READY/CONDITIONAL/LOCKED + plain reason.
+        const exSt = verbChipState(acts.extort.ok, acts.extort.reason);
+        const atSt = verbChipState(acts.attack.ok, acts.attack.reason);
+        const ex = acts.extort.ok ? `[READY] EXTORT → +30% protection income` : `[${exSt}] EXTORT — ${acts.extort.reason}`;
+        const at = acts.attack.ok ? `[READY] ATTACK → shut ${ATTACK_SHUTDOWN_WEEKS}wk, +${ATTACK_HEAT}🔥` : `[${atSt}] ATTACK — ${acts.attack.reason}`;
         this.ctxCardBody.setText([
           `yield $${b.income}/wk · heat ${raw.heatPerTick}/wk · uncollected $${b.uncollected}`,
           ex, at,
@@ -1734,6 +1768,9 @@ export class IsoScene extends Phaser.Scene {
     this.feedVisible = !this.feedVisible;
     this.feedTitle?.setVisible(this.feedVisible);
     for (const l of this.feedLines) l.setVisible(this.feedVisible);
+    // §4: focusing The Wire marks everything read (clears the NEEDS-YOU count).
+    const last = this.state.incidents[this.state.incidents.length - 1];
+    if (last) this.lastSeenWireSeq = last.seq;
   }
 
   /** RTS-21 legibility: a compact "when can I afford it" tag for the build/offence boards. */
@@ -1750,18 +1787,27 @@ export class IsoScene extends Phaser.Scene {
   private refreshFeed(): void {
     if (!this.feedVisible || this.feedLines.length === 0) return;
     const right = this.scale.width - 18;
-    // RTS-23: The Wire sits in its framed panel UNDER the top bar (top-right). Title pulses on a
-    // fresh alert (an audio seam).
+    const dotX = this.scale.width - 300; // category-dot column at the panel's left edge (§4)
     const flashing = this.time.now < this.wireFlashUntil;
-    this.feedTitle?.setPosition(right, 66).setColor(flashing ? SPEC.danger : NOIR_PALETTE.brass)
-      .setText(flashing ? 'THE WIRE  [L]  ◂ NEW' : 'THE WIRE  [L]');
+    // §4: unread "NEEDS YOU" count — danger/warning incidents past what the player last focused.
+    const unread = this.state.incidents.filter((r) => r.seq > this.lastSeenWireSeq && incidentNeedsYou(r.severity)).length;
+    const title = unread > 0 ? `THE WIRE  [L] · ${unread} NEEDS YOU` : (flashing ? 'THE WIRE  [L]  ◂ NEW' : 'THE WIRE  [L]');
+    this.feedTitle?.setPosition(right, 66).setColor(unread > 0 || flashing ? SPEC.danger : NOIR_PALETTE.brass).setText(title);
     const recent: IncidentRecord[] = recentIncidents(this.state, this.feedLines.length);
+    const g = this.hudGfx; // dots drawn after refreshHud's clear, persist through the frame
     for (let i = 0; i < this.feedLines.length; i++) {
       const line = this.feedLines[i];
       const rec = recent[i];
-      line.setPosition(right, 86 + i * 15);
+      const ly = 86 + i * 15;
+      line.setPosition(right, ly);
       if (!rec) { line.setText(''); continue; }
-      const sum = rec.summary.length > 46 ? rec.summary.slice(0, 45) + '…' : rec.summary;
+      // §4 category dot (money/threat/law/turf/crew) + a NEEDS-YOU tab marker on the left.
+      const cat = alertCategory(rec.type);
+      if (g) {
+        g.fillStyle(hexNum(cat.color), 0.95).fillCircle(dotX, ly + 6, 3);
+        if (rec.seq > this.lastSeenWireSeq && incidentNeedsYou(rec.severity)) g.fillStyle(PAL.brass, 0.95).fillRect(dotX - 10, ly + 1, 3, 11); // "needs you" tab (brass = you)
+      }
+      const sum = rec.summary.length > 44 ? rec.summary.slice(0, 43) + '…' : rec.summary;
       line.setText(`[w${rec.week}] ${sum}`).setColor(IsoScene.feedColor(rec.severity));
     }
   }
