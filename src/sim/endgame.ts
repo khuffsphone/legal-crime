@@ -7,6 +7,7 @@
 import { HQ_MAX, TURF_DOMINANCE } from './constants';
 import { allBusinesses, businessEarner } from './economy';
 import { districtsHeld } from './territoryWar';
+import { metWinPath } from './winpaths';
 import { findFamily, type Family, type GameState } from './types';
 
 /** A family's HQ integrity (0..100). Absent ⇒ full. */
@@ -65,7 +66,7 @@ export function playerCollapsed(state: GameState): boolean {
   return p.cash <= 0 && p.dirtyCash <= 0;
 }
 
-export type EndKind = 'win-last-standing' | 'win-dominance' | 'lose-hq' | 'lose-collapse';
+export type EndKind = 'win-last-standing' | 'win-dominance' | 'win-go-straight' | 'win-mayor' | 'lose-hq' | 'lose-collapse';
 
 export interface EndgameResult {
   status: GameState['status'];
@@ -99,6 +100,14 @@ export function evaluateEndgame(state: GameState): EndgameResult | null {
   const held = districtsHeld(state, p.id).length;
   if (total > 0 && held / total >= TURF_DOMINANCE) {
     return resolve(state, 'won', 'win-dominance', `You hold the city — ${held} of ${total} blocks. Dominance.`);
+  }
+  // RTS-24: the two NEW win paths — retire clean, or take the seat.
+  const met = metWinPath(state);
+  if (met?.path === 'go-straight') {
+    return resolve(state, 'won', 'win-go-straight', 'You went straight — a clean, respectable empire. You retire on top.');
+  }
+  if (met?.path === 'mayor') {
+    return resolve(state, 'won', 'win-mayor', 'You took City Hall — the city is yours, legally. Mr. Mayor.');
   }
   return null;
 }

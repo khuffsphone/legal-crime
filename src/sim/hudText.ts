@@ -76,8 +76,10 @@ export type AlertCategory = 'money' | 'threat' | 'law' | 'turf' | 'crew' | 'othe
  * Fedora-Noir palette. */
 export function alertCategory(type: IncidentType): { category: AlertCategory; color: string } {
   switch (type) {
-    case 'deposit': case 'collector_run': case 'extortion': case 'settlement':
+    case 'deposit': case 'collector_run': case 'extortion': case 'settlement': case 'market': case 'vice':
       return { category: 'money', color: '#4e8b5a' }; // cash-green
+    case 'civic': case 'event':
+      return { category: 'law', color: '#b8862b' }; // brass (civic / world events)
     case 'robbery': case 'offense':
       return { category: 'threat', color: '#8a2b22' }; // blood (static; danger-red is motion-only)
     case 'federal_warning': case 'federal_warrant': case 'federal_cooldown': case 'bust': case 'raid': case 'shock': case 'loan':

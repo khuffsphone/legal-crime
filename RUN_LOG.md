@@ -2013,3 +2013,58 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   channel brackets NONE→IRON GRIP + next cost + pips; READY/CONDITIONAL/LOCKED chip states; Wire
   categories + needs-you). /src/sim Phaser-free; no Gangsters conflations; §5 deferred.
 - Commit: rts23: HUD/UI Elevation & Camera Polish — green
+
+## RTS-24 (Content & Engagement) — Win Conditions, Vice Upgrades, The Market & Events — GREEN  (2026-06-21)
+- Summary: The content batch that turns "I can play it" into "I want to replay it." Four content
+  pillars built as PURE sim logic in /src/sim (seeded, Phaser-free, unit-tested) + one HUD-balance
+  nit, all surfaced through the existing readable HUD. tick/applyCommand untouched — every new
+  system WRAPS settlement via advanceWeeklyContent(state, weeksFired), called from the real-time
+  driver on settled-week boundaries. Additive optional state fields keep determinism tests green;
+  the market is opt-in/lazy. 578 → 602 green (+24 content assertions). Four channels + 50/70/85
+  ladder kept; no Gangsters conflations; procedural/vector only.
+  • A) MULTIPLE WIN CONDITIONS (src/sim/winpaths.ts, pure) — THREE labeled progress paths the HUD
+    reads at a glance: DOMINATION (canon force win — ≥60% blocks / last family standing), GO STRAIGHT
+    (legit-empire value = clean cash + a value per protected front, toward GO_STRAIGHT_TARGET → retire
+    clean), GET ELECTED MAYOR (City Hall greasing AND civic INFLUENCE, the LAGGING gate sets the pace).
+    advanceCivics accrues influence weekly from politicians·turf·fronts (wraps, never tick); a Wire
+    slip fires the first time you cross the run-for-Mayor bar. evaluateEndgame consults metWinPath →
+    new EndKinds win-go-straight / win-mayor; the win overlay prints a per-path headline (YOU WENT
+    STRAIGHT / MR. MAYOR / THE CITY IS YOURS). Surfaced in THE CITY panel as ★/· "THREE WAYS TO WIN"
+    with pct + the running read for each.
+  • B) VICE UPGRADES (src/sim/vice.ts, pure) — each illegal operation climbs a BRANCH with a distinct
+    yield/heat profile: BOOTLEGGING (smuggling, loud — +heat, big yield, final rung needs AN
+    ALDERMAN'S EAR / City Hall≥20), GAMBLING (numbers, final rung MADE MEN / crew≥8), ENTERTAINMENT
+    (speakeasy, final rung A SOCIETY NAME / influence≥30), TROUBLESHOOTING (protection, quiets the
+    block — −heat, final rung A CREW OF ENFORCERS / strength≥12). The "The Books" ladder reads
+    cost·yield-Δ·heat-Δ·prereq with a READY/CONDITIONAL/LOCKED chip + plain locked reason; applying a
+    rung raises baseIncome and shifts heatPerTick. Surfaced in the §3B context card (THE BOOKS line)
+    with [U] to upgrade the hovered racket.
+  • C) THE MARKET (src/sim/market.ts, pure) — four Prohibition commodities (Bootleg Liquor, Bathtub
+    Beer, Cuban Cigars, Sugar) priced off a SUPPLY↔DEMAND gauge that narrates itself in mob English
+    ("demand far outstrips supply — prices SOARING" … "a glut on the street — prices CRASHING"). BUY
+    low / SELL high with a house SPREAD and a live preview; trades visibly MOVE the price (a footprint
+    lifts demand/supply); sale proceeds are DIRTY cash; advanceMarket eases prices back toward base
+    each week; shockDemand lets events spike a good. Surfaced as a right-dock "THE MARKET" tab ([M]
+    toggle, [N] pick a good, [Y] buy / [J] sell) with per-good rows + a live BUY/SELL preview. Where
+    the extort→collect surplus finally has somewhere to go.
+  • D) LIGHT SYSTEMIC SHOCKS/EVENTS (src/sim/events.ts, pure) — a small seeded event roll
+    (EVENT_WEEKLY_CHANCE) per settled week feeding THE WIRE: LEGALIZATION (booze demand spikes, heat
+    eases), FBI LOCKOUT (heat surge), BOOZE GLUT / SHORTAGE (market shocks), NEWSPAPER EXPOSÉ (heat).
+    Each = pure trigger + effect + a Wire slip explaining cause→effect; deterministic per seed; tied
+    to the existing heat + market systems. Projected to the ledger as 'event' incidents (brass dots).
+  • E) HUD LAYOUT-BALANCE NIT — the top bar (CLEAN / DIRTY / NET / HEAT-LADDER / CREW / WEEK) now
+    SPREADS across the full top edge (gaps grow to fill, 10px floor on narrow screens; room reserved
+    for the PHASE chip) instead of clustering upper-left with an empty centre. Polish only — panels
+    stay off the playfield.
+- Files: NEW src/sim/winpaths.ts, src/sim/vice.ts, src/sim/market.ts, src/sim/events.ts; edited
+  src/sim/{types,constants,endgame,ledger,hudText,index}.ts (additive optional fields, new EndKinds,
+  ledger/category maps, exports); src/scenes/IsoScene.ts (weekly content beat wired after
+  observeWorld; THREE WAYS TO WIN readout; per-path win headline; §3B vice ladder + [U]; THE MARKET
+  tab + [M]/[N]/[Y]/[J]; full-width top bar). NEW tests/content.test.ts (24).
+- Gate: typecheck ✅  build ✅  test ✅ (602; +24 content: three win paths + endgame resolution +
+  civic accrual; vice branch mapping + ladder cost/yield/heat/state + gated final rung + ownership;
+  market narration + buy/sell spread + footprint + drift + rows + glut; events deterministic fire +
+  Wire projection + weekly-content beat). PURE sim Phaser-free (invariant test green); tick/
+  applyCommand untouched; new systems WRAP settlement; four channels + 50/70/85 kept; no Gangsters
+  conflations. §5 Trade/Market (deferred from RTS-23) now SHIPPED.
+- Commit: rts24: Content & Engagement — win conditions, vice upgrades, the Market, events — green

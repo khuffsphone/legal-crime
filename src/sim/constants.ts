@@ -264,3 +264,33 @@ export const HQ_MAX = 100;
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)
+
+// ── RTS-24 — Content & Engagement ──────────────────────────────────────────────────────────────
+
+// Multiple win conditions (besides DOMINATION). Each is a pure progress metric; the match resolves
+// when one reaches 100%. Tuned to be a long-game alternative to taking the city by force.
+export const GO_STRAIGHT_TARGET = 25000; // "legit empire value" (clean cash + legal fronts) to retire
+export const GO_STRAIGHT_FRONT_VALUE = 800; // legit value credited per protected legal storefront
+export const MAYOR_CITYHALL_REQ = 40; // City Hall ($/wk) needed to run for mayor
+export const MAYOR_INFLUENCE_REQ = 100; // civic influence needed to win the seat
+// Civic influence accrues each week from City Hall greasing + turf + legit fronts (wrapped, not tick).
+export const INFLUENCE_PER_CITYHALL = 0.15; // influence/wk per City Hall point
+export const INFLUENCE_PER_DISTRICT = 2; // influence/wk per held district
+export const INFLUENCE_PER_FRONT = 0.5; // influence/wk per protected front
+export const INFLUENCE_MAX = 200;
+
+// Vice upgrades — each racket converts along a branch with distinct yield/heat. A rung raises the
+// operation's base income by the bump and shifts its heat; later rungs gate on a prerequisite.
+export const VICE_RUNG_INCOME_BUMP = 180; // +baseIncome per rung
+export const VICE_RUNG_COST_BASE = 700; // cash for the first rung (rises per rung)
+export const VICE_RUNG_MAX = 3; // rungs per branch
+
+// The Market (trade mini-game). Prices drift toward equilibrium; your trades move them (footprint);
+// a spread is the house's cut on every buy/sell.
+export const MARKET_SPREAD = 0.06; // 6% — buy above / sell below mid
+export const MARKET_FOOTPRINT = 0.6; // how hard a unit traded moves supply/demand
+export const MARKET_DRIFT = 0.12; // fraction prices ease back toward base each week
+export const MARKET_PRICE_MIN = 5; // a good never goes worthless
+
+// Light events feeding THE WIRE (wrapped, weekly). A handful, legible, tied to existing systems.
+export const EVENT_WEEKLY_CHANCE = 0.35; // per-week chance an event fires (when enabled)

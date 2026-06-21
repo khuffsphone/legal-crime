@@ -61,6 +61,16 @@ import {
   hudPhase,
   offensePreview,
   victoryProximity,
+  winPaths,
+  viceLadder,
+  applyViceUpgrade,
+  marketRows,
+  buyGood,
+  sellGood,
+  tradePreview,
+  advanceWeeklyContent,
+  type ViceLadder as ViceLadderView,
+  type TradeSide,
   federalTierLabel,
   FEDERAL_LADDER,
   bribeBracket,
@@ -238,6 +248,13 @@ export class IsoScene extends Phaser.Scene {
   private objDetail?: Phaser.GameObjects.Text;
   private highlight?: Phaser.GameObjects.Ellipse;
   private routeWarn?: Phaser.GameObjects.Ellipse;
+  // RTS-24 — THE MARKET tab (right dock) + the hovered racket for [U] vice-upgrade.
+  private marketOpen = false;
+  private marketSel = 0; // 0..3 selected good
+  private marketQty = 5; // fixed trade size
+  private marketTitle?: Phaser.GameObjects.Text;
+  private marketBody?: Phaser.GameObjects.Text;
+  private ctxBizId?: string; // the business currently shown in the context card (for [U])
 
   constructor() {
     super('IsoScene');
@@ -445,6 +462,9 @@ export class IsoScene extends Phaser.Scene {
 
     const obs = observeWorld(this.state, dt);
     this.state = obs.state;
+    // RTS-24: on each settled week, run the content beat — civic INFLUENCE accrual (Mayor path),
+    // market drift back toward balance, and the light event roll. WRAPS settlement; tick untouched.
+    if (obs.result.weeksFired > 0) advanceWeeklyContent(this.state, obs.result.weeksFired);
     // RTS-22: advance any automated collection routes (gather → bank → loop). No-op without a route.
     advanceRoutes(this.state, this.layout, this.navGrid);
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
@@ -936,6 +956,46 @@ export class IsoScene extends Phaser.Scene {
     this.setStatus(added ? `recruited muscle — crew ${this.state.player.gangsters.length}, strength ${toward}` : 'no one to recruit right now');
   }
 
+  // ── RTS-24 vice upgrades + THE MARKET ────────────────────────────────────────────────────
+
+  /** [U] climb the next vice rung on the racket shown in the context card (the hovered op). */
+  private commandViceUpgrade(): void {
+    const id = this.ctxBizId;
+    if (!id) { this.setStatus('hover one of YOUR rackets, then [U] to upgrade it'); return; }
+    const ladder = viceLadder(this.state, id);
+    if (!ladder || !ladder.next) { this.setStatus(ladder && ladder.branch ? 'this racket is maxed out' : 'that storefront has no vice branch'); return; }
+    const res = applyViceUpgrade(this.state, id);
+    this.state = harvestIncidents(this.state);
+    if (res.ok) {
+      const b = allBusinesses(this.state).find((x) => x.id === id);
+      const t = b ? businessTileOf(this.layout, id) : undefined;
+      if (t) { const c = gridToScreen(t.gx, t.gy); this.floatText(c.x, c.y - 30, `${ladder.label} ▲`, NOIR_PALETTE.brass); }
+      this.setStatus(`upgraded → ${ladder.next.name} (+$${ladder.next.incomeBump}/wk)`);
+    } else {
+      this.setStatus(`UPGRADE — ${res.reason}`);
+    }
+  }
+
+  /** [M] open/close THE MARKET right-dock tab. */
+  private toggleMarket(): void {
+    this.marketOpen = !this.marketOpen;
+    this.marketTitle?.setVisible(this.marketOpen);
+    this.marketBody?.setVisible(this.marketOpen);
+    if (this.marketOpen) this.setStatus('THE MARKET — [N] pick a good · [Y] buy · [J] sell');
+  }
+
+  /** [Y]/[J] buy or sell the selected good (only while the market tab is open). */
+  private commandTrade(side: TradeSide): void {
+    if (!this.marketOpen) return;
+    const rows = marketRows(this.state);
+    const row = rows[this.marketSel];
+    if (!row) return;
+    const res = side === 'buy' ? buyGood(this.state, row.id, this.marketQty) : sellGood(this.state, row.id, this.marketQty);
+    this.state = harvestIncidents(this.state);
+    if (res.ok) this.setStatus(`${side === 'buy' ? 'BOUGHT' : 'SOLD'} ${this.marketQty} ${row.name} for $${res.total}`);
+    else this.setStatus(`${side.toUpperCase()} ${row.name} — ${res.reason}`);
+  }
+
   // ── the offensive (RTS-17) ───────────────────────────────────────────────────────────────
 
   /** [1] RAID the first rival-held/contested district by force. */
@@ -1046,7 +1106,14 @@ export class IsoScene extends Phaser.Scene {
     const w = this.scale.width, h = this.scale.height;
     this.add.rectangle(0, 0, 6000, 4000, PAL.soot, 0.82).setOrigin(0, 0).setScrollFactor(0).setDepth(200000);
     const last = [...this.state.log].reverse().find((e) => e.kind === 'game-over');
-    this.add.text(w / 2, h / 2 - 30, won ? 'YOU TOOK THE CITY' : 'THE CITY TOOK YOU', {
+    // RTS-24: a per-WIN-PATH headline variant — the screen names HOW you won (force / clean / ballot).
+    const kind = (last?.data as { kind?: string } | undefined)?.kind;
+    const headline = !won ? 'THE CITY TOOK YOU'
+      : kind === 'win-go-straight' ? 'YOU WENT STRAIGHT'
+      : kind === 'win-mayor' ? 'MR. MAYOR'
+      : kind === 'win-dominance' ? 'THE CITY IS YOURS'
+      : 'YOU TOOK THE CITY';
+    this.add.text(w / 2, h / 2 - 30, headline, {
       fontFamily: NOIR_FONT, fontSize: '34px', color: won ? SPEC.brass : SPEC.danger, fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
     this.add.text(w / 2, h / 2 + 16, last?.message ?? '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.bone }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
@@ -1220,6 +1287,13 @@ export class IsoScene extends Phaser.Scene {
     // RTS-20 — the build verbs (leave ESTABLISH).
     this.input.keyboard?.on('keydown-FIVE', () => this.commandExpand());
     this.input.keyboard?.on('keydown-SIX', () => this.commandRecruit());
+    // RTS-24 — vice upgrade ([U] on the hovered racket) + THE MARKET ([M] toggle, [N] next good,
+    // [Y] buy, [J] sell — buy/sell act only while the market tab is open).
+    this.input.keyboard?.on('keydown-U', () => this.commandViceUpgrade());
+    this.input.keyboard?.on('keydown-M', () => this.toggleMarket());
+    this.input.keyboard?.on('keydown-N', () => { if (this.marketOpen) this.marketSel = (this.marketSel + 1) % 4; });
+    this.input.keyboard?.on('keydown-Y', () => this.commandTrade('buy'));
+    this.input.keyboard?.on('keydown-J', () => this.commandTrade('sell'));
   }
 
   update(_t: number, delta: number): void {
@@ -1317,6 +1391,10 @@ export class IsoScene extends Phaser.Scene {
     // Mutiny telegraph banner (top-centre, under the objective) — legible, earned, with a countdown.
     this.mutinyBanner = this.add.text(this.scale.width / 2, 60, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
+    // RTS-24 THE MARKET tab (right dock, toggled with [M]) — rows of goods that narrate themselves.
+    this.marketTitle = this.add.text(0, 0, 'THE MARKET  [M]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+    this.marketBody = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+
     // RTS-16 turf-war standings (right side, under THE WIRE) + rival-pressure telegraph banner.
     this.strategyTitle = this.add.text(0, 196, 'THE CITY', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
     this.strategyPanel = this.add.text(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
@@ -1354,8 +1432,17 @@ export class IsoScene extends Phaser.Scene {
     const vp = victoryProximity(this.state);
     lines.push('');
     lines.push(`— ${phase.phase} —`);
-    lines.push(`WIN ${vp.playerWinPct}% · LOSE ${vp.playerLosePct}%`);
-    lines.push(vp.read.length > 40 ? vp.read.slice(0, 39) + '…' : vp.read);
+    lines.push(`LOSE ${vp.playerLosePct}%`);
+    // RTS-24: THREE WIN PATHS — each a labeled progress readout (the leader is starred). The player
+    // reads at a glance which route is closest and what advances it.
+    const paths = winPaths(this.state);
+    const lead = paths.reduce((a, b) => (b.pct > a.pct ? b : a), paths[0]);
+    lines.push('— THREE WAYS TO WIN —');
+    for (const w of paths) {
+      const star = w === lead && w.pct > 0 ? '★' : '·';
+      lines.push(`${star} ${w.label} ${w.pct}%`);
+      lines.push(`   ${w.read.length > 38 ? w.read.slice(0, 37) + '…' : w.read}`);
+    }
     // RTS-20/21 build board: the verbs that grow the outfit out of ESTABLISH (expand → HOLD → RAID,
     // recruit → muscle → ASSASSINATE), with a "when can I afford it" ETA when short on cash.
     for (const b of buildReadout(this.state)) {
@@ -1494,7 +1581,16 @@ export class IsoScene extends Phaser.Scene {
       crew: { v: `${p.crew}`, c: NOIR_PALETTE.bone, w: 64 },
       week: { v: `${hud.week} · ${hud.weekCountdownLabel}`, c: NOIR_PALETTE.bone, w: 150 },
     };
-    let cx = barX + 14;
+    // RTS-24 HUD nit E — spread the empire-glance across the FULL top edge instead of clustering it
+    // upper-left with empty centre. The cells keep their widths; the gaps grow to fill the bar (down
+    // to a 10px floor on narrow screens). Room is reserved on the right for the PHASE chip.
+    const contentStart = barX + 14;
+    const phaseReserve = 156;
+    const contentEnd = barX + barW - 14 - phaseReserve;
+    const totalCellW = this.topCells.reduce((s, c) => s + fixed[c.key].w, 0);
+    const gaps = Math.max(1, this.topCells.length - 1);
+    const spreadGap = Math.max(10, (contentEnd - contentStart - totalCellW) / gaps);
+    let cx = contentStart;
     for (const cell of this.topCells) {
       const def = fixed[cell.key];
       cell.x = cx; cell.w = def.w;
@@ -1506,7 +1602,7 @@ export class IsoScene extends Phaser.Scene {
         cell.value.setText(def.v).setColor(def.c).setPosition(cx, barY + 22).setVisible(true);
       }
       this.hudRegions.push({ x: cx - 6, y: barY, w: def.w, h: barH, explain: this.cellExplain(cell.key, p, net) });
-      cx += def.w + 10;
+      cx += def.w + spreadGap;
     }
 
     // PHASE chip at the bar's right end — the 4-stage arc header.
@@ -1528,6 +1624,9 @@ export class IsoScene extends Phaser.Scene {
 
     // ── CONTEXT CARD (selected thug) ──
     this.drawContextCard(g);
+
+    // ── THE MARKET tab (right dock, when open) ──
+    this.drawMarket(g);
 
     // ── THE WIRE frame (behind the feed, under the top bar) ──
     if (this.feedVisible) {
@@ -1660,25 +1759,31 @@ export class IsoScene extends Phaser.Scene {
       const raw = allBusinesses(this.state).find((x2) => x2.id === bizId);
       const acts = businessActions(this.state, bizId, 'player');
       if (b && raw && acts) {
-        const h = 84, y = this.scale.height - h - 12;
+        this.ctxBizId = bizId;
+        // RTS-24 §3B "The Books": the vice ladder for one of YOUR rackets — next rung's
+        // cost · yield-Δ · heat-Δ · READY/CONDITIONAL/LOCKED (with the plain locked reason).
+        const ladder = viceLadder(this.state, bizId);
+        const viceLine = this.viceLadderLine(ladder);
+        const h = viceLine ? 98 : 84, y = this.scale.height - h - 12;
         this.decoFrame(g, x, y, w, h);
         const shut = isShutDown(raw);
         const state = shut ? 'SHUT DOWN' : b.payingProtection ? 'YOURS — paying' : b.earnerName ? `${b.earnerName}'s` : 'un-shaken';
         const stateCol = shut ? SPEC.danger : b.payingProtection ? SPEC.brass : b.earnerName ? SPEC.rival : NOIR_PALETTE.fog;
-        this.ctxCardTitle.setText(`▣ ${b.name} (${b.kind}) · ${state}`).setColor(stateCol).setPosition(x + 8, y + 6).setVisible(true);
+        const branchTag = ladder && ladder.branch ? ` · ${ladder.label}${ladder.current > 0 ? ` ${'I'.repeat(ladder.current)}` : ''}` : '';
+        this.ctxCardTitle.setText(`▣ ${b.name} (${b.kind})${branchTag} · ${state}`).setColor(stateCol).setPosition(x + 8, y + 6).setVisible(true);
         // §3C action-verb chips: verb · effect/cost · READY/CONDITIONAL/LOCKED + plain reason.
         const exSt = verbChipState(acts.extort.ok, acts.extort.reason);
         const atSt = verbChipState(acts.attack.ok, acts.attack.reason);
         const ex = acts.extort.ok ? `[READY] EXTORT → +30% protection income` : `[${exSt}] EXTORT — ${acts.extort.reason}`;
         const at = acts.attack.ok ? `[READY] ATTACK → shut ${ATTACK_SHUTDOWN_WEEKS}wk, +${ATTACK_HEAT}🔥` : `[${atSt}] ATTACK — ${acts.attack.reason}`;
-        this.ctxCardBody.setText([
-          `yield $${b.income}/wk · heat ${raw.heatPerTick}/wk · uncollected $${b.uncollected}`,
-          ex, at,
-        ].join('\n')).setColor(NOIR_PALETTE.bone).setPosition(x + 8, y + 24).setVisible(true);
-        this.hudRegions.push({ x, y, w, h, explain: `${b.name}: ${state}. Yield $${b.income}/wk. Right-click → EXTORT (take protection) or ATTACK (shut it down).` });
+        const body = [`yield $${b.income}/wk · heat ${raw.heatPerTick}/wk · uncollected $${b.uncollected}`, ex, at];
+        if (viceLine) body.push(viceLine);
+        this.ctxCardBody.setText(body.join('\n')).setColor(NOIR_PALETTE.bone).setPosition(x + 8, y + 24).setVisible(true);
+        this.hudRegions.push({ x, y, w, h, explain: `${b.name}: ${state}. Yield $${b.income}/wk. Right-click → EXTORT or ATTACK.${viceLine ? ' [U] upgrades its vice branch.' : ''}` });
         return;
       }
     }
+    this.ctxBizId = undefined;
     // else: the selected thug's card.
     const id = this.selection.ids[0];
     const view = id ? this.units.find((u) => u.unit.id === id) : undefined;
@@ -1696,6 +1801,52 @@ export class IsoScene extends Phaser.Scene {
          'RIGHT-CLICK a shop → EXTORT / ATTACK · right-click street → move' + more]
       : [`${insp.vulnerable ? `carrying $${insp.carrying}` : 'on the move'}`, 'guard your collectors — a rival enforcer robs them' + more];
     this.ctxCardBody.setText(body.join('\n')).setColor(NOIR_PALETTE.bone).setPosition(x + 8, y + 26).setVisible(true);
+  }
+
+  /** RTS-24 §3B — the next vice-rung as a one-line chip ([U] · name · cost · +yield · ±heat ·
+   * READY/CONDITIONAL/LOCKED + reason), or null when the racket has no branch / is maxed. */
+  private viceLadderLine(ladder: ViceLadderView | null): string | null {
+    if (!ladder || !ladder.branch) return null;
+    if (!ladder.next) return `THE BOOKS: ${ladder.label} maxed — top of the ladder`;
+    const n = ladder.next;
+    const chip = n.state === 'READY' ? '[READY]' : n.state === 'CONDITIONAL' ? '[CONDITIONAL]' : '[LOCKED]';
+    const heat = `${n.heatDelta >= 0 ? '+' : ''}${n.heatDelta}🔥`;
+    const tail = n.state === 'READY' ? '[U] upgrade' : n.reason;
+    return `${chip} [U] ${n.name}: $${n.cost} · +$${n.incomeBump}/wk · ${heat} — ${tail}`;
+  }
+
+  /** RTS-24 — THE MARKET right-dock tab: one self-narrating row per good (price · ▲/▼ vs base ·
+   * supply↔demand read · held), the selected good marked, and a live BUY/SELL preview with spread. */
+  private drawMarket(g: Phaser.GameObjects.Graphics): void {
+    if (!this.marketTitle || !this.marketBody || !this.marketOpen) return;
+    const right = this.scale.width - 18;
+    const rows = marketRows(this.state);
+    if (this.marketSel >= rows.length) this.marketSel = 0;
+    const top = 60 + (this.feedVisible ? 190 : 0);
+    this.marketTitle.setPosition(right, top);
+    const lines: string[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const cursor = i === this.marketSel ? '▶' : ' ';
+      lines.push(`${cursor} ${r.dir} ${r.name} $${r.price} (base $${r.basePrice})${r.held ? ` · hold ${r.held}` : ''}`);
+      lines.push(`    ${r.read}`);
+    }
+    // live preview for the selected good (buy lifts demand, sell lifts supply — the footprint).
+    const sel = rows[this.marketSel];
+    if (sel) {
+      const bp = tradePreview(this.state, sel.id, this.marketQty, 'buy');
+      const sp = tradePreview(this.state, sel.id, this.marketQty, 'sell');
+      lines.push('');
+      if (bp) lines.push(`[Y] BUY ${this.marketQty} → -$${bp.total} ($${bp.unitPrice}/ea, spread $${bp.spreadPerUnit}) → $${bp.newPrice}`);
+      if (sp) lines.push(`[J] SELL ${this.marketQty} → +$${sp.total} ($${sp.unitPrice}/ea) → $${sp.newPrice}`);
+      lines.push('[N] next good · trades move the market');
+    }
+    const body = lines.join('\n');
+    this.marketBody.setText(body).setPosition(right, top + 20);
+    const h = this.marketBody.height + 30;
+    const w = 312;
+    this.decoFrame(g, right - w + 4, top - 4, w, h, PAL.brass, 0.94); // opaque: a real overlay tab
+    this.hudRegions.push({ x: right - w + 4, y: top - 4, w, h, explain: 'THE MARKET: buy low, sell high. Demand up → dearer; supply up → cheaper. Your trades move the price (a footprint), and the house takes a spread. Sale proceeds are DIRTY cash.' });
   }
 
   // ── RTS-23 audio-feedback seams ──────────────────────────────────────────────────────────────

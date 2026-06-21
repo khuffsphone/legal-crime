@@ -245,6 +245,50 @@ export {
   type BuildOption,
 } from './pacing';
 export {
+  dominationProgress,
+  goStraightProgress,
+  mayorProgress,
+  winPaths,
+  metWinPath,
+  advanceCivics,
+  influenceOf,
+  legitEmpireValue,
+  legalFrontCount,
+  type WinPath,
+  type WinPathProgress,
+} from './winpaths';
+export {
+  viceBranchFor,
+  viceLadder,
+  applyViceUpgrade,
+  type ViceBranch,
+  type ViceLadder,
+  type ViceRungView,
+  type RungState,
+  type ViceUpgradeResult,
+} from './vice';
+export {
+  createMarket,
+  ensureMarket,
+  marketGood,
+  supplyDemandRead,
+  tradePreview,
+  buyGood,
+  sellGood,
+  advanceMarket,
+  shockDemand,
+  marketRows,
+  type TradeSide,
+  type TradePreview,
+  type TradeResult,
+  type MarketRow,
+} from './market';
+export {
+  advanceEvents,
+  advanceWeeklyContent,
+  type EventKind,
+} from './events';
+export {
   hqIntegrityOf,
   damageHQ,
   eliminateFamily,

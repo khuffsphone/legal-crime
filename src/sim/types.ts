@@ -77,6 +77,11 @@ export interface Family {
   /** Interpersonal ties between crew members (RTS-14). Absent ⇒ none; a wronged member's ally
    * loses heart too. Additive — default-absent so prior states are byte-identical. */
   ties?: CrewTie[];
+  /** RTS-24 — civic INFLUENCE 0..INFLUENCE_MAX (the GET ELECTED MAYOR path). Accrues weekly from
+   * City Hall greasing + turf + legit fronts. Absent ⇒ 0. Additive, default-safe. */
+  influence?: number;
+  /** RTS-24 — goods held for the Market (goodId → units). Absent ⇒ none. */
+  inventory?: Record<string, number>;
 }
 
 export interface Business {
@@ -98,6 +103,11 @@ export interface Business {
   /** RTS-22: weeks this business is SHUT DOWN (an ATTACK temporarily stops it producing). While
    * > 0 it accrues NOTHING; decremented each settlement. Absent ⇒ open/0. Additive, default-safe. */
   shutdownTicks?: number;
+  /** RTS-24 — vice-upgrade branch this operation has been converted along (bootlegging / gambling /
+   * entertainment / troubleshooting). Absent ⇒ not yet converted. */
+  viceBranch?: string;
+  /** RTS-24 — how many vice rungs this operation has climbed (0..VICE_RUNG_MAX). Absent ⇒ 0. */
+  viceRung?: number;
 }
 
 export interface District {
@@ -123,6 +133,23 @@ export interface HitOrder {
   attackerId: string;
   targetId: string;
   orderedTick: number;
+}
+
+/** RTS-24 — a tradeable good on THE MARKET. Price drifts toward base; supply/demand move with the
+ * player's footprint and events. */
+export interface MarketGood {
+  id: string;
+  name: string;
+  basePrice: number;
+  price: number;
+  /** 0..100 each — the supply/demand gauge that narrates the market. */
+  supply: number;
+  demand: number;
+}
+
+/** RTS-24 — the market state (a small set of vice commodities). Additive on GameState. */
+export interface MarketState {
+  goods: MarketGood[];
 }
 
 /** RTS-22 — an automated collection route: a collector cycles these businesses in order, gathering
@@ -184,6 +211,8 @@ export interface GameState {
   /** RTS-22 — automated collection routes (additive; absent ⇒ none, so prior states are
    * byte-identical and the manual collector path is unchanged). */
   routes?: CollectionRoute[];
+  /** RTS-24 — THE MARKET (trade mini-game). Additive; absent ⇒ no market yet. */
+  market?: MarketState;
   /** Real-time seconds the player's crew must regroup before the next offensive action (RTS-19).
    * Set by every offence (raid/sabotage/hit/lockout) and bled down in the real-time wrapper; the
    * offence gates refuse while it is > 0, so heavy hits cannot be chained into an instant board

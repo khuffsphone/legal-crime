@@ -29,6 +29,10 @@ export type IncidentType =
   | 'territory'
   | 'family_fallen'
   | 'offense'
+  | 'market'
+  | 'vice'
+  | 'event'
+  | 'civic'
   | 'game_over';
 
 export interface IncidentRecord {
@@ -116,6 +120,16 @@ const LOG_KIND_MAP: Record<string, KindMapping> = {
   'lockout': { type: 'offense', severity: 'info' },
   'hq-struck': { type: 'territory', severity: 'danger' },
   'family-eliminated': { type: 'family_fallen', severity: 'gain' },
+  // RTS-24 — content: market trades, vice upgrades, civic influence, world events.
+  'market-buy': { type: 'market', severity: 'info' },
+  'market-sell': { type: 'market', severity: 'gain' },
+  'vice-upgrade': { type: 'vice', severity: 'gain' },
+  'civic-influence': { type: 'civic', severity: 'gain' },
+  'event-legalization': { type: 'event', severity: 'gain' },
+  'event-fbi-lockout': { type: 'event', severity: 'danger' },
+  'event-booze-glut': { type: 'event', severity: 'warning' },
+  'event-booze-shortage': { type: 'event', severity: 'warning' },
+  'event-expose': { type: 'event', severity: 'danger' },
   // Terminal.
   'game-over': { type: 'game_over', severity: 'danger' },
 };
