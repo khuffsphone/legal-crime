@@ -55,6 +55,9 @@ import {
   cityStanding,
   telegraphedPushes,
   resolveStrategicPulse,
+  offenseReadout,
+  matchPhase,
+  playerWeeklyNet,
   districtHolder,
   canRaid,
   resolveRaid,
@@ -947,7 +950,17 @@ export class IsoScene extends Phaser.Scene {
     // who's the softest target right now — nudge the player at a kill.
     const weak = weakestRival(this.state);
     if (weak) { lines.push(''); lines.push(`weakest: ${weak.name.replace('The ', '').replace(' Family', '').replace(' Crew', '')}`); }
-    lines.push('[1]raid [2]sabo [3]hit [4]lock');
+    // RTS-19 legibility: the match phase + the offence board (what each action costs in cash+heat,
+    // and whether you can pull it off right now — ✓ ready / ✗ + the reason).
+    const phase = matchPhase(this.state);
+    lines.push('');
+    lines.push(`— ${phase.phase.toUpperCase()} —`);
+    for (const o of offenseReadout(this.state)) {
+      const mark = o.available ? '✓' : '✗';
+      const heat = o.heat > 0 ? ` +${o.heat}🔥` : '';
+      const tail = o.available ? '' : ` (${o.reason})`;
+      lines.push(`${mark} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}`);
+    }
     this.strategyPanel.setText(lines.join('\n')).setPosition(right, 216);
     this.strategyPanel.setColor(standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
       : standing.trajectory === 'behind' || standing.trajectory === 'crushed' ? SPEC.danger : NOIR_PALETTE.bone);
@@ -1047,10 +1060,14 @@ export class IsoScene extends Phaser.Scene {
     const hud = realtimeHudView(this.state);
     const p = hud.player;
     const danger = anyCollectorInDanger(this.state);
+    // RTS-19 legibility: project the weekly net so the player can read whether the economy funds
+    // the war (positive) or the bleed is winning (negative).
+    const net = playerWeeklyNet(this.state);
+    const netStr = net >= 0 ? `+$${net}` : `-$${Math.abs(net)}`;
     this.hudPanel.setText([
       `Clean $${p.cleanCash}    Dirty $${p.dirtyCash}`,
       `Heat ${p.heat} (${heatLabel(p.heat)})    Crew ${p.crew}    Upkeep $${p.weeklyUpkeep}/wk` + (p.debt > 0 ? `    Debt $${p.debt}` : ''),
-      `Week ${hud.week} — next in ${hud.weekCountdownLabel}`,
+      `Net ${netStr}/wk    Week ${hud.week} — next in ${hud.weekCountdownLabel}`,
     ].join('\n'));
 
     // Uncollected readout — why clean drifts: takings you're owed but haven't collected yet.

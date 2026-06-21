@@ -26,19 +26,37 @@ export interface PushResult {
   districtId: string;
   before: string | null;
   after: string | null;
+  /** The pusher TOOK the block — became its holder, seizing the loser's rackets (full takeover). */
   captured: boolean;
+  /** The pusher knocked the prior holder off the block but did NOT take it (RTS-19) — a softening
+   * blow that breaks the loser's protection + scatters their takings WITHOUT transferring rackets. */
+  disrupted: boolean;
+}
+
+/** Options for a push (RTS-19). */
+export interface PushOptions {
+  /**
+   * Whether merely DISPLACING a prior holder (knocking them below the hold threshold, even to
+   * neutral) seizes their rackets. Default TRUE — the strategy/rival model: muscling a holder off
+   * their block grabs the spoils. A RAID passes FALSE: it only SEIZES if the pusher actually
+   * becomes the new holder; a mere displacement DISRUPTS (breaks fronts + scatters takings) but
+   * leaves ownership, so flipping turf by force is a sustained campaign, not a one-press win.
+   */
+  seizeOnDisplace?: boolean;
 }
 
 /**
  * Push `familyId`'s presence into a district: raise their control by `amount` (capped), then
  * erode the strongest rival there — but their GUARDING MUSCLE blunts the erosion (defense
- * matters). If control flips the holder away from a prior holder, resolve the capture. Pure.
+ * matters). If the push displaces a prior holder, resolve a SEIZE (full takeover) or a DISRUPT
+ * (softening blow) per `opts.seizeOnDisplace`. Pure.
  */
 export function pushPresence(
   state: GameState,
   familyId: string,
   districtId: string,
   amount: number,
+  opts?: PushOptions,
 ): PushResult | null {
   const district = state.districts.find((d) => d.id === districtId);
   if (!district || amount <= 0) return null;
@@ -55,25 +73,44 @@ export function pushPresence(
   }
 
   const after = districtHolder(district) ?? null;
-  // A capture fires when the pusher DISPLACES a prior holder — even to neutral. Muscling in and
-  // grabbing the rackets is the painful moment; you don't have to fully hold it yet.
-  const captured = before !== null && before !== familyId && after !== before;
-  if (captured) applyCapture(state, district, familyId, before);
-  return { districtId, before, after, captured };
+  const becameHolder = after === familyId && before !== familyId; // a genuine TAKEOVER this push
+  const displaced = before !== null && before !== familyId && after !== before; // a holder knocked off
+  const seizeOnDisplace = opts?.seizeOnDisplace !== false;
+
+  let captured = false;
+  let disrupted = false;
+  if (becameHolder) {
+    // A real takeover: you hold the block now, so its rackets are yours (whoever owned them).
+    applyCapture(state, district, familyId, before);
+    captured = true;
+  } else if (displaced) {
+    if (seizeOnDisplace) {
+      // Strategy/rival model: muscling a holder below the threshold grabs the spoils outright.
+      applyCapture(state, district, familyId, before);
+      captured = true;
+    } else {
+      // RTS-19 raid model: a softening blow — break their protection + scatter takings, but the
+      // rackets stay theirs until you actually take and hold the block.
+      applyDisruption(state, district, before!);
+      disrupted = true;
+    }
+  }
+  return { districtId, before, after, captured, disrupted };
 }
 
 /**
- * Resolve a capture: the captor seizes the loser's rackets in the district and breaks the
- * loser's extortion there (lost protection income). Logged. Pure (mutates state).
+ * Resolve a capture: the captor seizes the rackets of EVERY other family in the district and
+ * breaks their extortion there (lost protection income). `oldHolder` (the displaced holder, if
+ * any) is recorded for flavour. Logged. Pure (mutates state).
  */
-export function applyCapture(state: GameState, district: District, newHolder: string, oldHolder: string): void {
+export function applyCapture(state: GameState, district: District, newHolder: string, oldHolder: string | null): void {
   let seizedOps = 0;
   let brokenFronts = 0;
   for (const b of district.businesses) {
-    if (b.kind === 'front' && b.extortedBy === oldHolder) {
+    if (b.kind === 'front' && b.extortedBy !== undefined && b.extortedBy !== newHolder) {
       b.extortedBy = undefined; // protection racket broken
       brokenFronts++;
-    } else if (b.kind !== 'front' && b.ownerFamily === oldHolder) {
+    } else if (b.kind !== 'front' && b.ownerFamily !== undefined && b.ownerFamily !== newHolder) {
       b.ownerFamily = newHolder; // the racket changes hands
       b.uncollected = 0; // takings scatter in the takeover
       seizedOps++;
@@ -82,8 +119,34 @@ export function applyCapture(state: GameState, district: District, newHolder: st
   state.log.push({
     tick: state.tick,
     kind: 'district-captured',
-    message: `${newHolder} seized ${district.name} from ${oldHolder} (${seizedOps} rackets taken, ${brokenFronts} fronts broken)`,
+    message: `${newHolder} seized ${district.name}${oldHolder ? ` from ${oldHolder}` : ''} (${seizedOps} rackets taken, ${brokenFronts} fronts broken)`,
     data: { districtId: district.id, newHolder, oldHolder, seizedOps, brokenFronts },
+  });
+}
+
+/**
+ * Resolve a DISRUPTION (RTS-19): the prior holder was knocked off the block but the attacker did
+ * NOT take it. Their protection rackets are broken and their pending takings here scatter — a real
+ * economic blow — but ownership does NOT change hands (you have to actually hold a block to own its
+ * rackets). Logged. Pure (mutates state).
+ */
+export function applyDisruption(state: GameState, district: District, oldHolder: string): void {
+  let brokenFronts = 0;
+  let hitOps = 0;
+  for (const b of district.businesses) {
+    if (b.kind === 'front' && b.extortedBy === oldHolder) {
+      b.extortedBy = undefined; // protection broken
+      brokenFronts++;
+    } else if (b.kind !== 'front' && b.ownerFamily === oldHolder && (b.uncollected ?? 0) > 0) {
+      b.uncollected = 0; // takings scattered, but the racket is not seized
+      hitOps++;
+    }
+  }
+  state.log.push({
+    tick: state.tick,
+    kind: 'district-disrupted',
+    message: `${oldHolder} was knocked off ${district.name} (${brokenFronts} fronts broken, ${hitOps} rackets disrupted)`,
+    data: { districtId: district.id, oldHolder, brokenFronts, hitOps },
   });
 }
 

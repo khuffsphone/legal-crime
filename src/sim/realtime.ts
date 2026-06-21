@@ -38,6 +38,10 @@ export function update(
   dt: number,
   weekDuration: number = WEEK_DURATION_SECONDS,
 ): UpdateResult {
+  // RTS-19: bleed the player's offensive cooldown so the crew regroups in real time.
+  if ((state.offenseCooldown ?? 0) > 0) {
+    state.offenseCooldown = Math.max(0, (state.offenseCooldown ?? 0) - dt);
+  }
   const arrivedUnitIds = advanceUnits(state.units, dt);
   const interceptions = resolveInterceptions(state);
   const weeksFired = advanceClock(state, dt, weekDuration);

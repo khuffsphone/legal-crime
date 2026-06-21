@@ -16,6 +16,7 @@ import {
   LOCKOUT_BUREAU_REQ,
   LOCKOUT_COST,
   LOCKOUT_DURATION,
+  OFFENSE_COOLDOWN_SECONDS,
   RAID_BENCH_CAP,
   RAID_BENCH_MITIGATION,
   RAID_COST,
@@ -35,7 +36,7 @@ import { damageHQ } from './endgame';
 import { clampDirty } from './laundering';
 import { Rng } from './rng';
 import { districtHolder } from './territory';
-import { pushPresence } from './territoryWar';
+import { pushPresence, districtsHeld } from './territoryWar';
 import { findFamily, type Family, type GameState } from './types';
 
 function addHeat(family: Family, amount: number): void {
@@ -43,6 +44,11 @@ function addHeat(family: Family, amount: number): void {
 }
 function raiseAggro(target: Family, amount = AGGRO_ON_ATTACK): void {
   target.aggro = (target.aggro ?? 0) + amount;
+}
+/** RTS-19: arm the shared crew cooldown after an offensive action — the men regroup before the
+ * next job, so heavy hits cannot be chained into an instant board flip. */
+function armCooldown(state: GameState): void {
+  state.offenseCooldown = OFFENSE_COOLDOWN_SECONDS;
 }
 function loseWeakest(family: Family): void {
   if (family.gangsters.length === 0) return;
@@ -61,10 +67,23 @@ function gate(ok: boolean, reason: string): Gate {
   return { ok, reason };
 }
 
-/** Whether the player can RAID a district right now (crew + cash + a rival to hit there). */
+/** RTS-19: the shared crew cooldown — every offence refuses while the men are still regrouping. */
+export function offenseReady(state: GameState): Gate {
+  const cd = state.offenseCooldown ?? 0;
+  if (cd > 0) return gate(false, `crew regrouping (${Math.ceil(cd)}s)`);
+  return gate(true, 'ready');
+}
+
+/** Whether the player can RAID a district right now: a SECURED home block + crew + cash + a rival
+ * to hit there, and the crew not still regrouping (RTS-19 pacing — you establish before you
+ * project force). */
 export function canRaid(state: GameState, districtId: string): Gate {
+  const cd = offenseReady(state);
+  if (!cd.ok) return cd;
   const d = state.districts.find((x) => x.id === districtId);
   if (!d) return gate(false, 'no such district');
+  // RTS-19: you must hold a block of your own before you can take the fight onto rival turf.
+  if (districtsHeld(state, state.player.id).length === 0) return gate(false, 'secure a home block first');
   if (state.player.gangsters.length < RAID_MIN_CREW) return gate(false, `need ${RAID_MIN_CREW} crew`);
   if (state.player.cash < RAID_COST) return gate(false, `need $${RAID_COST}`);
   const holder = districtHolder(d);
@@ -73,8 +92,11 @@ export function canRaid(state: GameState, districtId: string): Gate {
   return gate(true, 'ready');
 }
 
-/** Whether the player can SABOTAGE a business (cash + crew + it earns for a rival). */
+/** Whether the player can SABOTAGE a business (cash + crew + it earns for a rival). The cheapest,
+ * earliest offensive tool — the first way to hit back, once a rival has a racket to wreck. */
 export function canSabotage(state: GameState, businessId: string): Gate {
+  const cd = offenseReady(state);
+  if (!cd.ok) return cd;
   if (state.player.gangsters.length < SABOTAGE_MIN_CREW) return gate(false, `need ${SABOTAGE_MIN_CREW} crew`);
   if (state.player.cash < SABOTAGE_COST) return gate(false, `need $${SABOTAGE_COST}`);
   const found = findBusiness(state, businessId);
@@ -86,6 +108,8 @@ export function canSabotage(state: GameState, businessId: string): Gate {
 
 /** Whether the player can ASSASSINATE a rival Don (muscle enables the hit; cash funds it). */
 export function canAssassinate(state: GameState, rivalId: string): Gate {
+  const cd = offenseReady(state);
+  if (!cd.ok) return cd;
   const r = findFamily(state, rivalId);
   if (!r || r.isPlayer || !r.alive) return gate(false, 'invalid target');
   if (familyStrength(state.player) < ASSASSINATE_MIN_STRENGTH) return gate(false, `need ${ASSASSINATE_MIN_STRENGTH} muscle`);
@@ -95,6 +119,8 @@ export function canAssassinate(state: GameState, rivalId: string): Gate {
 
 /** Whether the player can drop a federal LOCKOUT on a rival (The Bureau investment unlocks it). */
 export function canLockout(state: GameState, rivalId: string): Gate {
+  const cd = offenseReady(state);
+  if (!cd.ok) return cd;
   const r = findFamily(state, rivalId);
   if (!r || r.isPlayer || !r.alive) return gate(false, 'invalid target');
   if ((state.player.bribes.feds ?? 0) < LOCKOUT_BUREAU_REQ) return gate(false, `need The Bureau ≥ ${LOCKOUT_BUREAU_REQ}`);
@@ -104,10 +130,13 @@ export function canLockout(state: GameState, rivalId: string): Gate {
 
 // ── resolvers (mutate state; seeded where there is risk) ────────────────────────────────────
 
-export interface RaidResult { ok: boolean; reason: string; repelled?: boolean; captured?: boolean; }
+export interface RaidResult { ok: boolean; reason: string; repelled?: boolean; captured?: boolean; disrupted?: boolean; }
 
-/** RAID a district: muscle in by force. Costs cash + heat (The Bench cuts the legal blowback),
- * shoves player presence in (disrupting/seizing), and can be REPELLED if the rival guards it. */
+/** RAID a district: muscle in by force. Costs cash + heat (The Bench cuts the legal blowback) and
+ * chips player presence in. RTS-19: a single raid SOFTENS — it disrupts the defender's economy
+ * (breaks fronts, scatters takings) and erodes their hold, but it only SEIZES the block's rackets
+ * if the push actually makes you the new holder; otherwise ownership stays and you must keep the
+ * pressure on. Can be REPELLED if the rival guards it. */
 export function resolveRaid(state: GameState, districtId: string): RaidResult {
   const g = canRaid(state, districtId);
   if (!g.ok) return { ok: false, reason: g.reason };
@@ -118,6 +147,7 @@ export function resolveRaid(state: GameState, districtId: string): RaidResult {
 
   p.cash -= RAID_COST;
   clampDirty(p);
+  armCooldown(state);
   const benchCut = Math.min(RAID_BENCH_CAP, (p.bribes.judges ?? 0) * RAID_BENCH_MITIGATION);
   addHeat(p, RAID_HEAT * (1 - benchCut));
 
@@ -137,17 +167,19 @@ export function resolveRaid(state: GameState, districtId: string): RaidResult {
   }
 
   const force = RAID_FORCE + Math.floor(familyStrength(p) * 0.5);
-  const push = pushPresence(state, 'player', districtId, force);
-  // disrupt the defender's takings in the district.
+  // RTS-19: a raid SEIZES only on a genuine takeover (you become the holder); a mere displacement
+  // disrupts but does not hand you the rackets.
+  const push = pushPresence(state, 'player', districtId, force, { seizeOnDisplace: false });
+  // scatter the defender's takings in the district (the raid's immediate economic bite).
   for (const b of d.businesses) if (businessEarner(b) === defenderId) b.uncollected = 0;
-  state.log.push({ tick: state.tick, kind: 'raid', message: `${p.name} raided ${d.name} (force ${force})`, data: { districtId, force, captured: !!push?.captured } });
-  return { ok: true, reason: 'ok', captured: !!push?.captured };
+  state.log.push({ tick: state.tick, kind: 'raid', message: `${p.name} raided ${d.name} (force ${force})`, data: { districtId, force, captured: !!push?.captured, disrupted: !!push?.disrupted } });
+  return { ok: true, reason: 'ok', captured: !!push?.captured, disrupted: !!push?.disrupted };
 }
 
 export interface SabotageResult { ok: boolean; reason: string; destroyed?: boolean; }
 
 /** SABOTAGE a rival racket/front — interdict their economy. An operation may be wrecked outright;
- * a front's protection is broken. Costs cash + heat. */
+ * a front's protection is broken. Costs cash + heat. The cheapest, earliest offensive tool. */
 export function resolveSabotage(state: GameState, businessId: string): SabotageResult {
   const g = canSabotage(state, businessId);
   if (!g.ok) return { ok: false, reason: g.reason };
@@ -159,6 +191,7 @@ export function resolveSabotage(state: GameState, businessId: string): SabotageR
 
   p.cash -= SABOTAGE_COST;
   clampDirty(p);
+  armCooldown(state);
   addHeat(p, SABOTAGE_HEAT);
   if (ownerFam) raiseAggro(ownerFam, AGGRO_ON_ATTACK / 2);
 
@@ -190,6 +223,7 @@ export function resolveAssassinate(state: GameState, rivalId: string): Assassina
 
   p.cash -= ASSASSINATE_COST;
   clampDirty(p);
+  armCooldown(state);
   const cover = Math.min(ASSASSINATE_CITYHALL_CAP, (p.bribes.politicians ?? 0) * ASSASSINATE_CITYHALL_COVER);
   addHeat(p, ASSASSINATE_HEAT * (1 - cover));
   raiseAggro(rival, AGGRO_ON_ATTACK * 1.5);
@@ -223,6 +257,7 @@ export function resolveLockout(state: GameState, rivalId: string): LockoutResult
   const rival = findFamily(state, rivalId)!;
   p.cash -= LOCKOUT_COST;
   clampDirty(p);
+  armCooldown(state);
   rival.lockoutTicks = Math.max(rival.lockoutTicks ?? 0, LOCKOUT_DURATION);
   raiseAggro(rival, AGGRO_ON_ATTACK / 2);
   state.log.push({ tick: state.tick, kind: 'lockout', message: `${p.name} sicced the Bureau on ${rival.name} — locked down for ${LOCKOUT_DURATION}`, data: { rivalId, duration: LOCKOUT_DURATION } });

@@ -201,10 +201,18 @@ export const TURF_DOMINANCE = 0.6; // fraction of districts that reads as "domin
 
 // RTS-17 — the offensive. Each player attack costs money + crew and draws heat; the canon four
 // channels gate or ease the bigger moves. Tuned so offense is an earned strategic choice.
+// RTS-19 balance: each action is a meaningful, costed blow with counterplay — NOT a steamroll. A
+// raid SOFTENS (disrupts the rival's economy + chips control); it only SEIZES a block once you
+// actually take and hold it, so flipping turf is a campaign, not a one-press win. A shared crew
+// COOLDOWN stops chaining several heavy hits in one breath. Bigger moves are gated behind a built
+// economy/territory and the canon channels, pacing offense to the mid–late game.
 export const RAID_COST = 500; // cash to muscle into a rival district by force
 export const RAID_HEAT = 14; // heat a raid draws (before The Bench mitigation)
 export const RAID_MIN_CREW = 2; // crew needed to mount a raid
-export const RAID_FORCE = 22; // control a raid shoves into the district
+// RTS-19: a raid shoves LESS control (22 → 14) so a single $500 raid no longer knocks a holder off
+// their block and grabs the rackets for free; it chips + disrupts, and a takeover takes sustained
+// pressure (or a rival already softened/locked-out).
+export const RAID_FORCE = 14;
 export const RAID_BENCH_MITIGATION = 0.02; // heat cut per The Bench (judges) point, capped
 export const RAID_BENCH_CAP = 0.7; // max raid-heat reduction from The Bench
 export const RAID_REPELLED_BASE = 0.15; // base chance a raid is repelled (rises with rival guard)
@@ -217,7 +225,9 @@ export const SABOTAGE_DESTROY_CHANCE = 0.5; // chance a sabotaged operation is w
 export const ASSASSINATE_COST = 1500; // the decapitating blow is expensive
 export const ASSASSINATE_HEAT = 30; // ...and loud (before City Hall political cover)
 export const ASSASSINATE_MIN_STRENGTH = 12; // muscle enables the hit
-export const ASSASSINATE_HQ_DAMAGE = 45; // HQ integrity destroyed on a successful strike
+// RTS-19: a hit razes 40 (was 45) HQ — still ~3 successful strikes to topple a Don, but a touch
+// more deliberate; the crew cooldown stops chaining the hits instantly.
+export const ASSASSINATE_HQ_DAMAGE = 40;
 export const ASSASSINATE_CITYHALL_COVER = 0.02; // heat cut per City Hall point, capped
 export const ASSASSINATE_CITYHALL_CAP = 0.6;
 
@@ -226,6 +236,11 @@ export const LOCKOUT_BUREAU_REQ = 20; // The Bureau (feds) investment needed to 
 export const LOCKOUT_DURATION = 4; // strategic pulses a rival stays locked down
 export const LOCKOUT_BLEED_CASH = 200; // cash a locked rival loses per pulse
 export const LOCKOUT_BLEED_HEAT = 6; // heat a locked rival gains per pulse
+
+// RTS-19: a shared crew cooldown after ANY offensive action — your men must regroup before the
+// next job, so you cannot chain raids/hits into an instant board flip. Decremented in the
+// real-time wrapper; the gates (canRaid/…) refuse while it is hot. ~0.6 of a strategic pulse.
+export const OFFENSE_COOLDOWN_SECONDS = 14;
 
 // Rival retaliation / escalation (RTS-17).
 export const AGGRO_ON_ATTACK = 40; // aggression a rival gains when you hit it

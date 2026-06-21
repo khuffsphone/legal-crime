@@ -105,8 +105,9 @@ const LOG_KIND_MAP: Record<string, KindMapping> = {
   // Extortion (Phase 2).
   'extort-success': { type: 'extortion', severity: 'gain' },
   'extort-fail': { type: 'extortion', severity: 'info' },
-  // The turf war (RTS-16).
+  // The turf war (RTS-16) + RTS-19 disruption (a softening blow that breaks fronts without seizing).
   'district-captured': { type: 'territory', severity: 'danger' },
+  'district-disrupted': { type: 'territory', severity: 'warning' },
   'family-fallen': { type: 'family_fallen', severity: 'gain' },
   // The offensive (RTS-17).
   'raid': { type: 'offense', severity: 'warning' },

@@ -145,11 +145,13 @@ export {
   districtStatus,
   pushPresence,
   applyCapture,
+  applyDisruption,
   districtsHeld,
   exposedDistricts,
   districtIncomeFor,
   type DistrictStatus,
   type PushResult,
+  type PushOptions,
 } from './territoryWar';
 export {
   targetScore,
@@ -173,6 +175,7 @@ export {
   type HomeFront,
 } from './contest';
 export {
+  offenseReady,
   canRaid,
   canSabotage,
   canAssassinate,
@@ -187,6 +190,15 @@ export {
   type AssassinateResult,
   type LockoutResult,
 } from './offense';
+export {
+  offenseReadout,
+  matchPhase,
+  playerWeeklyNet,
+  type OffenseKey,
+  type OffenseOption,
+  type MatchPhase,
+  type PhaseReadout,
+} from './pacing';
 export {
   hqIntegrityOf,
   damageHQ,

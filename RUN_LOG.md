@@ -1656,3 +1656,82 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   'behind'/'crushed' with homeFront district-0 30→50; playerHomeFront picks the foothold + clears
   once a block is held; a rival locking down turf ends the founding read). The 525-test base green.
 - Commit: rts18: Cold-Open Fix & Debug Hook — green
+
+## RTS-19 — Balance & Economy Pass — GREEN  (2026-06-21)
+- Summary: The "make it fun" pass on the UAT-verified foundation. A NORMAL, un-armed match now has
+  a satisfying arc — establish → contest → decapitate — paced so offense is EARNED, each attack is
+  a costed blow with counterplay (not a steamroll), rivals are a worthy-but-fair opponent, and the
+  federal ladder is a real late clock. Primarily TUNING + targeted PURE additions (pacing helpers,
+  a rebalanced capture model, a crew cooldown) + HUD legibility. tick/applyCommand core math is
+  untouched (wrapped); /src/sim stays Phaser-free; 528 → 542 green (+14 real assertions).
+
+  THE INTENDED MATCH ARC (when a competent player affords each tier):
+  • Weeks 0–2 ESTABLISH — extort district-0 fronts (~28–40/wk each), collect, reinvest the $3000
+    start into 1–2 rackets (numbers $500→200/wk · speakeasy $1000→400/wk · smuggling $1500→600/wk,
+    ~2.5-wk payback, ×N by tier), recruit muscle, expand the home corner 30→50 to HOLD it.
+  • ~Weeks 2–4 FIRST BLOOD — once a rival has a racket, SABOTAGE ($350, 1 crew) is the first
+    offensive tool. RAID ($500, 2 crew) unlocks the moment you HOLD a block of your own.
+  • ~Weeks 4–7 CONTEST — grease The Bureau to 20 → LOCKOUT ($800) pins + bleeds a rival; raid the
+    contested borders; defend with guards (they blunt rival erosion); ride the heat.
+  • ~Weeks 8–12 DECAPITATE — build to strength ≥12 → ASSASSINATE ($1500, ≈3 hits ≈$4500 + heavy
+    heat) under federal pressure; lockouts + raids soften the target; eliminate the Dons or take
+    60% of the city for dominance.
+
+  1. ECONOMY→OFFENSE PACING — the four actions are now an UNLOCK LADDER, not all-available-turn-1:
+     • SABOTAGE — first/cheapest; needs only 1 crew + $350 + a rival racket to wreck.
+     • RAID — needs a SECURED home block (districtsHeld(player) ≥ 1) + 2 crew + $500. NEW gate:
+       'secure a home block first' — you establish before you project force. (Stops the turn-1 raid
+       a $3000 start used to allow.)
+     • LOCKOUT — gated behind The Bureau (feds ≥ 20) + $800 (unchanged, now surfaced).
+     • ASSASSINATE — gated behind real muscle (strength ≥ 12) + $1500 (unchanged, now surfaced).
+  2. RAID RE-BALANCED (the UAT "3 blocks + an elimination almost instantly" steamroll):
+     • RAID_FORCE 22 → 14 — a single raid chips, it doesn't flip a held block in one press.
+     • NEW capture model (territoryWar.pushPresence): a TAKEOVER (you actually become the holder)
+       seizes the block's rackets; a RAID that only DISPLACES a holder to neutral now DISRUPTS —
+       breaks their fronts + scatters their takings (a real economic blow) but does NOT transfer
+       ownership. Flipping turf by force is a multi-raid CAMPAIGN. Implemented via a `seizeOnDisplace`
+       option (default TRUE preserves the RTS-16 rival/strategy model + all its tests; raids pass
+       FALSE). A takeover now seizes from ALL other owners (so a block knocked to neutral first is
+       still seized once you finally hold it).
+     • OFFENSE_COOLDOWN_SECONDS = 14 (NEW) — a shared crew cooldown after ANY offence; the gates
+       refuse ('crew regrouping (Ns)') while it bleeds down in the real-time wrapper, so you cannot
+       chain several heavy hits into an instant board flip.
+     • ASSASSINATE_HQ_DAMAGE 45 → 40 — still ~3 strikes to topple a Don, a touch more deliberate.
+  3. DIFFICULTY ARC & RIVAL BALANCE — left-alone rivals EXPAND across the city (free territorial
+     pulses) and build economy (one AI action/week), but an idle player has room: guards blunt the
+     weak early pushes to ZERO erosion, so your home holds while defended; a new sim test asserts
+     rivals grow their footprint + secure ground over 6 weeks WHILE the idle player stays alive with
+     crew intact (worthy, not a turn-1 tyrant). The capture rebalance also makes rival pushes onto
+     your turf less swingy. Rival constants left as-is (verified fair empirically rather than
+     blind-tuned).
+  4. ECONOMIC DEPTH — the economy already carries the arc (district-wealth-scaled fronts; 4 racket
+     kinds; the 3-tier upgrade growth curve with ~2.5-wk paybacks; the launder-fee-vs-heat timing
+     trade; collection risk). Rather than feature-sprawl, this pass makes reinvestment MATTER (the
+     pacing gates force you to build before you strike) and makes the growth LEGIBLE (below).
+  5. FEDERAL CLOCK — verified as real late pressure: offense draws heat (raid 14 · sabotage 9 · hit
+     30, before channel mitigation), a fat dirty hoard adds exposure points, and the 50/70/85 ladder
+     bites; The Bureau buys exposure relief. A test asserts a hot/dirty/aggressive posture crosses
+     the tier-1 threshold and that feds-bribe pulls it back.
+  6. LEGIBILITY (new pure module src/sim/pacing.ts; HUD) — offenseReadout(state) gives every action's
+     live cost + heat (AFTER the channel mitigation you've bought) + availability + the gate reason;
+     matchPhase(state) reads establish / contest / endgame; playerWeeklyNet(state) projects the
+     net/wk. The HUD now shows a "Net ±$/wk" line and a right-side OFFENCE BOARD (phase header +
+     per-action `✓/✗ [key] Label $cost +heat🔥 (reason)`), so the player can see what they can
+     afford, what it costs in cash AND heat, and why a move is locked.
+- Tuned values (before → after): RAID_FORCE 22 → 14 · ASSASSINATE_HQ_DAMAGE 45 → 40 ·
+  OFFENSE_COOLDOWN_SECONDS (new) 14 · canRaid +held-base gate · all gates +cooldown gate · capture
+  model: displacement-only-disrupts-for-raids / takeover-seizes-from-all.
+- Files: src/sim/constants.ts (raid/hit tuning + cooldown), src/sim/types.ts (+GameState.offenseCooldown,
+  optional/default-safe), src/sim/state.ts (init 0), src/sim/realtime.ts (bleed cooldown in update),
+  src/sim/territoryWar.ts (seizeOnDisplace + applyDisruption + takeover-seizes-all capture model +
+  PushResult.disrupted), src/sim/offense.ts (offenseReady cooldown gate + held-base raid gate + arm
+  cooldown + raid disrupt-not-seize), src/sim/ledger.ts (+district-disrupted incident), src/sim/pacing.ts
+  (NEW: offenseReadout/matchPhase/playerWeeklyNet), src/sim/index.ts (exports), src/scenes/IsoScene.ts
+  (net/wk HUD line + offence board + phase). New tests/balancePass.test.ts; updated tests/offensive.test.ts.
+- Gate: typecheck ✅  build ✅  test ✅ (542 total; +12 balancePass: tuned-constant values; the unlock
+  ladder sabotage→raid(held)→lockout(Bureau)→assassinate(muscle); the crew cooldown blocks + bleeds;
+  raids campaign-to-seize (no single-raid steal); rivals expand-but-don't-wipe-an-idle-player; federal
+  exposure crosses a warning tier + Bureau relief; matchPhase/offenseReadout/playerWeeklyNet readouts.
+  +2 offensive: cooldown-refuses-next-offence, single-raid-softens-not-seizes). /src/sim Phaser-free
+  invariant green; tick/applyCommand settlement untouched; the 528-test base green.
+- Commit: rts19: Balance & Economy Pass — green

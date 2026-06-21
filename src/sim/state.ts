@@ -159,6 +159,7 @@ export function createInitialState(
     units: [],
     tutorialFreeRuns: options?.tutorialFreeRuns ?? 0,
     strategyElapsed: 0,
+    offenseCooldown: 0,
     incidents: [],
     incidentSeq: 0,
     incidentLogCursor: 0,

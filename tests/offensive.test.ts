@@ -23,13 +23,28 @@ function crew(fam: Family, skills: number[]): void {
 function hold(s: GameState, id: string, fid: string, pts = 60): void { s.districts.find((d) => d.id === id)!.control[fid] = pts; }
 
 describe('offense gating — earned, channel-aware', () => {
-  it('raid needs crew, cash, and a rival to hit', () => {
+  it('raid needs crew, cash, a SECURED home block (RTS-19), and a rival to hit', () => {
     const s = big();
     expect(canRaid(s, 'district-2').ok).toBe(false); // no crew
     crew(s.player, [4, 4]); s.player.cash = 3000;
+    // RTS-19 pacing: you must hold a block of your own before projecting force onto rival turf.
+    expect(canRaid(s, 'district-2').ok).toBe(false);
+    expect(canRaid(s, 'district-2').reason).toBe('secure a home block first');
+    hold(s, 'district-0', 'player', 60); // secure the home corner
     expect(canRaid(s, 'district-2').ok).toBe(true); // rival-a is in district-2
     s.player.cash = RAID_COST - 1;
     expect(canRaid(s, 'district-2').ok).toBe(false);
+  });
+
+  it('a hot crew cooldown (RTS-19) refuses the next offence until the men regroup', () => {
+    const s = big(); crew(s.player, [4, 4]); s.player.cash = 5000; hold(s, 'district-0', 'player', 60);
+    expect(canRaid(s, 'district-2').ok).toBe(true);
+    s.offenseCooldown = 10; // a job just went down
+    const g = canRaid(s, 'district-2');
+    expect(g.ok).toBe(false);
+    expect(g.reason).toContain('regrouping');
+    s.offenseCooldown = 0;
+    expect(canRaid(s, 'district-2').ok).toBe(true);
   });
 
   it('assassination needs muscle + cash; lockout needs The Bureau + cash', () => {
@@ -46,19 +61,39 @@ describe('offense gating — earned, channel-aware', () => {
 });
 
 describe('RAID — force, cost, heat, The Bench mitigation', () => {
-  it('costs cash + heat and shoves presence into the district', () => {
-    const s = big(); crew(s.player, [4, 4]); s.player.cash = 3000;
+  it('costs cash + heat, arms the crew cooldown, and shoves presence into the district', () => {
+    const s = big(); crew(s.player, [4, 4]); s.player.cash = 3000; hold(s, 'district-0', 'player', 60);
     const cash0 = s.player.cash, heat0 = s.player.heat;
     const res = resolveRaid(s, 'district-2');
     expect(res.ok).toBe(true);
     expect(s.player.cash).toBe(cash0 - RAID_COST);
     expect(s.player.heat).toBeGreaterThan(heat0);
+    expect(s.offenseCooldown).toBeGreaterThan(0); // the crew must regroup
     expect(s.rivals[0].aggro).toBeGreaterThan(0); // the rival is provoked
+  });
+
+  it('a single raid SOFTENS but does not seize the block (RTS-19)', () => {
+    const s = big(); crew(s.player, [4, 4]); s.player.cash = 3000; hold(s, 'district-0', 'player', 60);
+    // rival-a holds district-2 with a racket; no player guards there to repel.
+    hold(s, 'district-2', 'rival-a', 55);
+    s.districts[2].businesses.push({ id: 'rop', name: 'still', kind: 'smuggling', baseIncome: 600, heatPerTick: 10, ownerFamily: 'rival-a', districtId: 'district-2', uncollected: 300, tier: 1 });
+    const crew0 = s.player.gangsters.length;
+    const res = resolveRaid(s, 'district-2');
+    expect(res.ok).toBe(true);
+    const op = s.districts[2].businesses.find((b) => b.id === 'rop')!;
+    expect(res.captured).toBeFalsy(); // never a takeover from one low-force raid
+    expect(op.ownerFamily).toBe('rival-a'); // the racket is NOT seized either way
+    if (res.repelled) {
+      expect(s.player.gangsters.length).toBe(crew0 - 1); // repelled — a man down, takings untouched
+    } else {
+      expect(res.disrupted).toBe(true); // knocked them off the block (a softening blow)
+      expect(op.uncollected).toBe(0); // ...and scattered their takings
+    }
   });
 
   it('The Bench (judges) cuts the raid heat', () => {
     const heatFrom = (judges: number): number => {
-      const s = big(); crew(s.player, [4, 4]); s.player.cash = 3000; s.player.bribes.judges = judges;
+      const s = big(); crew(s.player, [4, 4]); s.player.cash = 3000; hold(s, 'district-0', 'player', 60); s.player.bribes.judges = judges;
       resolveRaid(s, 'district-2');
       return s.player.heat;
     };

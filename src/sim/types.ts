@@ -168,6 +168,11 @@ export interface GameState {
   /** Real-time seconds accumulated toward the next strategic pulse (RTS-16) — the cadence on
    * which rival families make territorial moves. Driven by advanceStrategy; default 0. */
   strategyElapsed: number;
+  /** Real-time seconds the player's crew must regroup before the next offensive action (RTS-19).
+   * Set by every offence (raid/sabotage/hit/lockout) and bled down in the real-time wrapper; the
+   * offence gates refuse while it is > 0, so heavy hits cannot be chained into an instant board
+   * flip. Absent/0 ⇒ ready. Additive, default-safe. */
+  offenseCooldown?: number;
   /** Causal incident ledger (RTS-9): a bounded, curated, newest-last list of structured records
    * projected from `log` + settlement summaries. Additive observe layer — no mechanic writes it;
    * the ledger functions do. Empty by default. */
