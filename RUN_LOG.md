@@ -1775,3 +1775,60 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   the full establish→contest→endgame ramp under the player's own commands). /src/sim Phaser-free
   invariant green; tick/applyCommand + economy/heat/rival balance untouched (next pass); the 542 base green.
 - Commit: rts20: Player Verbs — Expand & Recruit — green
+
+## RTS-21 — Economy & Pacing Balance — GREEN  (2026-06-21)
+- Summary: RTS-20 unblocked the verbs, but the structural wall became an ECONOMIC one — the un-armed
+  UAT flatlined to Clean $0 after ~$900 to expand home + one raid, crew stuck at 2 (ASSASSINATE
+  muscle-locked), while rivals raced to ~5 blocks by week 2. This pass makes a NORMAL un-armed match
+  WALK THE FULL ARC and stay winnable while keeping pace: build verbs reachable in rhythm, a rival
+  early-expansion DAMPENER that ramps to a real fight, and "when can I afford it" legibility. Pure
+  TUNING + pure helpers + HUD; tick/applyCommand core math untouched; /src/sim Phaser-free; system
+  purity honored (no Accountants/16:1/soup-kitchens; four channels + 50/70/85 ladder intact).
+  547 → 555 green.
+
+  INTENDED PACING (a competent un-armed player, ~2-min weeks):
+  • Wk 0–2 ESTABLISH — extort district-0 fronts, collect, reinvest the $3500 start; [5] EXPAND
+    HOLDS the home block in ONE $250 push (30 + 15 + 6 muscle = 51) → unlocks RAID; open a $500
+    racket; [6] RECRUIT ($300) toward muscle. Net: 3500 − 250 − 500 − 300 = $2450 still in hand.
+  • ~Wk 2–4 FIRST BLOOD — SABOTAGE ($350) the moment a rival has a racket; RAID ($500) the borders.
+  • ~Wk 4–7 CONTEST — grease The Bureau → LOCKOUT ($800); recruit toward strength 12.
+  • ~Wk 7–12 DECAPITATE — strength ≥ 12 → ASSASSINATE ($1500, ≈3 hits) under federal pressure;
+    lockout + raids soften; eliminate the Dons or take 60% for dominance.
+
+  1. BUILD VERBS REACHABLE IN RHYTHM (tuning):
+     • EXPAND_COST 300 → 250, EXPAND_BASE_GAIN 10 → 15 — the home corner 30→50 now HOLDS in ONE
+       cheap expand with starting muscle (was ~$900 over multiple), keeping cash for the ladder.
+     • RECRUIT_COST 400 → 300 — muscle toward the 12 a hit needs no longer strands the crew at 2.
+     • STARTING_CASH 3000 → 3500 — +$500 covers expand + a first racket + a recruit without
+       flatlining before income ramps.
+     (Chose FLAT cheaper costs over per-count curves to keep applyCommand untouched.)
+  2. EARLY RIVAL PACE (pure helper, no constant churn): new expansionRamp(tick) =
+     min(1, 0.25 + 0.25·tick) throttles rival territorial PUSHES — week 0 ≈ 0.25×, full force by
+     week 3 — applied via rampedPushAmount(state, rival) in BOTH resolveStrategicPulse and
+     telegraphedPushes (so the warning stays honest). Effect (measured, seeds 1/2/3/7/11): OUTWARD
+     grabs beyond the rivals' two home corners fall to ≤2 by wk2 (was the ~5-block runaway) and
+     climb to 5–6 by wk5 — slow opening, real fight mid/late. Never dampens the player.
+  3. SMOOTHED ARC — each phase is affordable in turn (see pacing milestones above); the cheaper
+     verbs + runway + slower early rivals remove the mid-game stall.
+  4. LEGIBILITY — new weeksToAfford(state, cost) (0 in hand · N weeks at current net · null when net
+     ≤ 0); surfaced as an ETA tag on the build + offence boards (`✗ [1] Raid $500 ~3wk`,
+     `(income-)`), so the player can see WHEN the next tier comes within reach, not just that it's
+     locked.
+  INJECTOR STATUS: the QA injectors (?arm=1 / ?debug=win / ?debug=lose, alongside ?debug=turf|mutiny|
+  all) are ALREADY committed at f07667d (verified via `git show HEAD:src/scenes/IsoScene.ts`) — the
+  Cowork "not committed" report is incorrect; no action needed, no re-commit.
+- Tuned values (before → after): EXPAND_COST 300 → 250 · EXPAND_BASE_GAIN 10 → 15 · RECRUIT_COST
+  400 → 300 · STARTING_CASH 3000 → 3500 · NEW expansionRamp (rival early-push 0.25× → 1.0× by wk3,
+  applied to pulse + telegraph) · NEW weeksToAfford + board ETA. No offense/heat/federal/racket
+  values changed.
+- Files: src/sim/constants.ts (verb/cash tuning), src/sim/state.ts (STARTING_CASH), src/sim/strategy.ts
+  (expansionRamp + rampedPushAmount; pulse + telegraph use it), src/sim/pacing.ts (weeksToAfford +
+  affordEtaWeeks on both readouts), src/sim/index.ts (exports), src/scenes/IsoScene.ts (board ETA tag).
+  New tests/economyPacing.test.ts; updated tests/balance.test.ts, tests/mapEconomy.test.ts,
+  tests/turfWar.test.ts, tests/ai.test.ts to the new values with real assertions.
+- Gate: typecheck ✅  build ✅  test ✅ (555 total; +8 economyPacing: the tuned values; one-expand home
+  HOLD; build-then-not-flatlined-to-$0; expansionRamp curve; week-0 push throttled vs full mid-game;
+  rivals ≤2 outward grabs by wk2 then ≥4 by wk5; weeksToAfford contract; boards carry the ETA. Updated
+  4 constant-asserting tests to the new values). /src/sim Phaser-free; tick/applyCommand untouched;
+  no Gangsters-conflation terms; the 547 base green.
+- Commit: rts21: Economy & Pacing Balance — green

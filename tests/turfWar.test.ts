@@ -16,6 +16,7 @@ import {
   rivalStrategicTarget,
   telegraphedPushes,
   rivalPushAmount,
+  rampedPushAmount,
   resolveStrategicPulse,
   advanceStrategy,
   familyIsFallen,
@@ -118,7 +119,10 @@ describe('active rival AI — targets, telegraph, expansion', () => {
     expect(districtHolder(target)).not.toBe(rivalA.id);
     const tel = telegraphedPushes(s).find((t) => t.familyId === 'rival-a');
     expect(tel!.districtId).toBe(target.id); // the telegraph IS the next move
-    expect(tel!.amount).toBe(rivalPushAmount(rivalA));
+    // RTS-21: the telegraph shows the RAMPED early-game amount (throttled opening), and it matches
+    // exactly what the pulse will push — the warning stays honest.
+    expect(tel!.amount).toBe(rampedPushAmount(s, rivalA));
+    expect(tel!.amount).toBeLessThan(rivalPushAmount(rivalA)); // week 0 is dampened (≈0.4×)
   });
 
   it('City Hall (politicians) bribes deter rivals from pushing onto player turf', () => {

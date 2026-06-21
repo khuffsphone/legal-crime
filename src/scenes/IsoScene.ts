@@ -1030,17 +1030,20 @@ export class IsoScene extends Phaser.Scene {
     const phase = matchPhase(this.state);
     lines.push('');
     lines.push(`— ${phase.phase.toUpperCase()} —`);
-    // RTS-20 build board: the verbs that grow the outfit out of ESTABLISH (expand → HOLD → RAID,
-    // recruit → muscle → ASSASSINATE).
+    // RTS-20/21 build board: the verbs that grow the outfit out of ESTABLISH (expand → HOLD → RAID,
+    // recruit → muscle → ASSASSINATE), with a "when can I afford it" ETA when short on cash.
     for (const b of buildReadout(this.state)) {
       const mark = b.affordable ? '✓' : '✗';
-      lines.push(`${mark} [${b.hotkey}] ${b.label} $${b.cost} — ${b.effect}`);
+      const eta = b.affordable ? '' : IsoScene.etaTag(b.affordEtaWeeks);
+      lines.push(`${mark} [${b.hotkey}] ${b.label} $${b.cost}${eta} — ${b.effect}`);
     }
     for (const o of offenseReadout(this.state)) {
       const mark = o.available ? '✓' : '✗';
       const heat = o.heat > 0 ? ` +${o.heat}🔥` : '';
       const tail = o.available ? '' : ` (${o.reason})`;
-      lines.push(`${mark} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}`);
+      // show the cash ETA only when cash is the (or a) blocker, so a muscle/Bureau-gated row isn't noisy.
+      const eta = !o.available && o.affordEtaWeeks !== 0 ? IsoScene.etaTag(o.affordEtaWeeks) : '';
+      lines.push(`${mark} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}${eta}`);
     }
     this.strategyPanel.setText(lines.join('\n')).setPosition(right, 216);
     this.strategyPanel.setColor(standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
@@ -1222,6 +1225,13 @@ export class IsoScene extends Phaser.Scene {
     this.feedVisible = !this.feedVisible;
     this.feedTitle?.setVisible(this.feedVisible);
     for (const l of this.feedLines) l.setVisible(this.feedVisible);
+  }
+
+  /** RTS-21 legibility: a compact "when can I afford it" tag for the build/offence boards. */
+  private static etaTag(weeks: number | null): string {
+    if (weeks === null) return ' (income-)';
+    if (weeks <= 0) return '';
+    return ` ~${weeks}wk`;
   }
 
   private static feedColor(sev: IncidentSeverity): string {

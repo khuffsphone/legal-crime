@@ -32,7 +32,9 @@ export const OPERATION_HEAT: Record<OperationKind, number> = {
   protection: 5,
 };
 
-export const RECRUIT_COST = 400;
+// RTS-21 balance: muscle toward the 12 strength a hit needs must be affordable alongside the
+// economy (was 400 — the player stalled at crew 2, ASSASSINATE muscle-locked). 400 → 300.
+export const RECRUIT_COST = 300;
 export const DESERT_LOYALTY = 20;
 
 // Gangster stat ranges at recruitment and upkeep scaling.
@@ -56,8 +58,12 @@ export const CONTROL_HOLD = 50; // control points needed to "hold" a district
 export const CONTROL_MAX = 100;
 
 // Territory expansion.
-export const EXPAND_COST = 300; // cash per expandControl action
-export const EXPAND_BASE_GAIN = 10; // control points gained before muscle bonus
+// RTS-21 balance: holding your home block must be reachable in rhythm (the un-armed UAT flatlined
+// to $0 after ~$900 to expand home + one raid). Cheaper pushes (300 → 250) and a bigger base gain
+// (10 → 15) so the home corner 30→50 is secured in ONE expand with starting muscle (15 + 6), or two
+// without — keeping cash for the offensive ladder.
+export const EXPAND_COST = 250; // cash per expandControl action
+export const EXPAND_BASE_GAIN = 15; // control points gained before muscle bonus
 export const CONTEST_REDUCTION = 0.5; // fraction of the gain taken from the top rival
 
 export const HEAT_MAX = 100;

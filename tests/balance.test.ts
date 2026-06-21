@@ -59,11 +59,11 @@ describe('Phase 19 — federal escalation is slowed (runway guaranteed)', () => 
 });
 
 describe('Phase 19 — early-game pacing', () => {
-  it('starts every family with more runway than the prior 2000', () => {
+  it('starts every family with RTS-21 build-phase runway ($3500)', () => {
     const s = createInitialState(1);
-    expect(s.player.cash).toBe(3000);
-    expect(s.player.cash).toBeGreaterThan(2000);
-    for (const r of s.rivals) expect(r.cash).toBe(3000);
+    expect(s.player.cash).toBe(3500); // RTS-21: 3000 → 3500 so expand + a racket + a recruit don't flatline
+    expect(s.player.cash).toBeGreaterThan(3000);
+    for (const r of s.rivals) expect(r.cash).toBe(3500);
   });
 });
 

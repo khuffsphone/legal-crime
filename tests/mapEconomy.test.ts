@@ -120,7 +120,7 @@ describe('depositCollector / processCollectorArrivals — reaching HQ deposits (
     const events = processCollectorArrivals(s, layout);
     expect(events).toEqual([{ collectorId: c.id, familyId: 'player', banked: expected }]);
     expect(expected).toBeGreaterThan(0);
-    expect(s.player.cash).toBe(3000 + expected); // STARTING_CASH + banked
+    expect(s.player.cash).toBe(3500 + expected); // STARTING_CASH (RTS-21: 3500) + banked
     expect(s.player.dirtyCash).toBe(expected); // banked as dirty money
     expect(c.carrying).toBe(0);
   });

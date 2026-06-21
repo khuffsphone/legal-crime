@@ -51,6 +51,19 @@ export interface OffenseOption {
   reason: string;
   /** The target the readout scored against (district name / racket name / rival name), if any. */
   target: string | null;
+  /** RTS-21 legibility: weeks of current net income until the CASH for this action is in hand —
+   * 0 when already affordable, N when N weeks off, null when income won't get there (net ≤ 0). */
+  affordEtaWeeks: number | null;
+}
+
+/** RTS-21 — when (in weeks of current net income) the player can afford `cost`: 0 if already in
+ * hand, else ⌈gap / weekly-net⌉, or null if the net is ≤ 0 (never, at this rate). Pure. */
+export function weeksToAfford(state: GameState, cost: number): number | null {
+  const cash = state.player.cash;
+  if (cash >= cost) return 0;
+  const net = playerWeeklyNet(state);
+  if (net <= 0) return null;
+  return Math.ceil((cost - cash) / net);
 }
 
 /** The first rival-held / contested district a raid would hit (mirrors the scene's targeting). */
@@ -97,10 +110,10 @@ export function offenseReadout(state: GameState): OffenseOption[] {
   const hitGate: Gate = weak ? canAssassinate(state, weak.familyId) : { ok: false, reason: 'no rival Don left' };
 
   return [
-    { key: 'sabotage', label: 'Sabotage', hotkey: '2', cost: SABOTAGE_COST, heat: SABOTAGE_HEAT, available: sabGate.ok, reason: sabGate.reason, target: sab?.name ?? null },
-    { key: 'raid', label: 'Raid', hotkey: '1', cost: RAID_COST, heat: raidHeatAfterBench(state), available: raidGate.ok, reason: raidGate.reason, target: district(raidT) },
-    { key: 'lockout', label: 'Lockout', hotkey: '4', cost: LOCKOUT_COST, heat: 0, available: lockGate.ok, reason: lockGate.reason, target: weak?.name ?? null },
-    { key: 'assassinate', label: 'Assassinate', hotkey: '3', cost: ASSASSINATE_COST, heat: hitHeatAfterCityHall(state), available: hitGate.ok, reason: hitGate.reason, target: weak?.name ?? null },
+    { key: 'sabotage', label: 'Sabotage', hotkey: '2', cost: SABOTAGE_COST, heat: SABOTAGE_HEAT, available: sabGate.ok, reason: sabGate.reason, target: sab?.name ?? null, affordEtaWeeks: weeksToAfford(state, SABOTAGE_COST) },
+    { key: 'raid', label: 'Raid', hotkey: '1', cost: RAID_COST, heat: raidHeatAfterBench(state), available: raidGate.ok, reason: raidGate.reason, target: district(raidT), affordEtaWeeks: weeksToAfford(state, RAID_COST) },
+    { key: 'lockout', label: 'Lockout', hotkey: '4', cost: LOCKOUT_COST, heat: 0, available: lockGate.ok, reason: lockGate.reason, target: weak?.name ?? null, affordEtaWeeks: weeksToAfford(state, LOCKOUT_COST) },
+    { key: 'assassinate', label: 'Assassinate', hotkey: '3', cost: ASSASSINATE_COST, heat: hitHeatAfterCityHall(state), available: hitGate.ok, reason: hitGate.reason, target: weak?.name ?? null, affordEtaWeeks: weeksToAfford(state, ASSASSINATE_COST) },
   ];
 }
 
@@ -161,6 +174,8 @@ export interface BuildOption {
   effect: string;
   /** The district the expand would target (its name), or null for recruit. */
   target: string | null;
+  /** RTS-21 legibility: weeks of net income until affordable (0 now, N off, null at net ≤ 0). */
+  affordEtaWeeks: number | null;
 }
 
 /** The district an EXPAND would push: the home corner still to secure (so it can be HELD), else
@@ -198,8 +213,8 @@ export function buildReadout(state: GameState): BuildOption[] {
     : `muscle ${strength}/${ASSASSINATE_MIN_STRENGTH} (toward ASSASSINATE)`;
 
   return [
-    { key: 'expand', label: 'Expand', hotkey: '5', cost: EXPAND_COST, affordable: p.cash >= EXPAND_COST && expandId !== null, effect: expandEffect, target: expandName },
-    { key: 'recruit', label: 'Recruit', hotkey: '6', cost: RECRUIT_COST, affordable: p.cash >= RECRUIT_COST, effect: recruitEffect, target: null },
+    { key: 'expand', label: 'Expand', hotkey: '5', cost: EXPAND_COST, affordable: p.cash >= EXPAND_COST && expandId !== null, effect: expandEffect, target: expandName, affordEtaWeeks: weeksToAfford(state, EXPAND_COST) },
+    { key: 'recruit', label: 'Recruit', hotkey: '6', cost: RECRUIT_COST, affordable: p.cash >= RECRUIT_COST, effect: recruitEffect, target: null, affordEtaWeeks: weeksToAfford(state, RECRUIT_COST) },
   ];
 }
 

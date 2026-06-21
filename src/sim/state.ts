@@ -25,9 +25,10 @@ const FRONT_NAMES = [
   'Garage',
 ];
 
-// Phase 19 balance: a touch more early-game runway so a run doesn't end abruptly while the
-// player is still establishing income. (was 2000.)
-const STARTING_CASH = 3000;
+// Phase 19/21 balance: early-game runway so a run doesn't flatline while the player is still
+// establishing income. RTS-21: 3000 → 3500 — the extra $500 covers expand-home + a first racket +
+// a recruit without dropping to $0 before the economy ramps. (was 2000 → 3000.)
+const STARTING_CASH = 3500;
 
 function makeFront(rng: Rng, districtId: string, index: number, namePool: Rng): Business {
   const baseIncome = 80 + namePool.nextInt(0, 8) * 10; // 80..160

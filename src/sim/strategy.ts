@@ -85,6 +85,24 @@ export function rivalPushAmount(rival: Family): number {
   return Math.round(RIVAL_PUSH_BASE + familyStrength(rival) * RIVAL_PUSH_PER_STRENGTH + (rival.aggro ?? 0) * 0.1);
 }
 
+/**
+ * RTS-21 — early expansion DAMPENER. The un-armed UAT had rivals racing to ~5 blocks by week 2,
+ * outrunning the player's establish phase. This curve throttles rival territorial pushes in the
+ * opening weeks (week 0 ≈ 0.4×) and ramps to full force by week 3 (1.0×) — so the player gets room
+ * to set up, and the turf war becomes a real fight mid/late, not a turn-2 stomp. Pure; keyed on the
+ * week counter (state.tick). Only dampens the strategic PUSH, never the player.
+ */
+export function expansionRamp(tick: number): number {
+  return Math.min(1, 0.25 + 0.25 * Math.max(0, tick));
+}
+
+/** A rival's push this week — `rivalPushAmount` throttled by the early-game `expansionRamp` (and at
+ * least 1 so a move always lands). This is the amount BOTH the telegraph and the pulse use, so the
+ * warning stays honest. Pure. */
+export function rampedPushAmount(state: GameState, rival: Family): number {
+  return Math.max(1, Math.round(rivalPushAmount(rival) * expansionRamp(state.tick)));
+}
+
 // ── the telegraph (pure read) ────────────────────────────────────────────────────────────────
 
 export interface TelegraphedPush {
@@ -110,7 +128,7 @@ export function telegraphedPushes(state: GameState): TelegraphedPush[] {
       familyName: rival.name,
       districtId: target.id,
       districtName: target.name,
-      amount: rivalPushAmount(rival),
+      amount: rampedPushAmount(state, rival),
       onPlayer: districtHolder(target) === state.player.id,
     });
   }
@@ -160,7 +178,7 @@ export function resolveStrategicPulse(state: GameState): StrategicEvent {
 
     const target = rivalStrategicTarget(state, rival);
     if (target) {
-      const res = pushPresence(state, rival.id, target.id, rivalPushAmount(rival));
+      const res = pushPresence(state, rival.id, target.id, rampedPushAmount(state, rival));
       if (res) pushes.push(res);
     }
 

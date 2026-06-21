@@ -45,7 +45,7 @@ describe('rivalCandidates — deterministic base scores', () => {
   it('scores recruit highest with a thin roster and only cheap actions affordable', () => {
     const s = createInitialState(1);
     const r = rival(s);
-    r.cash = 450; // >= RECRUIT_COST(400), < op cheapest(500); expand(300) ok; heat 0
+    r.cash = 450; // >= RECRUIT_COST(300), < op cheapest(500); expand(250) ok; heat 0
     r.heat = 0;
     r.gangsters = [];
     const cands = rivalCandidates(s, r);
