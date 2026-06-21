@@ -166,9 +166,11 @@ export {
   familyPower,
   cityStanding,
   allRivalsCrushed,
+  playerHomeFront,
   type Trajectory,
   type StandingRow,
   type CityStanding,
+  type HomeFront,
 } from './contest';
 export {
   canRaid,

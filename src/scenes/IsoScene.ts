@@ -54,6 +54,7 @@ import {
   inspectDistrict,
   cityStanding,
   telegraphedPushes,
+  resolveStrategicPulse,
   districtHolder,
   canRaid,
   resolveRaid,
@@ -198,6 +199,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-12/16: a fair opening (loyal crew + one protected run) on the BIG contested city —
     // a 9-district turf war against two active rival families.
     this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
+    this.applyDebugScenario();
     this.layout = buildMapLayout(this.state, COLS, ROWS);
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
 
@@ -719,6 +721,31 @@ export class IsoScene extends Phaser.Scene {
     this.setStatus(`the Bureau is locking down ${w.name}`);
   }
 
+  /**
+   * QA-only scenario hook (RTS-18). Non-invasive: reads `?debug=turf|mutiny|all[&pulses=N]` from the
+   * URL and seeds an interesting board by exercising EXISTING systems (turf pulses, loyalty seeding) —
+   * it changes NO sim rule and is a no-op in normal play (no `?debug=`) and outside the browser.
+   */
+  private applyDebugScenario(): void {
+    const search = typeof window !== 'undefined' ? (window.location?.search ?? '') : '';
+    if (!search) return;
+    const params = new URLSearchParams(search);
+    const debug = params.get('debug');
+    if (!debug) return;
+    const want = (k: string): boolean => debug === k || debug === 'all';
+    const pulses = Math.max(1, Math.min(40, Math.floor(Number(params.get('pulses')) || 8)));
+
+    if (want('turf')) {
+      // Fast-forward the turf war so rival expansion + captures are immediately visible to QA.
+      for (let i = 0; i < pulses; i++) resolveStrategicPulse(this.state);
+      this.state = harvestIncidents(this.state);
+    }
+    if (want('mutiny')) {
+      // Prime a mutiny: starve the crew's loyalty so the mutiny telegraph + desertions surface.
+      for (const g of this.state.player.gangsters) g.loyalty = Math.min(g.loyalty, 8);
+    }
+  }
+
   /** The victory/defeat readout when the contest resolves (RTS-17). */
   private showEndgame(): void {
     if (this.endgameShown) return;
@@ -903,6 +930,11 @@ export class IsoScene extends Phaser.Scene {
     this.strategyTitle.setPosition(right, 196);
     const lines = [standing.read, ''];
     lines.push(`YOUR HQ: ${Math.round(hqIntegrityOf(this.state.player))}%`);
+    // While founding, show the home corner and the path to lock it down (30 → CONTROL_HOLD).
+    if (standing.homeFront) {
+      const hf = standing.homeFront;
+      lines.push(`HOME ${hf.districtName}: ${hf.control}/${hf.control + hf.needed} (+${hf.needed} to secure)`);
+    }
     for (const r of standing.rows) {
       if (r.isPlayer) continue;
       const fam = this.state.rivals.find((x) => x.id === r.familyId);

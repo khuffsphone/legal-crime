@@ -1621,3 +1621,38 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   live; rivalWeakness/weakestRival; driver offense+endgame flow + ledger projection). /src/sim Phaser-
   free invariant green; the 507-test base untouched and all green.
 - Commit: rts17: The Offensive & The Endgame — green
+
+## RTS-18 — Cold-Open Fix & Debug Hook — GREEN  (2026-06-21)
+- Summary: Two small UAT fixes — an honest, motivating opening read, and a committed QA hook.
+  Tune/UI + the hook only; the economic settlement and offense/endgame logic are untouched, and
+  /src/sim stays Phaser-free. 525 → 528 green (+3 cold-open assertions).
+  1. THE COLD-OPEN FRAMING TRAP (src/sim/contest.ts) — at tick 0 the player holds a 30-control
+     home FOOTHOLD in district-0, but holding a block needs CONTROL_HOLD 50, so districtsHeld read
+     0 and the trajectory fell to 'behind' → "Take ground or get buried." A player WITH a home base
+     read as already losing, with no path shown. Fix is read-only (no settlement/dominance math
+     touched): a new 'establishing' trajectory for the FOUNDING phase — you hold no block yet, but
+     your home corner is yours to secure AND the city is still wide open (no rival has locked down a
+     block either), so the read is "<home> is your corner — build N more control to lock it down."
+     It only applies while genuinely founding: the instant a rival secures a block you read honestly
+     'behind'/'contested' by power, and a truly stripped player (no foothold, no power) still reads
+     'crushed'. New playerHomeFront(state) → { districtId, districtName, control, needed } surfaces
+     the exact 30→50 path; cityStanding now carries homeFront, and IsoScene's standings panel shows
+     "HOME <district>: 30/50 (+20 to secure)". 'establishing' renders neutral bone (not alarm-red).
+  2. THE DEBUG HOOK (src/scenes/IsoScene.ts) — IsoScene.applyDebugScenario(), called once after
+     state init. Reads ?debug=turf|mutiny|all[&pulses=N] from the URL and seeds an interesting board
+     by exercising EXISTING systems only — turf fast-forwards rival expansion/captures via N
+     resolveStrategicPulse() calls (default 8, clamped 1..40) then harvestIncidents(); mutiny starves
+     the crew's loyalty so the mutiny telegraph + desertions surface. It changes NO sim rule, is a
+     no-op in normal play (no ?debug=) and outside the browser (typeof window guard). Committed as a
+     QA tool.
+  3. /docs/VISUAL_DIRECTION.md — SKIPPED + FLAGGED: the brain canonical content was not pasted in
+     the brief, so the file (incl. its provenance-caveat header) was left untouched to avoid
+     guessing at "verbatim". Re-run with the paste to overwrite it.
+- Files: src/sim/contest.ts (+'establishing' trajectory, playerHomeFront, HomeFront, homeFront on
+  CityStanding), src/sim/index.ts (exports), src/scenes/IsoScene.ts (home-front line in standings,
+  applyDebugScenario QA hook), tests/turfWar.test.ts (+3 cold-open assertions). tick/applyCommand +
+  offense/endgame unchanged; /src/sim Phaser-free invariant green.
+- Gate: typecheck ✅  build ✅  test ✅ (528 total; +3: fresh start reads 'establishing' not
+  'behind'/'crushed' with homeFront district-0 30→50; playerHomeFront picks the foothold + clears
+  once a block is held; a rival locking down turf ends the founding read). The 525-test base green.
+- Commit: rts18: Cold-Open Fix & Debug Hook — green

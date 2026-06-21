@@ -20,7 +20,7 @@ import {
   advanceStrategy,
   familyIsFallen,
 } from '../src/sim/strategy';
-import { cityStanding, familyPower, allRivalsCrushed } from '../src/sim/contest';
+import { cityStanding, familyPower, allRivalsCrushed, playerHomeFront } from '../src/sim/contest';
 import { updateAndObserve } from '../src/sim/realtime';
 import { incidentsByType } from '../src/sim/ledger';
 import { districtHolder, controlOf } from '../src/sim/territory';
@@ -211,6 +211,41 @@ describe('the contest trajectory', () => {
     expect(allRivalsCrushed(s)).toBe(false);
     s.rivals.forEach((r) => (r.alive = false));
     expect(allRivalsCrushed(s)).toBe(true);
+  });
+});
+
+describe('the cold open reads fairly (RTS-18)', () => {
+  it('a fresh start reads "establishing" with a home corner + a clear path, not "behind"/"crushed"', () => {
+    const s = big();
+    const standing = cityStanding(s);
+    // The trap was: a 30-control home foothold (< CONTROL_HOLD 50) read as 0 blocks → "get buried".
+    expect(districtsHeld(s, 'player')).toHaveLength(0); // nobody holds at tick 0 (all start < 50)
+    expect(standing.trajectory).toBe('establishing');
+    expect(standing.trajectory).not.toBe('behind');
+    expect(standing.trajectory).not.toBe('crushed');
+    // It surfaces the home corner and the honest 30 → 50 path.
+    expect(standing.homeFront).not.toBeNull();
+    expect(standing.homeFront!.districtId).toBe('district-0');
+    expect(standing.homeFront!.control).toBe(controlOf(s.districts[0], 'player'));
+    expect(standing.homeFront!.control + standing.homeFront!.needed).toBe(50);
+    expect(standing.read).toContain(standing.homeFront!.districtName);
+  });
+
+  it('playerHomeFront picks the strongest unsecured foothold, and clears once a block is held', () => {
+    const s = big();
+    expect(playerHomeFront(s)!.districtId).toBe('district-0');
+    hold(s, 'district-0', 'player', 60); // lock the corner down
+    expect(playerHomeFront(s)).toBeNull(); // no longer an UNSECURED foothold
+    expect(districtsHeld(s, 'player')).toHaveLength(1);
+    expect(cityStanding(s).trajectory).not.toBe('establishing'); // now genuinely ahead/contested
+  });
+
+  it('once a rival locks down turf, the founding read ends (you are honestly behind)', () => {
+    const s = big();
+    hold(s, 'district-2', 'rival-a', 80); // a rival secures a block
+    hold(s, 'district-5', 'rival-a', 80);
+    s.rivals[0].cash = 9000;
+    expect(cityStanding(s).trajectory).not.toBe('establishing');
   });
 });
 
