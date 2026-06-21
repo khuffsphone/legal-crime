@@ -85,10 +85,10 @@ export function firstObjective(state: GameState): Objective {
     const target = suggestedExtortTarget(state, id);
     return {
       step: 'extort',
-      title: 'SHAKE DOWN A STOREFRONT',
+      title: 'EXTORT THE NEIGHBOURHOOD',
       detail: target
-        ? `Press [E] to lean on the glowing front in ${target.districtName}. It can take a try or two — they don't fold easy.`
-        : 'Expand your turf, then shake down a storefront for protection money.',
+        ? `RIGHT-CLICK the glowing storefront in ${target.districtName} → EXTORT (or press [E]). Then shake down EVERY cheap front on your block — breadth is your early economy.`
+        : 'Expand your turf, then shake down the storefronts for protection money.',
       targetBusinessId: target?.businessId ?? null,
       done: false,
     };
@@ -122,8 +122,8 @@ export function firstObjective(state: GameState): Objective {
 
   return {
     step: 'grow',
-    title: "YOU'RE EARNING — NOW TAKE GROUND",
-    detail: 'Grow the outfit: [R] open a racket · [G] grease the four channels · [5] EXPAND your home block 30→50 to HOLD it (unlocks RAID) · [6] RECRUIT muscle toward the 12 a hit needs. Then take the fight to your rivals: [1] raid · [2] sabotage · [4] lockout · [3] assassinate.',
+    title: "YOU'RE EARNING — BUILD THE EMPIRE",
+    detail: 'Extort-first: shake down MORE storefronts across the neighbourhood, then press [T] to set an automated COLLECTION ROUTE so the take banks itself (guard it — a collector can still be robbed). Grow with [6] RECRUIT more thugs · [5] EXPAND into the next block · [G] grease The Beat to keep heat down · [R] open a racket once you can cover the heat. War comes later: [1] raid · [2] sabotage · [4] lockout · [3] assassinate.',
     targetBusinessId: null,
     done: true,
   };

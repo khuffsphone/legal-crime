@@ -51,13 +51,17 @@ export function targetScore(state: GameState, rival: Family, d: District): numbe
   const topOther = Math.max(0, ...allFamilies(state).filter((f) => f.id !== rival.id).map((f) => controlOf(d, f.id)));
   let score = ident.wealth * 10 + (100 - topOther) * 0.4;
   if (holder === state.player.id) {
-    // Contesting the player: an UNDEFENDED, weakly-held block is the juiciest target of all —
-    // expand where you're ignored. Guards make it costly; City Hall (politicians) deters it; a
-    // rival you've attacked (aggro) comes for your turf (retaliation).
+    // RTS-22 re-anchor: EARLY, rivals build their OWN economy and leave you alone — the appetite for
+    // your turf RAMPS IN with expansionRamp (war emerges later, ~wk 7+). An undefended, weakly-held
+    // block is the juiciest target once that appetite is on; guards make it costly; City Hall deters
+    // it. Retaliation (aggro from being attacked) is ALWAYS on — hit a rival and it comes for you.
     const guard = muscleInDistrict(state.player, d.id);
-    score += (100 - controlOf(d, state.player.id)) * 0.4 + (guard === 0 ? 14 : -guard * 2);
+    const appetite = expansionRamp(state.tick); // 0 early → 1 in the war phase
+    score += ((100 - controlOf(d, state.player.id)) * 0.4 + (guard === 0 ? 14 : -guard * 2)) * appetite;
     score -= state.player.bribes.politicians * (POLITICIAN_DETERRENCE / 10);
     score += (rival.aggro ?? 0) * 0.12;
+    // Early, open neutral ground is strictly more attractive than the player's corner.
+    score -= (1 - appetite) * 20;
   } else if (holder === null) {
     score += 8; // open ground is the easiest expansion
   }
@@ -86,14 +90,15 @@ export function rivalPushAmount(rival: Family): number {
 }
 
 /**
- * RTS-21 — early expansion DAMPENER. The un-armed UAT had rivals racing to ~5 blocks by week 2,
- * outrunning the player's establish phase. This curve throttles rival territorial pushes in the
- * opening weeks (week 0 ≈ 0.4×) and ramps to full force by week 3 (1.0×) — so the player gets room
- * to set up, and the turf war becomes a real fight mid/late, not a turn-2 stomp. Pure; keyed on the
- * week counter (state.tick). Only dampens the strategic PUSH, never the player.
+ * RTS-21/22 — early expansion DAMPENER + war-phase ramp. The re-anchor wants an EXTORT-FIRST early
+ * game: both you and the rivals quietly build economies, and WAR emerges later (~week 7–8). This
+ * curve throttles rival territorial pushes hard in the opening (week 0 ≈ 0.15×) and ramps to full
+ * force by ~week 8 (1.0×) — so the player has room to extort a neighbourhood before any pressing,
+ * and the turf war becomes a real fight in the mid/late game. Pure; keyed on the week counter. Only
+ * scales the strategic PUSH + the appetite for the player's turf, never the player.
  */
 export function expansionRamp(tick: number): number {
-  return Math.min(1, 0.25 + 0.25 * Math.max(0, tick));
+  return Math.min(1, 0.15 + 0.11 * Math.max(0, tick));
 }
 
 /** A rival's push this week — `rivalPushAmount` throttled by the early-game `expansionRamp` (and at

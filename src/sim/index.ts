@@ -9,6 +9,7 @@ export {
   allBusinesses,
   operationHeat,
   businessAccrual,
+  isShutDown,
   businessEarner,
   extortionIncome,
   operationIncome,
@@ -132,6 +133,24 @@ export {
   type ExtortAtTileResult,
 } from './mapEconomy';
 export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
+export {
+  businessActions,
+  resolveAttack,
+  earningBusinesses,
+  canAttack,
+  type ActionGate,
+  type BusinessActions,
+  type AttackResult,
+} from './interdiction';
+export {
+  routeStops,
+  routeCollectorOf,
+  createCollectionRoute,
+  advanceRoutes,
+  routeStatus,
+  type RouteSetup,
+  type RouteStatus,
+} from './routes';
 export {
   CITY_ARCHETYPES,
   GRID3_NEIGHBORS,

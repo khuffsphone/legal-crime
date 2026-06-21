@@ -28,6 +28,8 @@ export function accrueUncollected(state: GameState): void {
     for (const business of district.businesses) {
       const amt = Math.floor(businessAccrual(business) * mult);
       if (amt > 0) business.uncollected = uncollectedOf(business) + amt;
+      // RTS-22: a shut-down business (ATTACK) recovers one tick at a time; it produced nothing above.
+      if ((business.shutdownTicks ?? 0) > 0) business.shutdownTicks = (business.shutdownTicks ?? 0) - 1;
     }
   }
 }

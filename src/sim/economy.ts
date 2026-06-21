@@ -28,10 +28,17 @@ export function operationHeat(business: Business, district: District): number {
  * rate that piles up as `uncollected`.)
  */
 export function businessAccrual(business: Business): number {
+  // RTS-22: an ATTACK temporarily shuts a business down — it produces nothing while shut.
+  if ((business.shutdownTicks ?? 0) > 0) return 0;
   if (business.kind === 'front') {
     return business.extortedBy ? Math.floor(business.baseIncome * EXTORT_RATE) : 0;
   }
   return business.ownerFamily ? effectiveOperationIncome(business) : 0;
+}
+
+/** Whether a business is currently shut down by an ATTACK (RTS-22). */
+export function isShutDown(business: Business): boolean {
+  return (business.shutdownTicks ?? 0) > 0;
 }
 
 /** The family that earns from a business: its extorter (front) or owner (operation). */

@@ -60,19 +60,20 @@ describe('the build verbs are reachable in rhythm', () => {
 });
 
 describe('early rivals are dampened, then ramp to a real fight', () => {
-  it('expansionRamp opens at ~0.25× and reaches full force by week 3', () => {
-    expect(expansionRamp(0)).toBeCloseTo(0.25);
-    expect(expansionRamp(1)).toBeCloseTo(0.5);
-    expect(expansionRamp(2)).toBeCloseTo(0.75);
-    expect(expansionRamp(3)).toBe(1);
-    expect(expansionRamp(10)).toBe(1); // capped
+  it('expansionRamp opens very low (~0.15×) and reaches full force by ~week 8 (war emerges later)', () => {
+    expect(expansionRamp(0)).toBeCloseTo(0.15);
+    expect(expansionRamp(2)).toBeCloseTo(0.37);
+    expect(expansionRamp(4)).toBeCloseTo(0.59);
+    expect(expansionRamp(8)).toBe(1); // full war force by ~week 8
+    expect(expansionRamp(20)).toBe(1); // capped
   });
 
-  it('a week-0 rival push is throttled below its full strength; a mid-game one is full', () => {
+  it('a week-0 rival push is heavily throttled; the war-phase push is full force', () => {
     const s = big();
     const rival = s.rivals[0];
     expect(rampedPushAmount(s, rival)).toBeLessThan(rivalPushAmount(rival)); // dampened opening
-    s.tick = 4; // mid game
+    expect(rampedPushAmount(s, rival)).toBeLessThanOrEqual(Math.round(rivalPushAmount(rival) * 0.3));
+    s.tick = 9; // war phase
     expect(rampedPushAmount(s, rival)).toBe(rivalPushAmount(rival)); // full force
   });
 

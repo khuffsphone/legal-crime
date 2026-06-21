@@ -72,7 +72,9 @@ function makeFamily(id: string, name: string, isPlayer: boolean): Family {
 function buildBigCity(rng: Rng): District[] {
   return CITY_ARCHETYPES.map((proto, di) => {
     const id = `district-${di}`;
-    const businessCount = rng.nextInt(2, 4);
+    // RTS-22 re-anchor: EXTORTION BREADTH — a neighbourhood of many cheap fronts to shake down, so
+    // the early game grows by extorting MORE businesses (low heat), not by warring over one block.
+    const businessCount = rng.nextInt(4, 7);
     const businesses: Business[] = [];
     for (let bi = 0; bi < businessCount; bi++) {
       const baseIncome = 50 + proto.wealth * 22 + rng.nextInt(0, 4) * 10; // richer = fatter

@@ -232,6 +232,7 @@ export function processCollectorArrivals(state: GameState, layout: MapLayout): D
   const events: DepositEvent[] = [];
   for (const u of state.units) {
     if (u.role !== 'collector' || (u.carrying ?? 0) <= 0 || !unitArrived(u)) continue;
+    if (u.routeId !== undefined) continue; // RTS-22: automated route collectors bank via advanceRoutes
     const hq = u.factionId ? hqTileOf(layout, u.factionId) : undefined;
     if (!hq || !tileEquals(unitTile(u), hq)) continue;
     const banked = depositCollector(state, u);

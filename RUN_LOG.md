@@ -1832,3 +1832,70 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   4 constant-asserting tests to the new values). /src/sim Phaser-free; tick/applyCommand untouched;
   no Gangsters-conflation terms; the 547 base green.
 - Commit: rts21: Economy & Pacing Balance — green
+
+## RTS-22 — Readability, Controls & Extort-First Economy — GREEN  (2026-06-21)
+- Summary: The human playtest's headline finding — "very difficult to read, camera, controls…
+  extremely difficult to follow" — was the wall, not balance. This batch leads with UX (a real
+  camera, readable board, the original's mouse scheme) and re-anchors the early game to EXTORT-FIRST
+  (war later), fixing the rts21 poverty/heat trap by changing the SHAPE. Camera/input/render are
+  Phaser-side in the scene; the temp-shutdown, automated routes, and pacing logic are PURE in
+  /src/sim, unit-tested. tick/applyCommand core math untouched; /src/sim Phaser-free; system-pure
+  (four channels + 50/70/85 ladder kept; no Gangsters conflations). 555 → 565 green (+10 new sim
+  assertions; 3 ramp tests updated to the new curve).
+  1. A REAL CAMERA (the #1 blocker) — WASD + arrow PAN, click-DRAG pan, mouse-wheel ZOOM eased
+     toward a target for smoothness (wider range MIN_ZOOM 0.45→0.30 so the whole 9-district city
+     reads), and [F] CENTRE-ON-SELECTION (smooth pan). The view now opens framed on the player's
+     home neighbourhood (homeFocusPoint) instead of the map centre.
+  2. READABLE RENDERING — every business gets a coloured ground ALLEGIANCE PLATE read at a glance:
+     fog = un-shaken · brass = yours-paying · rival-red (#9E1B1B static identity) = a rival's · dark+
+     danger-edge = SHUT DOWN. The selection ring is now brass + thicker + pulsing. The hover tooltip
+     names the shop's state AND the right-click affordance ("right-click → EXTORT · ATTACK").
+  3. MOUSE CONTROLS (the original's scheme) — LEFT-CLICK a thug to select (SHIFT-click multi-select);
+     RIGHT-CLICK a storefront → a context menu with the two moves on an un-owned business, EXTORT
+     (send the selected thug, attempt the shakedown) or ATTACK (temp-shutdown); RIGHT-CLICK the
+     street → move. Menu click-handling is centralised in the scene pointerup (race-free). The
+     keybind accelerators still work.
+     • ATTACK / temp-shutdown (src/sim/interdiction.ts, pure): resolveAttack sets shutdownTicks =
+       ATTACK_SHUTDOWN_WEEKS (3), scatters the pending take, draws ATTACK_HEAT (6); businessAccrual
+       returns 0 while shut (so tick settlement is untouched — a shut business just earns nothing);
+       accrueUncollected decrements the timer; it recovers after N weeks. businessActions(state,id,
+       fam) drives the menu (EXTORT/ATTACK gates).
+  4. AUTOMATED COLLECTOR ROUTES (src/sim/routes.ts, pure) — [T] sets a route over all your protected
+     businesses; a collector cycles them automatically (gather → bank at HQ → loop), removing the
+     manual-collect tedium. The SIGNATURE BOTTLENECK is kept: a route collector carrying cash is
+     STILL interceptable/robbable (resolveInterceptions acts on it exactly like a manual run — a test
+     proves a hostile enforcer robs it mid-route). The drawn route + a HUD status ("ROUTE: N stops ·
+     banking $X · guard it!") make it legible. Opt-in — advanceRoutes is a no-op without a route, so
+     prior behaviour is byte-identical.
+  5. EXTORT-FIRST RE-ANCHOR (shape, not just constants) — EXTORTION BREADTH: the big city now seeds a
+     NEIGHBOURHOOD of cheap fronts per district (rng 2–4 → 4–7), so the early economy grows by
+     extorting MORE low-heat storefronts (+ bribing The Beat + recruiting), not by warring over one
+     poor block. Rivals are dampened FURTHER and BUILD THEIR OWN economy early: expansionRamp eased
+     (0.25+0.25·wk, full by wk3) → (0.15+0.11·wk, full by ~wk8), AND targetScore now scales the
+     appetite for the player's turf by that ramp (+ a neutral-ground preference early), so rivals
+     EXPAND INTO OPEN GROUND first and WAR EMERGES ~wk7+. RAID stays a war-phase tool (it's correctly
+     too weak to seize alone). Validated by a harness: a competent extort-first player keeps a LOW-
+     HEAT (12–23 early) self-funding economy, holds home with a growing crew, and survives where the
+     rts21 racket-first player got federally busted by ~wk9; rivals go 1→3→6→8 blocks (build → war).
+  6. LEGIBILITY — the onboarding objective now teaches the extort-first loop ("EXTORT THE
+     NEIGHBOURHOOD" → "[T] set a COLLECTION ROUTE … guard it" → recruit/expand/grease → war later);
+     the legend rewritten around CAMERA / MOUSE / EXTORT-FIRST; the status hint + HUD route line +
+     plate colours + tooltip affordances surface the new systems.
+- Tuned/added values: MIN_ZOOM 0.45→0.30 · PAN_SPEED 600→720 · ZOOM_STEP 0.12 (new) · bigCity fronts
+  rng(2,4)→rng(4,7) · expansionRamp 0.25+0.25t → 0.15+0.11t (war by ~wk8) · targetScore player-turf
+  appetite scaled by the ramp (+ early neutral preference) · ATTACK_SHUTDOWN_WEEKS 3 / ATTACK_HEAT 6
+  / ATTACK_MIN_CREW 1 (new). No tick/applyCommand settlement math changed.
+- Files: NEW src/sim/interdiction.ts (extort/attack + temp-shutdown), src/sim/routes.ts (automated
+  routes); src/sim/economy.ts (businessAccrual 0 while shut + isShutDown), src/sim/collection.ts
+  (decrement shutdown), src/sim/types.ts (Business.shutdownTicks, GameState.routes, CollectionRoute),
+  src/sim/movement.ts (route fields on MovableUnit), src/sim/mapEconomy.ts (skip route collectors in
+  processCollectorArrivals), src/sim/strategy.ts (re-anchored ramp + targetScore), src/sim/state.ts
+  (front breadth), src/sim/onboarding.ts (extort-first objective), src/sim/index.ts (exports);
+  src/scenes/IsoScene.ts (camera, plates, right-click menu, routes UI, legend, HUD). New
+  tests/rts22.test.ts; updated tests/economyPacing.test.ts + tests/turfWar.test.ts to the new ramp.
+- Gate: typecheck ✅  build ✅  test ✅ (565 total; +10 rts22: extortion breadth; extort/attack gates;
+  temp-shutdown produces-nothing-then-recovers + tick-untouched; routes gather+bank+loop; routes
+  STILL interceptable; routes opt-in no-op; extort-first rivals leave the player alone early & covet
+  turf only in the war phase; earningBusinesses read). /src/sim Phaser-free invariant green; no
+  Gangsters conflations; the 555 base green.
+- Commit: rts22: Readability, Controls & Extort-First Economy — green

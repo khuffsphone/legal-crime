@@ -197,6 +197,13 @@ export const DANGER_RADIUS = 2.5; // tiles
 // can learn to TIME the run (wait for clear) instead of facing a blind cliff on run #2.
 export const ROUTE_DANGER_RADIUS = 4.0; // tiles
 
+// RTS-22 — the ATTACK interaction: right-click a business → temporarily SHUT IT DOWN (it stops
+// producing). The intended use is to interdict a neighbouring RIVAL's economy. Cheap and quiet (a
+// thug job, not a war crime): no cash, modest heat, a few weeks of lost production.
+export const ATTACK_SHUTDOWN_WEEKS = 3; // weeks a struck business stays shut
+export const ATTACK_HEAT = 6; // heat the attacker draws
+export const ATTACK_MIN_CREW = 1; // a thug to send
+
 // RTS-16 — the turf war. Rival families make a territorial move on this real-time cadence
 // (deterministic, telegraphed). Tunable so the contest is a fight, not a stomp.
 export const STRATEGY_PULSE_SECONDS = 22; // ~5 rival moves per 120s week

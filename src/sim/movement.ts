@@ -35,6 +35,13 @@ export interface MovableUnit {
    * player's first paycheck is guaranteed home. Set by startCollectorRun while the world has
    * tutorial free-runs left; normal risk resumes once they are spent. */
   protectedRun?: boolean;
+  /** RTS-22 — automated route this collector runs (id into state.routes). Absent ⇒ a one-shot
+   * manual collector. */
+  routeId?: string;
+  /** RTS-22 — index of the next route stop the collector is heading to. */
+  routeIndex?: number;
+  /** RTS-22 — route phase: walking to the next stop to gather, or banking the take at HQ. */
+  routePhase?: 'toStop' | 'toBank';
 }
 
 /** Create an idle unit standing at tile (gx, gy). Plain mover — no faction/role (RTS-2/3). */

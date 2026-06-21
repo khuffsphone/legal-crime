@@ -95,6 +95,9 @@ export interface Business {
   /** Upgrade tier of an illegal operation (Phase 14 / S4). Absent ⇒ tier 1. Higher tiers
    * multiply income AND heat. Fronts ignore this. */
   tier?: number;
+  /** RTS-22: weeks this business is SHUT DOWN (an ATTACK temporarily stops it producing). While
+   * > 0 it accrues NOTHING; decremented each settlement. Absent ⇒ open/0. Additive, default-safe. */
+  shutdownTicks?: number;
 }
 
 export interface District {
@@ -120,6 +123,16 @@ export interface HitOrder {
   attackerId: string;
   targetId: string;
   orderedTick: number;
+}
+
+/** RTS-22 — an automated collection route: a collector cycles these businesses in order, gathering
+ * the family's protection takings and banking them at HQ, then loops. Still interceptable in
+ * transit (the signature bottleneck is preserved). Pure data; the route logic lives in routes.ts. */
+export interface CollectionRoute {
+  id: string;
+  familyId: string;
+  /** Business ids to visit, in order. */
+  stops: string[];
 }
 
 /** Systemic shock kinds (Phase 16). */
@@ -168,6 +181,9 @@ export interface GameState {
   /** Real-time seconds accumulated toward the next strategic pulse (RTS-16) — the cadence on
    * which rival families make territorial moves. Driven by advanceStrategy; default 0. */
   strategyElapsed: number;
+  /** RTS-22 — automated collection routes (additive; absent ⇒ none, so prior states are
+   * byte-identical and the manual collector path is unchanged). */
+  routes?: CollectionRoute[];
   /** Real-time seconds the player's crew must regroup before the next offensive action (RTS-19).
    * Set by every offence (raid/sabotage/hit/lockout) and bled down in the real-time wrapper; the
    * offence gates refuse while it is > 0, so heavy hits cannot be chained into an instant board

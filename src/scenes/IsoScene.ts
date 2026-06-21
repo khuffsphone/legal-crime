@@ -80,6 +80,13 @@ import {
   hqIntegrityOf,
   allBusinesses,
   businessEarner,
+  isShutDown,
+  businessActions,
+  resolveAttack,
+  createCollectionRoute,
+  advanceRoutes,
+  routeStatus,
+  routeStops,
   type GameState,
   type MapLayout,
   type Selection,
@@ -113,9 +120,12 @@ import {
 
 const COLS = 16;
 const ROWS = 16;
-const PAN_SPEED = 600;
-const MIN_ZOOM = 0.45;
+const PAN_SPEED = 720;
+// RTS-22: a wider zoom range so the player can pull back to read the whole 9-district city or push
+// in to drive individual thugs. Zoom is eased toward a target each frame for a smooth feel.
+const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2.6;
+const ZOOM_STEP = 0.12; // per wheel notch (fraction of current zoom)
 const CLICK_SLOP = 6;
 
 const FED_T1 = 50;
@@ -154,11 +164,18 @@ interface BizMarker { coin: Phaser.GameObjects.Image; glow?: Phaser.GameObjects.
 
 export class IsoScene extends Phaser.Scene {
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
+  private wasd?: { up: Phaser.Input.Keyboard.Key; down: Phaser.Input.Keyboard.Key; left: Phaser.Input.Keyboard.Key; right: Phaser.Input.Keyboard.Key };
+  private targetZoom = 0.6; // eased toward each frame (RTS-22 smooth zoom)
   private navGrid!: NavGrid;
   private state!: GameState;
   private layout!: MapLayout;
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
+  private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
+  private routeGfx?: Phaser.GameObjects.Graphics; // RTS-22 the drawn collection route
+  private ctxMenu?: Phaser.GameObjects.Container; // RTS-22 right-click EXTORT/ATTACK menu
+  private ctxRect?: { x: number; y: number; w: number; h: number };
+  private ctxRows: { y0: number; y1: number; act: () => void }[] = [];
   private districtLabels = new Map<string, Phaser.GameObjects.Text>();
   private strategyPanel?: Phaser.GameObjects.Text;
   private strategyTitle?: Phaser.GameObjects.Text;
@@ -218,9 +235,13 @@ export class IsoScene extends Phaser.Scene {
     this.drawCity();
     this.spawnUnits();
 
-    const mid = gridToScreen((COLS - 1) / 2, (ROWS - 1) / 2);
-    cam.centerOn(mid.x, mid.y);
-    cam.setZoom(0.8);
+    // RTS-22: frame the player's home neighbourhood (where the extort-first opening happens), zoomed
+    // out enough to read the block. The camera is fully driveable (WASD / drag / wheel / F-follow).
+    this.routeGfx = this.add.graphics().setDepth(7);
+    const home = this.homeFocusPoint();
+    cam.centerOn(home.x, home.y);
+    this.targetZoom = 0.62;
+    cam.setZoom(this.targetZoom);
 
     this.setupCameraControls();
     this.setupSelectionInput();
@@ -308,6 +329,13 @@ export class IsoScene extends Phaser.Scene {
         const t = businessTileOf(this.layout, biz.id);
         if (!t) continue;
         const c = gridToScreen(t.gx, t.gy);
+        // RTS-22 allegiance plate: a coloured diamond on the ground under each business reads its
+        // state at a glance — fog = un-shaken, brass = yours-paying, blood = a rival's, dark = shut.
+        const corners = tileCorners(t.gx, t.gy).map((pt) => ({ x: pt.x - c.x, y: pt.y - c.y }));
+        const plate = this.add.polygon(c.x, c.y, corners, hexNum(SPEC.fog), 0.16)
+          .setStrokeStyle(1.5, hexNum(SPEC.fog), 0.5)
+          .setDepth(depthValue(t.gx, t.gy) * 10 + 1);
+        this.bizPlates.set(biz.id, plate);
         const styleKey = biz.kind === 'front' ? 'storefront' : biz.kind === 'speakeasy' || biz.kind === 'numbers' ? 'speakeasy' : 'warehouse';
         const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], depthValue(t.gx, t.gy) * 10 + 5);
         const glow = this.add
@@ -372,7 +400,7 @@ export class IsoScene extends Phaser.Scene {
     const ringColor = faction === 'player' ? PAL.brass : PAL.blood;
     const shadow = this.add.ellipse(0, 0, 22, 11, PAL.soot, 0.5);
     const factionRing = this.add.ellipse(0, 0, 26, 13).setStrokeStyle(2, ringColor, 0.9);
-    const selRing = this.add.ellipse(0, 0, 34, 18).setStrokeStyle(2, PAL.bone, 1).setVisible(false);
+    const selRing = this.add.ellipse(0, 0, 38, 20).setStrokeStyle(3, PAL.brass, 1).setVisible(false);
     const sprite = this.add.image(0, 0, figureKeyForRole(unit.role)).setOrigin(0.5, 0.92);
     const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing };
     if (unit.role === 'collector') {
@@ -393,6 +421,8 @@ export class IsoScene extends Phaser.Scene {
 
     const obs = observeWorld(this.state, dt);
     this.state = obs.state;
+    // RTS-22: advance any automated collection routes (gather → bank → loop). No-op without a route.
+    advanceRoutes(this.state, this.layout, this.navGrid);
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
@@ -465,6 +495,46 @@ export class IsoScene extends Phaser.Scene {
         if (m.glow) m.glow.setAlpha(0.25 + 0.1 * Math.sin(now / 700));
       }
     }
+
+    // RTS-22: recolour each business's allegiance plate by who earns from it (and dark if shut).
+    this.refreshBizPlates();
+    this.refreshRoute();
+  }
+
+  /** RTS-22: read every business's state onto its ground plate — fog (un-shaken) / brass (yours) /
+   * rival-red (a rival's) / dark (shut down by an ATTACK). */
+  private refreshBizPlates(): void {
+    for (const b of allBusinesses(this.state)) {
+      const plate = this.bizPlates.get(b.id);
+      if (!plate) continue;
+      const earner = businessEarner(b);
+      const shut = isShutDown(b);
+      let fill = hexNum(SPEC.fog), alpha = 0.14, stroke = hexNum(SPEC.fog), sAlpha = 0.45;
+      if (shut) { fill = hexNum(SPEC.soot); alpha = 0.5; stroke = hexNum(SPEC.danger); sAlpha = 0.6; }
+      else if (earner === 'player') { fill = hexNum(SPEC.brass); alpha = 0.26; stroke = hexNum(SPEC.brass); sAlpha = 0.8; }
+      else if (earner && earner.startsWith('rival')) { fill = hexNum(SPEC.rival); alpha = 0.26; stroke = hexNum(SPEC.rival); sAlpha = 0.8; }
+      plate.setFillStyle(fill, alpha).setStrokeStyle(1.5, stroke, sAlpha);
+    }
+  }
+
+  /** RTS-22: draw the active player collection route as a faint brass polyline through its stops. */
+  private refreshRoute(): void {
+    if (!this.routeGfx) return;
+    this.routeGfx.clear();
+    const route = this.state.routes?.find((r) => r.familyId === 'player');
+    if (!route) return;
+    const hq = hqTileOf(this.layout, 'player');
+    const pts: { x: number; y: number }[] = [];
+    if (hq) pts.push(gridToScreen(hq.gx, hq.gy));
+    for (const sid of route.stops) { const t = businessTileOf(this.layout, sid); if (t) pts.push(gridToScreen(t.gx, t.gy)); }
+    if (hq) pts.push(gridToScreen(hq.gx, hq.gy));
+    if (pts.length < 2) return;
+    this.routeGfx.lineStyle(2, hexNum(SPEC.brass), 0.5);
+    this.routeGfx.beginPath();
+    this.routeGfx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) this.routeGfx.lineTo(pts[i].x, pts[i].y);
+    this.routeGfx.strokePath();
+    for (const sid of route.stops) { const t = businessTileOf(this.layout, sid); if (t) { const c = gridToScreen(t.gx, t.gy); this.routeGfx.fillStyle(hexNum(SPEC.brass), 0.6).fillCircle(c.x, c.y, 3); } }
   }
 
   /** Cash trail (RTS-15): drop a fading greenback breadcrumb, throttled to ~5/sec. */
@@ -564,11 +634,112 @@ export class IsoScene extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { this.pressX = p.x; this.pressY = p.y; });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (this.legend?.visible) { this.hideLegend(); return; }
+      // A real drag panned the camera — not a click.
       if (Math.hypot(p.x - this.pressX, p.y - this.pressY) > CLICK_SLOP) return;
       const shift = !!(p.event as MouseEvent | undefined)?.shiftKey;
-      if (p.rightButtonReleased()) this.commandMove(p);
-      else this.commandSelect(p, shift);
+      // An open menu consumes the next click: a row runs its action, anywhere else dismisses it.
+      if (this.ctxMenu) {
+        const hit = this.menuRowAt(p.x, p.y);
+        this.closeBizMenu();
+        if (hit) hit();
+        return;
+      }
+      if (p.rightButtonReleased()) {
+        // RTS-22: right-click a BUILDING → EXTORT / ATTACK menu (if a thug is selected); else MOVE.
+        const tile = screenToTile(p.worldX, p.worldY);
+        const bizId = businessAtTile(this.layout, tile);
+        if (bizId && this.selection.ids.length > 0) this.openBizMenu(bizId, p.x, p.y);
+        else this.commandMove(p);
+      } else {
+        this.commandSelect(p, shift);
+      }
     });
+  }
+
+  // ── RTS-22: right-click building context menu (EXTORT / ATTACK) ───────────────────────────────
+
+  private closeBizMenu(): void { this.ctxMenu?.destroy(); this.ctxMenu = undefined; this.ctxRect = undefined; this.ctxRows = []; }
+
+  /** The action for the menu row under screen (sx, sy), or null if the click missed the rows. */
+  private menuRowAt(sx: number, sy: number): (() => void) | null {
+    if (!this.ctxRect) return null;
+    for (const r of this.ctxRows) if (sx >= this.ctxRect.x && sx <= this.ctxRect.x + this.ctxRect.w && sy >= r.y0 && sy <= r.y1) return r.act;
+    return null;
+  }
+
+  /** Open the EXTORT / ATTACK menu for a business at screen (sx, sy). */
+  private openBizMenu(businessId: string, sx: number, sy: number): void {
+    this.closeBizMenu();
+    const acts = businessActions(this.state, businessId, 'player');
+    if (!acts) return;
+    const b = inspectBusiness(this.state, businessId);
+    const title = b ? `${b.name}` : 'business';
+    const sub = acts.earner === 'player' ? 'yours' : acts.earner ? `${acts.earner}'s` : 'un-shaken';
+
+    const rows: { label: string; color: string; enabled: boolean; hint: string; act: () => void }[] = [
+      { label: 'EXTORT', color: acts.extort.ok ? SPEC.brass : NOIR_PALETTE.fog, enabled: acts.extort.ok, hint: acts.extort.reason, act: () => this.commandExtortBusiness(businessId) },
+      { label: 'ATTACK', color: acts.attack.ok ? SPEC.danger : NOIR_PALETTE.fog, enabled: acts.attack.ok, hint: acts.attack.reason, act: () => this.commandAttackBusiness(businessId) },
+    ];
+
+    const W = 196, rowH = 28, headH = 30, H = headH + rows.length * rowH + 6;
+    const x = Math.min(sx, this.scale.width - W - 6), y = Math.min(sy, this.scale.height - H - 6);
+    const bg = this.add.rectangle(0, 0, W, H, PAL.ink, 0.97).setOrigin(0, 0).setStrokeStyle(2, PAL.brass, 0.9);
+    const head = this.add.text(8, 6, `${title} · ${sub}`, { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0);
+    const objs: Phaser.GameObjects.GameObject[] = [bg, head];
+    this.ctxRows = [];
+    rows.forEach((r, i) => {
+      const ry = headH + i * rowH;
+      const rowBg = this.add.rectangle(3, ry, W - 6, rowH - 2, PAL.charcoal, r.enabled ? 0.55 : 0.2).setOrigin(0, 0);
+      const lbl = this.add.text(10, ry + 5, r.label, { fontFamily: NOIR_FONT, fontSize: '13px', color: r.color, fontStyle: 'bold' }).setOrigin(0, 0);
+      const hint = this.add.text(W - 8, ry + 8, r.enabled ? '▸' : r.hint, { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setOrigin(1, 0);
+      objs.push(rowBg, lbl, hint);
+      if (r.enabled) this.ctxRows.push({ y0: y + ry, y1: y + ry + rowH - 2, act: r.act });
+    });
+    this.ctxRect = { x, y, w: W, h: H };
+    this.ctxMenu = this.add.container(x, y, objs).setScrollFactor(0).setDepth(100200);
+  }
+
+  /** EXTORT a specific building: send a selected thug toward it and attempt the shakedown. */
+  private commandExtortBusiness(businessId: string): void {
+    const g = businessActions(this.state, businessId, 'player')?.extort;
+    if (!g?.ok) { this.setStatus(`can't extort: ${g?.reason ?? 'no'}`); return; }
+    const tile = businessTileOf(this.layout, businessId);
+    if (tile) this.sendSelectedTo(tile);
+    applyCommand(this.state, { type: 'extort', familyId: 'player', businessId });
+    this.state = harvestIncidents(this.state);
+    const insp = inspectBusiness(this.state, businessId);
+    if (tile) {
+      const c = gridToScreen(tile.gx, tile.gy);
+      if (insp?.payingProtection) { this.seedBackPay(businessId); this.leanBeat(c.x, c.y); }
+      else this.floatText(c.x, c.y - 30, 'RESISTED — try again', SPEC.danger);
+    }
+    this.setStatus(insp?.payingProtection ? `${insp.name} now pays protection — set a route with [T]` : 'they held out — right-click → EXTORT again');
+  }
+
+  /** ATTACK a specific building: temporarily shut it down (interdict a rival's racket). */
+  private commandAttackBusiness(businessId: string): void {
+    const res = resolveAttack(this.state, businessId, 'player');
+    this.state = harvestIncidents(this.state);
+    if (!res.ok) { this.setStatus(`can't attack: ${res.reason}`); return; }
+    const tile = businessTileOf(this.layout, businessId);
+    if (tile) { this.sendSelectedTo(tile); const c = gridToScreen(tile.gx, tile.gy); this.floatText(c.x, c.y - 30, `SHUT DOWN ${res.weeks}wk`, SPEC.danger); }
+    const insp = inspectBusiness(this.state, businessId);
+    this.setStatus(`${insp?.name ?? 'business'} shut down for ${res.weeks} weeks — it stops producing`);
+  }
+
+  /** Walk the selected thugs to a tile (flavour for extort/attack; also a plain order). */
+  private sendSelectedTo(tile: { gx: number; gy: number }): void {
+    if (this.selection.ids.length === 0) return;
+    resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, tile, this.navGrid);
+  }
+
+  /** [T] — set up (or refresh) the automated collection route over your protected businesses. */
+  private commandRoute(): void {
+    if (routeStops(this.state, this.layout, 'player').length === 0) { this.setStatus('extort some storefronts first — then [T] sets a collection route'); return; }
+    const setup = createCollectionRoute(this.state, this.layout, 'player', this.navGrid);
+    if (!setup) { this.setStatus('no route — extort storefronts and make sure your HQ is reachable'); return; }
+    this.attachView(setup.unit, 'player');
+    this.setStatus(`collection route set — ${setup.route.stops.length} stops, banking automatically (guard it!)`);
   }
 
   private commandSelect(p: Phaser.Input.Pointer, shift: boolean): void {
@@ -892,11 +1063,15 @@ export class IsoScene extends Phaser.Scene {
     if (bizId) {
       const b = inspectBusiness(this.state, bizId);
       if (b) {
+        const found = this.state.districts.flatMap((d) => d.businesses).find((x) => x.id === bizId);
+        const shut = found ? isShutDown(found) : false;
+        const acts = businessActions(this.state, bizId, 'player');
+        const aff = acts ? [acts.extort.ok ? 'EXTORT' : '', acts.attack.ok ? 'ATTACK' : ''].filter(Boolean).join(' · ') : '';
         return [
           `${b.name} (${b.kind})`,
-          b.payingProtection ? 'PAYING PROTECTION — yours' : b.earnerName ? `pays ${b.earnerName}` : 'not yet shaken down',
+          shut ? 'SHUT DOWN — not producing' : b.payingProtection ? 'PAYING PROTECTION — yours' : b.earnerName ? `pays ${b.earnerName}` : 'not yet shaken down',
           `income $${b.income}/wk · uncollected $${b.uncollected}`,
-          `${b.districtName}`,
+          aff ? `right-click → ${aff}` : `${b.districtName}`,
         ].join('\n');
       }
     }
@@ -915,15 +1090,44 @@ export class IsoScene extends Phaser.Scene {
 
   // ── camera ───────────────────────────────────────────────────────────────────────────────
 
+  /** The screen-space point to frame the player's home block on (the centroid of district-0). */
+  private homeFocusPoint(): { x: number; y: number } {
+    const tiles = this.state.districts[0].businesses
+      .map((b) => businessTileOf(this.layout, b.id))
+      .filter((t): t is { gx: number; gy: number } => !!t);
+    if (tiles.length === 0) return gridToScreen((COLS - 1) / 2, (ROWS - 1) / 2);
+    const gx = tiles.reduce((a, t) => a + t.gx, 0) / tiles.length;
+    const gy = tiles.reduce((a, t) => a + t.gy, 0) / tiles.length;
+    return gridToScreen(gx, gy);
+  }
+
+  /** Smoothly recentre the camera on the first selected unit (RTS-22 follow). */
+  private centerOnSelection(): void {
+    const id = this.selection.ids[0];
+    const v = id ? this.units.find((u) => u.unit.id === id) : undefined;
+    if (!v) { this.setStatus('select a thug first, then [F] to centre on it'); return; }
+    const s = unitScreenPos(v.unit);
+    this.cameras.main.pan(s.x, s.y, 280, 'Sine.easeInOut');
+  }
+
   private setupCameraControls(): void {
     const cam = this.cameras.main;
     this.cursors = this.input.keyboard?.createCursorKeys();
+    const K = Phaser.Input.Keyboard.KeyCodes;
+    this.wasd = this.input.keyboard?.addKeys({ up: K.W, down: K.S, left: K.A, right: K.D }) as typeof this.wasd;
+    // Left-drag pans (a real drag, past CLICK_SLOP); a click selects/acts (handled in pointerup).
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (p.isDown) { cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom; cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom; }
+      if (p.isDown && Math.hypot(p.x - this.pressX, p.y - this.pressY) > CLICK_SLOP) {
+        cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom; cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom;
+      }
     });
+    // Wheel zooms toward the cursor, eased in update().
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
-      cam.setZoom(Phaser.Math.Clamp(cam.zoom - dy * 0.001, MIN_ZOOM, MAX_ZOOM));
+      const factor = dy > 0 ? 1 - ZOOM_STEP : 1 + ZOOM_STEP;
+      this.targetZoom = Phaser.Math.Clamp(this.targetZoom * factor, MIN_ZOOM, MAX_ZOOM);
     });
+    this.input.keyboard?.on('keydown-F', () => this.centerOnSelection());
+    this.input.keyboard?.on('keydown-T', () => this.commandRoute());
     this.input.keyboard?.on('keydown-E', () => this.commandExtort());
     this.input.keyboard?.on('keydown-C', () => this.commandCollect());
     this.input.keyboard?.on('keydown-R', () => this.commandReinvest());
@@ -953,13 +1157,21 @@ export class IsoScene extends Phaser.Scene {
     this.refreshNight();
 
     const cam = this.cameras.main;
-    const k = this.cursors;
-    if (!k) return;
+    // RTS-22: ease the zoom toward its target for a smooth feel.
+    if (Math.abs(cam.zoom - this.targetZoom) > 0.001) {
+      cam.setZoom(Phaser.Math.Linear(cam.zoom, this.targetZoom, 0.18));
+    }
+    // WASD + arrow-key panning (resolution- and zoom-independent).
     const step = (PAN_SPEED * delta) / 1000 / cam.zoom;
-    if (k.left.isDown) cam.scrollX -= step;
-    if (k.right.isDown) cam.scrollX += step;
-    if (k.up.isDown) cam.scrollY -= step;
-    if (k.down.isDown) cam.scrollY += step;
+    const k = this.cursors, w = this.wasd;
+    const left = !!k?.left.isDown || !!w?.left.isDown;
+    const right = !!k?.right.isDown || !!w?.right.isDown;
+    const up = !!k?.up.isDown || !!w?.up.isDown;
+    const down = !!k?.down.isDown || !!w?.down.isDown;
+    if (left) cam.scrollX -= step;
+    if (right) cam.scrollX += step;
+    if (up) cam.scrollY -= step;
+    if (down) cam.scrollY += step;
   }
 
   // ── HUD ──────────────────────────────────────────────────────────────────────────────────
@@ -1154,12 +1366,16 @@ export class IsoScene extends Phaser.Scene {
       `Net ${netStr}/wk    Week ${hud.week} — next in ${hud.weekCountdownLabel}`,
     ].join('\n'));
 
-    // Uncollected readout — why clean drifts: takings you're owed but haven't collected yet.
+    // Uncollected readout + RTS-22 route status — why clean drifts, and whether the route handles it.
     if (this.uncollectedText) {
-      if (p.uncollected > 0) {
-        this.uncollectedText.setText(`Uncollected $${p.uncollected} waiting — press [C] to collect`).setColor(NOIR_PALETTE.brass);
+      const rs = routeStatus(this.state, 'player');
+      if (rs.active) {
+        const ph = rs.phase === 'toBank' ? `banking $${rs.carrying}` : 'on the rounds';
+        this.uncollectedText.setText(`ROUTE: ${rs.stops} stops · ${ph} · uncollected $${p.uncollected} (guard it!)`).setColor(NOIR_PALETTE.brass);
+      } else if (p.uncollected > 0) {
+        this.uncollectedText.setText(`Uncollected $${p.uncollected} — [C] collect once, or [T] set an auto-route`).setColor(NOIR_PALETTE.brass);
       } else {
-        this.uncollectedText.setText('Uncollected $0 — all takings banked').setColor(NOIR_PALETTE.fog);
+        this.uncollectedText.setText('Uncollected $0 — extort more storefronts, then [T] route it').setColor(NOIR_PALETTE.fog);
       }
     }
 
@@ -1217,7 +1433,7 @@ export class IsoScene extends Phaser.Scene {
     const sel = this.selection.ids;
     const base = sel.length === 0 ? 'Click a unit to select · right-click to move' : `selected: ${sel.join(', ')}`;
     const sh = this.state.activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ');
-    const hint = '  ·  [E] shake down · [C] collect · [R] reinvest · [G] grease · [5] expand · [6] recruit';
+    const hint = '  ·  right-click a shop → EXTORT/ATTACK · [T] route · WASD/drag/wheel camera · [F] follow · [6] recruit · [5] expand';
     this.statusText.setText((action ? `${base}  ·  ${action}` : base + hint) + (sh ? `   |  ${sh}` : ''));
   }
 
@@ -1263,33 +1479,32 @@ export class IsoScene extends Phaser.Scene {
   // ── onboarding ───────────────────────────────────────────────────────────────────────────
 
   private buildLegend(): void {
-    const w = 560, h = 300;
+    const w = 600, h = 372;
     const cx = this.scale.width / 2, cy = this.scale.height / 2;
-    const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.95).setStrokeStyle(2, PAL.brass, 1);
-    const title = this.add.text(0, -h / 2 + 18, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
-    const body = this.add.text(0, -h / 2 + 56, [
-      'Prohibition Chicago. You run a crew. Build an empire before the law,',
-      'your rivals, or your own men put you in the river.',
+    const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
+    const title = this.add.text(0, -h / 2 + 16, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
+    const body = this.add.text(0, -h / 2 + 50, [
+      'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
       '',
-      'THE LOOP  (follow the ▶ objective up top)',
-      '  • [E] Shake down the glowing storefront → a brass % means it pays.',
-      '    It can take a try or two — extortion is a roll, not a promise.',
-      '  • [C] Send a COLLECTOR — it walks the take through the streets to HQ.',
-      '  • Guard it — a rival enforcer who catches it steals the cash.',
-      '  • Bank it, reinvest in rackets, and bribe the four channels:',
-      '    The Beat · The Bench · City Hall · The Bureau.',
-      '  • [5] EXPAND your home block 30→50 to HOLD it (unlocks RAID).',
-      '  • [6] RECRUIT muscle toward the 12 strength a hit needs.',
+      'CAMERA — move around and read the city',
+      '  WASD / arrows pan · drag to pan · mouse-wheel zoom · [F] centre on selection',
       '',
-      'TAKE THE CITY  (the offence board, right)',
-      '  [1] raid · [2] sabotage · [3] assassinate · [4] lockout',
+      'MOUSE — drive your thugs',
+      '  LEFT-CLICK a thug to select (SHIFT-click adds more)',
+      '  RIGHT-CLICK a storefront → EXTORT (take protection) or ATTACK (shut it down)',
+      '  RIGHT-CLICK the street → move the selected thugs',
+      '  The coloured plate under a shop = its allegiance: fog new · brass yours · red rival.',
       '',
-      'CONTROLS',
-      '  left-click select · shift adds · right-click move · drag pan · wheel zoom',
-      '  [E] shake down · [C] collect · [R] reinvest · [G] grease · [5] expand · [6] recruit',
-      '  [K] your crew (names · traits · loyalty) · [L] the wire · [H] help · [B] card view',
-    ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
-    const hint = this.add.text(0, h / 2 - 26, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
+      'EXTORT-FIRST — the early game',
+      '  • Shake down the NEIGHBOURHOOD — every cheap front you can (low heat, steady money).',
+      '  • [T] set an automated COLLECTION ROUTE so the take banks itself — but GUARD it,',
+      '    a rival enforcer who catches the collector still robs you.',
+      '  • [6] recruit more thugs · [5] expand to the next block · [G] grease The Beat.',
+      '  • War comes later: [1] raid · [2] sabotage · [3] assassinate · [4] lockout.',
+      '',
+      '  [K] crew · [L] the wire · [H] help · [B] card view',
+    ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
+    const hint = this.add.text(0, h / 2 - 22, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
     this.legend = this.add.container(cx, cy, [bg, title, body, hint]).setScrollFactor(0).setDepth(100100);
   }
 
