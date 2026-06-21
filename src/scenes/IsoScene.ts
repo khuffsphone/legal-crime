@@ -11,6 +11,8 @@ import {
   tileCorners,
   depthValue,
   ISO_TILE_HEIGHT,
+  ISO_TILE_HALF_WIDTH,
+  ISO_TILE_HALF_HEIGHT,
   makeGrid,
   spawnUnit,
   spawnEnforcer,
@@ -166,6 +168,7 @@ export class IsoScene extends Phaser.Scene {
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd?: { up: Phaser.Input.Keyboard.Key; down: Phaser.Input.Keyboard.Key; left: Phaser.Input.Keyboard.Key; right: Phaser.Input.Keyboard.Key };
   private targetZoom = 0.6; // eased toward each frame (RTS-22 smooth zoom)
+  private zoomAnchor?: { sx: number; sy: number; wx: number; wy: number }; // RTS-23 zoom-to-cursor
   private navGrid!: NavGrid;
   private state!: GameState;
   private layout!: MapLayout;
@@ -181,6 +184,22 @@ export class IsoScene extends Phaser.Scene {
   private strategyTitle?: Phaser.GameObjects.Text;
   private pressureBanner?: Phaser.GameObjects.Text;
   private endgameShown = false;
+  // RTS-23 — elevated HUD (top bar / channel dials / context card / wire frame / audio seams)
+  private hudGfx?: Phaser.GameObjects.Graphics; // all static + dynamic HUD framing
+  private topCells: { label: Phaser.GameObjects.Text; value: Phaser.GameObjects.Text; x: number; w: number; key: string }[] = [];
+  private phaseChip?: Phaser.GameObjects.Text;
+  private heatCaption?: Phaser.GameObjects.Text;
+  private channelTitle?: Phaser.GameObjects.Text;
+  private channelRows: Phaser.GameObjects.Text[] = [];
+  private channelPanelRect = { x: 12, y: 64, w: 250, h: 116 };
+  private routePill?: Phaser.GameObjects.Text;
+  private ctxCardTitle?: Phaser.GameObjects.Text;
+  private ctxCardBody?: Phaser.GameObjects.Text;
+  private hudRegions: { x: number; y: number; w: number; h: number; explain: string }[] = [];
+  private lastHeat = 0;
+  private lastPhase = '';
+  private wireFlashUntil = 0;
+  private lastIncidentSeq = -1;
   private selection: Selection = emptySelection();
   private pressX = 0;
   private pressY = 0;
@@ -189,10 +208,6 @@ export class IsoScene extends Phaser.Scene {
   private robbedCollectors = new Set<string>();
 
   // HUD objects
-  private hudPanel?: Phaser.GameObjects.Text;
-  private uncollectedText?: Phaser.GameObjects.Text;
-  private fedBar?: Phaser.GameObjects.Graphics;
-  private weekBar?: Phaser.GameObjects.Graphics;
   private statusText?: Phaser.GameObjects.Text;
   private warningBanner?: Phaser.GameObjects.Text;
   private feedTitle?: Phaser.GameObjects.Text;
@@ -297,8 +312,8 @@ export class IsoScene extends Phaser.Scene {
         }
       }
     }
-    this.objTitle.setText(`▶  ${o.title}`).setPosition(cx, 12).setColor(o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass);
-    this.objDetail.setText(detail).setPosition(cx, 34);
+    this.objTitle.setText(`▶  ${o.title}`).setPosition(cx, 62).setColor(o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass);
+    this.objDetail.setText(detail).setPosition(cx, 82);
   }
 
   // ── the city ─────────────────────────────────────────────────────────────────────────────
@@ -551,6 +566,7 @@ export class IsoScene extends Phaser.Scene {
   private flashAmbush(ev: InterceptionEvent): void {
     if (this.robbedCollectors.has(ev.collectorId)) return;
     this.robbedCollectors.add(ev.collectorId);
+    this.signalBeat('ambush', 'YOUR COLLECTOR WAS ROBBED — guard the route'); // RTS-23 audio seam
     const v = this.units.find((u) => u.unit.id === ev.collectorId);
     if (!v) return;
     const s = unitScreenPos(v.unit);
@@ -595,6 +611,7 @@ export class IsoScene extends Phaser.Scene {
   private flashDeposit(collectorId: string, banked: number): void {
     const v = this.units.find((u) => u.unit.id === collectorId);
     if (!v) return;
+    if (banked > 0) this.signalBeat('banked'); // RTS-23 audio seam
     const s = unitScreenPos(v.unit);
     const hq = hqTileOf(this.layout, 'player');
     const vault = hq ? gridToScreen(hq.gx, hq.gy) : { x: s.x, y: s.y - 40 };
@@ -645,9 +662,8 @@ export class IsoScene extends Phaser.Scene {
         return;
       }
       if (p.rightButtonReleased()) {
-        // RTS-22: right-click a BUILDING → EXTORT / ATTACK menu (if a thug is selected); else MOVE.
-        const tile = screenToTile(p.worldX, p.worldY);
-        const bizId = businessAtTile(this.layout, tile);
+        // RTS-22/23: right-click a BUILDING (base tile OR its roof) → EXTORT/ATTACK menu; else MOVE.
+        const bizId = this.businessAtScreen(p.worldX, p.worldY);
         if (bizId && this.selection.ids.length > 0) this.openBizMenu(bizId, p.x, p.y);
         else this.commandMove(p);
       } else {
@@ -657,6 +673,26 @@ export class IsoScene extends Phaser.Scene {
   }
 
   // ── RTS-22: right-click building context menu (EXTORT / ATTACK) ───────────────────────────────
+
+  /** RTS-23: hit-test a business by SCREEN point, accounting for the iso building's HEIGHT — a
+   * click on the visible roof (drawn above the tile) maps to the base tile, not the tile up-left of
+   * it. Tries the exact base tile first, then any building whose drawn column contains the point. */
+  private businessAtScreen(worldX: number, worldY: number): string | undefined {
+    const direct = businessAtTile(this.layout, screenToTile(worldX, worldY));
+    if (direct) return direct;
+    const BUILD_H = 52; // approximate drawn building height above the base tile
+    let best: { id: string; y: number } | undefined;
+    for (const b of allBusinesses(this.state)) {
+      const t = businessTileOf(this.layout, b.id);
+      if (!t) continue;
+      const c = gridToScreen(t.gx, t.gy);
+      if (worldX >= c.x - ISO_TILE_HALF_WIDTH * 0.7 && worldX <= c.x + ISO_TILE_HALF_WIDTH * 0.7 &&
+          worldY <= c.y + ISO_TILE_HALF_HEIGHT && worldY >= c.y - BUILD_H) {
+        if (!best || c.y > best.y) best = { id: b.id, y: c.y }; // frontmost wins
+      }
+    }
+    return best?.id;
+  }
 
   private closeBizMenu(): void { this.ctxMenu?.destroy(); this.ctxMenu = undefined; this.ctxRect = undefined; this.ctxRows = []; }
 
@@ -710,7 +746,7 @@ export class IsoScene extends Phaser.Scene {
     const insp = inspectBusiness(this.state, businessId);
     if (tile) {
       const c = gridToScreen(tile.gx, tile.gy);
-      if (insp?.payingProtection) { this.seedBackPay(businessId); this.leanBeat(c.x, c.y); }
+      if (insp?.payingProtection) { this.seedBackPay(businessId); this.leanBeat(c.x, c.y); this.signalBeat('extort'); }
       else this.floatText(c.x, c.y - 30, 'RESISTED — try again', SPEC.danger);
     }
     this.setStatus(insp?.payingProtection ? `${insp.name} now pays protection — set a route with [T]` : 'they held out — right-click → EXTORT again');
@@ -723,6 +759,7 @@ export class IsoScene extends Phaser.Scene {
     if (!res.ok) { this.setStatus(`can't attack: ${res.reason}`); return; }
     const tile = businessTileOf(this.layout, businessId);
     if (tile) { this.sendSelectedTo(tile); const c = gridToScreen(tile.gx, tile.gy); this.floatText(c.x, c.y - 30, `SHUT DOWN ${res.weeks}wk`, SPEC.danger); }
+    this.signalBeat('attack');
     const insp = inspectBusiness(this.state, businessId);
     this.setStatus(`${insp?.name ?? 'business'} shut down for ${res.weeks} weeks — it stops producing`);
   }
@@ -1031,8 +1068,16 @@ export class IsoScene extends Phaser.Scene {
     });
   }
 
+  /** RTS-23: the plain-English explanation for a HUD region under the cursor (the anti-Gangsters
+   * fix — every number is inspectable). */
+  private hudRegionExplain(sx: number, sy: number): string | null {
+    for (const r of this.hudRegions) if (sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h) return r.explain;
+    return null;
+  }
+
   private updateTooltip(p: Phaser.Input.Pointer): void {
-    const text = this.hoverText(p);
+    // HUD numbers explain themselves first (screen-space regions), then world hover.
+    const text = this.hudRegionExplain(p.x, p.y) ?? this.hoverText(p);
     if (!text || !this.tooltipBg || !this.tooltipText) { this.hideTooltip(); return; }
     this.tooltipText.setText(text).setVisible(true);
     const w = this.tooltipText.width + 16;
@@ -1059,7 +1104,7 @@ export class IsoScene extends Phaser.Scene {
       }
     }
     const tile = screenToTile(p.worldX, p.worldY);
-    const bizId = businessAtTile(this.layout, tile);
+    const bizId = this.businessAtScreen(p.worldX, p.worldY);
     if (bizId) {
       const b = inspectBusiness(this.state, bizId);
       if (b) {
@@ -1101,6 +1146,22 @@ export class IsoScene extends Phaser.Scene {
     return gridToScreen(gx, gy);
   }
 
+  /** [Z] RTS-23 — one press to FRAME THE WHOLE CITY: fit all 9 districts and centre them. */
+  private frameCity(): void {
+    const cam = this.cameras.main;
+    const corners = [gridToScreen(0, 0), gridToScreen(COLS - 1, 0), gridToScreen(0, ROWS - 1), gridToScreen(COLS - 1, ROWS - 1)];
+    const minX = Math.min(...corners.map((c) => c.x)) - ISO_TILE_HALF_WIDTH;
+    const maxX = Math.max(...corners.map((c) => c.x)) + ISO_TILE_HALF_WIDTH;
+    const minY = Math.min(...corners.map((c) => c.y)) - ISO_TILE_HEIGHT;
+    const maxY = Math.max(...corners.map((c) => c.y)) + ISO_TILE_HEIGHT;
+    const z = Phaser.Math.Clamp(Math.min(this.scale.width / (maxX - minX), this.scale.height / (maxY - minY)) * 0.9, MIN_ZOOM, MAX_ZOOM);
+    this.zoomAnchor = undefined;
+    this.targetZoom = z;
+    cam.setZoom(z);
+    cam.centerOn((minX + maxX) / 2, (minY + maxY) / 2);
+    this.setStatus('framed the whole city — [F] follow a thug · wheel to zoom');
+  }
+
   /** Smoothly recentre the camera on the first selected unit (RTS-22 follow). */
   private centerOnSelection(): void {
     const id = this.selection.ids[0];
@@ -1121,12 +1182,18 @@ export class IsoScene extends Phaser.Scene {
         cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom; cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom;
       }
     });
-    // Wheel zooms toward the cursor, eased in update().
-    this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
+    // RTS-23: wheel zooms TO THE CURSOR — capture the world point under the cursor so the eased
+    // zoom keeps it pinned (no more shoving the city into the left third).
+    this.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       const factor = dy > 0 ? 1 - ZOOM_STEP : 1 + ZOOM_STEP;
-      this.targetZoom = Phaser.Math.Clamp(this.targetZoom * factor, MIN_ZOOM, MAX_ZOOM);
+      const next = Phaser.Math.Clamp(this.targetZoom * factor, MIN_ZOOM, MAX_ZOOM);
+      if (next === this.targetZoom) return;
+      this.targetZoom = next;
+      const wp = cam.getWorldPoint(p.x, p.y);
+      this.zoomAnchor = { sx: p.x, sy: p.y, wx: wp.x, wy: wp.y };
     });
     this.input.keyboard?.on('keydown-F', () => this.centerOnSelection());
+    this.input.keyboard?.on('keydown-Z', () => this.frameCity());
     this.input.keyboard?.on('keydown-T', () => this.commandRoute());
     this.input.keyboard?.on('keydown-E', () => this.commandExtort());
     this.input.keyboard?.on('keydown-C', () => this.commandCollect());
@@ -1157,9 +1224,17 @@ export class IsoScene extends Phaser.Scene {
     this.refreshNight();
 
     const cam = this.cameras.main;
-    // RTS-22: ease the zoom toward its target for a smooth feel.
+    // RTS-22/23: ease the zoom toward its target, keeping the cursor's world point pinned.
     if (Math.abs(cam.zoom - this.targetZoom) > 0.001) {
-      cam.setZoom(Phaser.Math.Linear(cam.zoom, this.targetZoom, 0.18));
+      cam.setZoom(Phaser.Math.Linear(cam.zoom, this.targetZoom, 0.22));
+      const a = this.zoomAnchor;
+      if (a) {
+        const now = cam.getWorldPoint(a.sx, a.sy);
+        cam.scrollX += a.wx - now.x;
+        cam.scrollY += a.wy - now.y;
+      }
+    } else {
+      this.zoomAnchor = undefined;
     }
     // WASD + arrow-key panning (resolution- and zoom-independent).
     const step = (PAN_SPEED * delta) / 1000 / cam.zoom;
@@ -1176,17 +1251,45 @@ export class IsoScene extends Phaser.Scene {
 
   // ── HUD ──────────────────────────────────────────────────────────────────────────────────
 
+  /** RTS-23 — an art-deco brass frame on the HUD graphics layer: dark fill, brass border, corner
+   * ticks. The shared look for every panel. */
+  private decoFrame(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, accent: number = PAL.brass, alpha = 0.84): void {
+    g.fillStyle(PAL.ink, alpha).fillRect(x, y, w, h);
+    g.lineStyle(1.5, accent, 0.85).strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    const t = 9;
+    g.lineStyle(2, accent, 0.9);
+    const cs: [number, number, number, number][] = [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]];
+    for (const [cx, cy, dx, dy] of cs) { g.beginPath(); g.moveTo(cx, cy + dy * t); g.lineTo(cx, cy); g.lineTo(cx + dx * t, cy); g.strokePath(); }
+  }
+
   private drawHud(): void {
-    this.add.rectangle(0, 0, 340, 150, PAL.ink, 0.55).setOrigin(0, 0).setScrollFactor(0).setDepth(99990);
-    this.add
-      .text(12, 10, 'LEGAL CRIME — Fedora Noir', { fontFamily: NOIR_FONT, fontSize: '16px', color: NOIR_PALETTE.brass, fontStyle: 'bold' })
-      .setScrollFactor(0).setDepth(100000);
-    this.hudPanel = this.add.text(12, 34, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, lineSpacing: 3 }).setScrollFactor(0).setDepth(100000);
-    this.weekBar = this.add.graphics().setScrollFactor(0).setDepth(100000);
-    this.fedBar = this.add.graphics().setScrollFactor(0).setDepth(100000);
-    // Cash-flow legibility (RTS-12): the uncollected pile the player is owed but doesn't have.
-    this.uncollectedText = this.add.text(12, 128, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
-    this.statusText = this.add.text(12, 156, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
+    this.hudGfx = this.add.graphics().setScrollFactor(0).setDepth(99990);
+
+    // TOP BAR — labeled stat cells (CLEAN / DIRTY / NET / HEAT METER / CREW / WEEK) + a PHASE chip.
+    const cellDefs = [
+      { key: 'clean', label: 'CLEAN $' }, { key: 'dirty', label: 'DIRTY $' }, { key: 'net', label: 'NET /wk' },
+      { key: 'heat', label: 'HEAT vs FED LADDER' }, { key: 'crew', label: 'CREW' }, { key: 'week', label: 'WEEK' },
+    ];
+    for (const cd of cellDefs) {
+      const label = this.add.text(0, 0, cd.label, { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
+      const value = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '17px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
+      this.topCells.push({ label, value, x: 0, w: 0, key: cd.key });
+    }
+    this.heatCaption = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
+    this.phaseChip = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(100001);
+
+    // FOUR CHANNELS — labeled dials (level + what it buys + bump cost). [G] cycles a bump.
+    this.channelTitle = this.add.text(0, 0, 'THE FOUR CHANNELS  [G] grease', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
+    for (let i = 0; i < 4; i++) this.channelRows.push(this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone, lineSpacing: 1 }).setScrollFactor(0).setDepth(100000));
+
+    // ROUTE pill — prominent collection-route status (stops · banking $X · rob-risk).
+    this.routePill = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+
+    // CONTEXT card — the selected thug's card + its valid verbs.
+    this.ctxCardTitle = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+    this.ctxCardBody = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100001);
+
+    this.statusText = this.add.text(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
     this.warningBanner = this.add.text(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.blood, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000).setVisible(false);
 
     this.feedTitle = this.add.text(0, 12, 'THE WIRE  [L]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000).setOrigin(1, 0);
@@ -1215,9 +1318,9 @@ export class IsoScene extends Phaser.Scene {
    * the district nameplates by who holds them (brass = you, rival-red = a rival, fog = neutral). */
   private refreshStrategy(): void {
     if (!this.strategyPanel || !this.strategyTitle || !this.pressureBanner) return;
-    const right = this.scale.width - 12;
+    const right = this.scale.width - 18;
     const standing = cityStanding(this.state);
-    this.strategyTitle.setPosition(right, 196);
+    this.strategyTitle.setPosition(right, 256);
     const lines = [standing.read, ''];
     lines.push(`YOUR HQ: ${Math.round(hqIntegrityOf(this.state.player))}%`);
     // While founding, show the home corner and the path to lock it down (30 → CONTROL_HOLD).
@@ -1257,7 +1360,7 @@ export class IsoScene extends Phaser.Scene {
       const eta = !o.available && o.affordEtaWeeks !== 0 ? IsoScene.etaTag(o.affordEtaWeeks) : '';
       lines.push(`${mark} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}${eta}`);
     }
-    this.strategyPanel.setText(lines.join('\n')).setPosition(right, 216);
+    this.strategyPanel.setText(lines.join('\n')).setPosition(right, 276);
     this.strategyPanel.setColor(standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
       : standing.trajectory === 'behind' || standing.trajectory === 'crushed' ? SPEC.danger : NOIR_PALETTE.bone);
 
@@ -1272,7 +1375,7 @@ export class IsoScene extends Phaser.Scene {
     const onPlayer = telegraphedPushes(this.state).find((t) => t.onPlayer);
     if (onPlayer) {
       this.pressureBanner.setText(`⚔ ${onPlayer.familyName.toUpperCase()} IS PUSHING INTO ${onPlayer.districtName.toUpperCase()} — DEFEND OR GREASE CITY HALL`)
-        .setPosition(this.scale.width / 2, 84).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(this.time.now / 300)));
+        .setPosition(this.scale.width / 2, 106).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(this.time.now / 300)));
     } else {
       this.pressureBanner.setVisible(false);
     }
@@ -1344,7 +1447,7 @@ export class IsoScene extends Phaser.Scene {
       if (mostUrgent && this.crewVisible) {
         const countdown = realtimeHudView(this.state).weekCountdownLabel;
         this.mutinyBanner.setText(`⚠ ${mostUrgent.name.toUpperCase()} READY TO BETRAY — ACT NOW  (settles in ${countdown})`)
-          .setPosition(this.scale.width / 2, 60).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 300)));
+          .setPosition(this.scale.width / 2, 130).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 300)));
       } else {
         this.mutinyBanner.setVisible(false);
       }
@@ -1352,63 +1455,209 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private refreshHud(): void {
-    if (!this.hudPanel) return;
+    if (!this.hudGfx) return;
+    const g = this.hudGfx;
     const hud = realtimeHudView(this.state);
     const p = hud.player;
     const danger = anyCollectorInDanger(this.state);
-    // RTS-19 legibility: project the weekly net so the player can read whether the economy funds
-    // the war (positive) or the bleed is winning (negative).
     const net = playerWeeklyNet(this.state);
-    const netStr = net >= 0 ? `+$${net}` : `-$${Math.abs(net)}`;
-    this.hudPanel.setText([
-      `Clean $${p.cleanCash}    Dirty $${p.dirtyCash}`,
-      `Heat ${p.heat} (${heatLabel(p.heat)})    Crew ${p.crew}    Upkeep $${p.weeklyUpkeep}/wk` + (p.debt > 0 ? `    Debt $${p.debt}` : ''),
-      `Net ${netStr}/wk    Week ${hud.week} — next in ${hud.weekCountdownLabel}`,
-    ].join('\n'));
+    const W = this.scale.width, now = this.time.now;
+    g.clear();
+    this.hudRegions = [];
 
-    // Uncollected readout + RTS-22 route status — why clean drifts, and whether the route handles it.
-    if (this.uncollectedText) {
-      const rs = routeStatus(this.state, 'player');
-      if (rs.active) {
-        const ph = rs.phase === 'toBank' ? `banking $${rs.carrying}` : 'on the rounds';
-        this.uncollectedText.setText(`ROUTE: ${rs.stops} stops · ${ph} · uncollected $${p.uncollected} (guard it!)`).setColor(NOIR_PALETTE.brass);
-      } else if (p.uncollected > 0) {
-        this.uncollectedText.setText(`Uncollected $${p.uncollected} — [C] collect once, or [T] set an auto-route`).setColor(NOIR_PALETTE.brass);
+    // ── TOP BAR ──
+    const barX = 8, barY = 6, barW = W - 16, barH = 50;
+    this.decoFrame(g, barX, barY, barW, barH);
+    // a hairline brass deco rule under the title row
+    g.lineStyle(1, PAL.brass, 0.25).beginPath(); g.moveTo(barX + 8, barY + 21); g.lineTo(barX + barW - 8, barY + 21); g.strokePath();
+
+    const heatCellW = 300;
+    const fixed: Record<string, { v: string; c: string; w: number }> = {
+      clean: { v: `$${p.cleanCash}`, c: NOIR_PALETTE.brass, w: 118 },
+      dirty: { v: `$${p.dirtyCash}`, c: p.dirtyCash > 4000 ? '#d98a6a' : NOIR_PALETTE.bone, w: 118 },
+      net: { v: net >= 0 ? `+$${net}` : `-$${Math.abs(net)}`, c: net >= 0 ? SPEC.cashGreen : SPEC.danger, w: 120 },
+      heat: { v: '', c: NOIR_PALETTE.bone, w: heatCellW },
+      crew: { v: `${p.crew}`, c: NOIR_PALETTE.bone, w: 64 },
+      week: { v: `${hud.week} · ${hud.weekCountdownLabel}`, c: NOIR_PALETTE.bone, w: 150 },
+    };
+    let cx = barX + 14;
+    for (const cell of this.topCells) {
+      const def = fixed[cell.key];
+      cell.x = cx; cell.w = def.w;
+      cell.label.setPosition(cx, barY + 7); // label text is fixed (set at creation)
+      if (cell.key === 'heat') {
+        cell.value.setVisible(false);
+        this.drawHeatMeter(g, cx, barY, def.w, p.heat, p.federalExposure, p.federalTier);
       } else {
-        this.uncollectedText.setText('Uncollected $0 — extort more storefronts, then [T] route it').setColor(NOIR_PALETTE.fog);
+        cell.value.setText(def.v).setColor(def.c).setPosition(cx, barY + 22).setVisible(true);
       }
+      this.hudRegions.push({ x: cx - 6, y: barY, w: def.w, h: barH, explain: this.cellExplain(cell.key, p, net) });
+      cx += def.w + 10;
     }
 
-    // week countdown bar
-    if (this.weekBar) {
-      this.weekBar.clear();
-      this.weekBar.fillStyle(PAL.charcoal, 1).fillRect(12, 92, 316, 6);
-      this.weekBar.fillStyle(PAL.brass, 1).fillRect(12, 92, 316 * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 6);
+    // PHASE chip at the bar's right end
+    const phase = matchPhase(this.state);
+    if (this.phaseChip) {
+      const pc = phase.phase === 'endgame' ? SPEC.danger : phase.phase === 'establish' ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
+      this.phaseChip.setText(`◆ ${phase.phase.toUpperCase()}`).setColor(pc).setPosition(barX + barW - 14, barY + barH / 2);
     }
-    // federal exposure ladder bar — reddens by tier at 50/70/85 (spec colours).
-    if (this.fedBar) {
-      const x = 12, y = 110, w = 316;
-      this.fedBar.clear();
-      this.fedBar.fillStyle(PAL.charcoal, 1).fillRect(x, y, w, 8);
-      this.fedBar.fillStyle(hexNum(federalBarColor(p.federalTier)), 1).fillRect(x, y, w * Phaser.Math.Clamp(p.federalExposure / 100, 0, 1), 8);
-      this.fedBar.lineStyle(1, hexNum(SPEC.bone), 0.7);
-      for (const mk of [FED_T1, FED_T2, FED_T3]) {
-        this.fedBar.beginPath(); this.fedBar.moveTo(x + (w * mk) / 100, y - 2); this.fedBar.lineTo(x + (w * mk) / 100, y + 10); this.fedBar.strokePath();
-      }
+    // week progress sliver along the bottom edge of the top bar
+    g.fillStyle(PAL.brass, 0.85).fillRect(barX + 1, barY + barH - 2, (barW - 2) * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 2);
+
+    // ── FOUR CHANNEL DIALS (left, under the top bar) ──
+    this.drawChannels(g, p);
+
+    // ── ROUTE PILL (prominent, under the channels) ──
+    this.drawRoutePill(g, p);
+
+    // ── CONTEXT CARD (selected thug) ──
+    this.drawContextCard(g);
+
+    // ── THE WIRE frame (behind the feed, under the top bar) ──
+    if (this.feedVisible) {
+      const fw = 306, fx = W - fw - 6, fy = 60;
+      this.decoFrame(g, fx, fy, fw, 184, PAL.brass, 0.5);
+      if (now < this.wireFlashUntil) { g.lineStyle(2, hexNum(SPEC.danger), 0.4 + 0.4 * Math.abs(Math.sin(now / 120))); g.strokeRect(fx + 1, fy + 1, fw - 2, 182); }
     }
-    // Klaxon vignette: at tier 3 (exposure ≥ 85) the screen edge pulses danger-red.
+
+    // Klaxon vignette + warning banner + audio seams
     this.refreshKlaxon(p.federalTier >= 3);
-    this.hudPanel.setColor(p.federalTier >= 2 || danger ? '#d98a6a' : NOIR_PALETTE.bone);
-
     const warn = p.federalTier > 0 ? this.fedLine(p.federalTier) : danger ? 'A COLLECTOR IS UNDER THREAT — get it to HQ' : null;
     if (this.warningBanner) {
       this.warningBanner.setVisible(!!warn);
-      if (warn) this.warningBanner.setText(`⚠ ${warn}`).setPosition(12, this.scale.height - 26);
+      if (warn) this.warningBanner.setText(`⚠ ${warn}`).setPosition(12, this.scale.height - 26).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280)));
     }
-    if (hud.shocks.length > 0 && this.statusText && this.statusText.text.indexOf('shock') === -1) {
-      // surface shocks alongside selection status
+    this.detectHudBeats(p, phase.phase);
+    this.lastHeat = p.federalExposure; // for the next frame's heat-direction arrow
+    void shockFlavor; void ISO_TILE_HEIGHT; void heatLabel;
+  }
+
+  /** RTS-23 — a LABELED heat meter against the 50/70/85 federal ladder: filled to exposure, ticks
+   * at the thresholds, a direction arrow, and a "raid at 85" caption. */
+  private drawHeatMeter(g: Phaser.GameObjects.Graphics, x: number, barY: number, w: number, _heat: number, exposure: number, tier: number): void {
+    const my = barY + 28, mh = 9, mw = w - 8;
+    g.fillStyle(PAL.charcoal, 1).fillRect(x, my, mw, mh);
+    g.fillStyle(hexNum(federalBarColor(tier)), 1).fillRect(x, my, mw * Phaser.Math.Clamp(exposure / 100, 0, 1), mh);
+    g.lineStyle(1, hexNum(SPEC.bone), 0.75);
+    for (const mk of [FED_T1, FED_T2, FED_T3]) { g.beginPath(); g.moveTo(x + (mw * mk) / 100, my - 2); g.lineTo(x + (mw * mk) / 100, my + mh + 2); g.strokePath(); }
+    const dir = exposure > this.lastHeat + 0.5 ? '▲' : exposure < this.lastHeat - 0.5 ? '▼' : '◆';
+    const cap = tier >= 3 ? 'RAID AT 85 — BUST IMMINENT' : tier >= 2 ? 'agents watching (raid at 85)' : tier >= 1 ? 'questions asked (raid at 85)' : 'cool — raid at 85';
+    if (this.heatCaption) this.heatCaption.setText(`exp ${exposure}/100 ${dir} · ${cap}`).setColor(tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 2);
+  }
+
+  private cellExplain(key: string, p: { cleanCash: number; dirtyCash: number; weeklyUpkeep: number; crew: number; heat: number }, net: number): string {
+    switch (key) {
+      case 'clean': return 'CLEAN $ — laundered, safe money you can freely spend.';
+      case 'dirty': return 'DIRTY $ — crime proceeds. A big hoard radiates heat; launder it.';
+      case 'net': return `NET /wk — income minus upkeep ($${p.weeklyUpkeep}) & bribes. ${net >= 0 ? 'in the black.' : 'the bleed is winning — extort more or cut costs.'}`;
+      case 'heat': return 'HEAT vs the FEDERAL LADDER (50/70/85). At 85 a raid can bust you — grease The Beat / launder / cool off.';
+      case 'crew': return 'CREW — your thugs. More = more extortion, defense, and muscle for a hit (need 12 strength).';
+      case 'week': return 'WEEK — the settlement clock. Income accrues each week; next settles when the sliver fills.';
+      default: return '';
     }
-    void shockFlavor; void ISO_TILE_HEIGHT;
+  }
+
+  /** RTS-23 — the FOUR CHANNELS as labeled dials: level $/wk · what it buys · the [G] bump cost. */
+  private drawChannels(g: Phaser.GameObjects.Graphics, _p: unknown): void {
+    const r = this.channelPanelRect; r.y = 64;
+    this.decoFrame(g, r.x, r.y, r.w, r.h);
+    this.channelTitle?.setPosition(r.x + 8, r.y + 6);
+    const defs: { ch: BribeChannel; name: string; buys: string }[] = [
+      { ch: 'police', name: 'THE BEAT', buys: 'fewer raids' },
+      { ch: 'judges', name: 'THE BENCH', buys: 'survive a bust · −raid heat' },
+      { ch: 'politicians', name: 'CITY HALL', buys: 'heat cools faster · hit cover' },
+      { ch: 'feds', name: 'THE BUREAU', buys: 'fed shield · unlocks lockout' },
+    ];
+    const bribes = this.state.player.bribes;
+    defs.forEach((d, i) => {
+      const row = this.channelRows[i]; if (!row) return;
+      const y = r.y + 26 + i * 22;
+      const lvl = bribes[d.ch] ?? 0;
+      // a small filled "dial" pip ladder (0..5 segments by level/10)
+      const seg = Phaser.Math.Clamp(Math.round(lvl / 5), 0, 6);
+      const dotsX = r.x + 9;
+      for (let s = 0; s < 6; s++) { g.fillStyle(s < seg ? PAL.brass : PAL.charcoal, s < seg ? 0.95 : 0.7).fillRect(dotsX + s * 7, y + 3, 5, 9); }
+      row.setText(`${d.name}  $${lvl}/wk  ·  ${d.buys}`).setColor(lvl > 0 ? NOIR_PALETTE.bone : NOIR_PALETTE.fog).setPosition(dotsX + 48, y);
+      this.hudRegions.push({ x: r.x, y: y - 2, w: r.w, h: 20, explain: `${d.name}: $${lvl}/wk buys ${d.buys}. [G] bumps the next channel +$10/wk.` });
+    });
+  }
+
+  /** RTS-23 — the prominent ROUTE pill: stops · banking $X · rob-risk. */
+  private drawRoutePill(g: Phaser.GameObjects.Graphics, p: { uncollected: number }): void {
+    if (!this.routePill) return;
+    const r = this.channelPanelRect; const x = r.x, y = r.y + r.h + 8, w = r.w;
+    const rs = routeStatus(this.state, 'player');
+    const hot = dispatchThreat(this.state, this.layout, 'player').hot;
+    let text: string, col: string, accent: number = PAL.brass;
+    if (rs.active) {
+      const ph = rs.phase === 'toBank' ? `BANKING $${rs.carrying}` : 'on the rounds';
+      const risk = hot ? '⚠ ROB-RISK — GUARD IT' : 'route clear';
+      text = `◆ ROUTE · ${rs.stops} stops · ${ph} · ${risk}`;
+      col = hot ? SPEC.danger : NOIR_PALETTE.brass; if (hot) accent = hexNum(SPEC.danger);
+    } else if (p.uncollected > 0) {
+      text = `◆ Uncollected $${p.uncollected} — [C] collect · [T] auto-route it`; col = NOIR_PALETTE.brass;
+    } else {
+      text = '◆ No route — extort fronts, then [T] sets an auto-collector'; col = NOIR_PALETTE.fog;
+    }
+    this.decoFrame(g, x, y, w, 26, accent, 0.8);
+    this.routePill.setText(text).setColor(col).setPosition(x + 8, y + 6);
+    if (rs.active && hot) g.lineStyle(2, hexNum(SPEC.danger), 0.4 + 0.4 * Math.abs(Math.sin(this.time.now / 130))).strokeRect(x + 1, y + 1, w - 2, 24);
+    this.hudRegions.push({ x, y, w, h: 26, explain: 'Your automated collection route. The collector banks takings itself — but it can still be robbed; guard the route when ⚠ ROB-RISK shows.' });
+  }
+
+  /** RTS-23 — the CONTEXT card: the selected thug's card + what it can do. */
+  private drawContextCard(g: Phaser.GameObjects.Graphics): void {
+    if (!this.ctxCardTitle || !this.ctxCardBody) return;
+    const id = this.selection.ids[0];
+    const view = id ? this.units.find((u) => u.unit.id === id) : undefined;
+    const insp = id ? inspectUnit(this.state, id) : null;
+    if (!view || !insp) { this.ctxCardTitle.setVisible(false); this.ctxCardBody.setVisible(false); return; }
+    const w = 250, h = 76, x = 12, y = this.scale.height - h - 12;
+    this.decoFrame(g, x, y, w, h);
+    const member = crewReadout(this.state.player).find((m) => m.id === id);
+    const role = view.unit.role === 'collector' ? 'collector' : view.faction === 'player' ? 'button man' : 'rival';
+    this.ctxCardTitle.setText(`▣ ${member?.name ?? insp.kind.toUpperCase()} · ${role}`).setColor(NOIR_PALETTE.brass).setPosition(x + 8, y + 6).setVisible(true);
+    const more = this.selection.ids.length > 1 ? `  (+${this.selection.ids.length - 1} more selected)` : '';
+    const traits = member && member.traitLabels.length ? ' · ' + member.traitLabels.join(', ') : '';
+    const body = member
+      ? [`skill ${member.skill} · loyalty ${member.loyalty} (${member.status})${traits}`,
+         'RIGHT-CLICK a shop → EXTORT / ATTACK · right-click street → move' + more]
+      : [`${insp.vulnerable ? `carrying $${insp.carrying}` : 'on the move'}`, 'guard your collectors — a rival enforcer robs them' + more];
+    this.ctxCardBody.setText(body.join('\n')).setColor(NOIR_PALETTE.bone).setPosition(x + 8, y + 26).setVisible(true);
+  }
+
+  // ── RTS-23 audio-feedback seams ──────────────────────────────────────────────────────────────
+
+  /** A single discrete event signal a future SFX/VO layer can hook onto. Drives a HUD beat now. */
+  private signalBeat(kind: 'extort' | 'banked' | 'ambush' | 'federal' | 'unrest' | 'phase' | 'attack' | 'capture', label?: string): void {
+    this.wireFlashUntil = this.time.now + 900; // the Wire frame pulses on any major beat
+    if (label) this.setStatus(label);
+    // (hook point) future: this.sound.play(kind)
+    void kind;
+  }
+
+  /** Watch state for major beats (new alert on the Wire, a phase change) and emit a signal. */
+  private detectHudBeats(p: { federalTier: number }, phase: string): void {
+    const last = this.state.incidents[this.state.incidents.length - 1];
+    if (last && last.seq !== this.lastIncidentSeq) {
+      this.lastIncidentSeq = last.seq;
+      if (last.severity === 'danger' || last.severity === 'warning') this.wireFlashUntil = this.time.now + 900;
+    }
+    if (this.lastPhase && this.lastPhase !== phase) {
+      this.flashPhaseChange(phase);
+      this.signalBeat('phase');
+    }
+    this.lastPhase = phase;
+    void p;
+  }
+
+  /** A centred banner when the match phase changes (a clear visual beat for audio/VO to hook). */
+  private flashPhaseChange(phase: string): void {
+    const label = phase === 'endgame' ? 'THE WAR IS ON — DECAPITATE A RIVAL' : phase === 'contest' ? 'YOU HOLD GROUND — CONTEST THE CITY' : 'ESTABLISH YOUR RACKET';
+    const t = this.add.text(this.scale.width / 2, 120, label, { fontFamily: NOIR_FONT, fontSize: '22px', color: phase === 'endgame' ? SPEC.danger : SPEC.brass, fontStyle: 'bold' })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(100002).setScale(0.6).setAlpha(0);
+    this.tweens.add({ targets: t, scale: 1, alpha: 1, duration: 320, ease: 'Back.Out' });
+    this.tweens.add({ targets: t, alpha: 0, y: 100, delay: 1600, duration: 600, onComplete: () => t.destroy() });
   }
 
   /** Klaxon vignette (RTS-15): a danger-red edge that pulses when a federal bust is imminent. */
@@ -1456,15 +1705,19 @@ export class IsoScene extends Phaser.Scene {
 
   private refreshFeed(): void {
     if (!this.feedVisible || this.feedLines.length === 0) return;
-    const right = this.scale.width - 12;
-    this.feedTitle?.setPosition(right, 12);
+    const right = this.scale.width - 18;
+    // RTS-23: The Wire sits in its framed panel UNDER the top bar (top-right). Title pulses on a
+    // fresh alert (an audio seam).
+    const flashing = this.time.now < this.wireFlashUntil;
+    this.feedTitle?.setPosition(right, 66).setColor(flashing ? SPEC.danger : NOIR_PALETTE.brass)
+      .setText(flashing ? 'THE WIRE  [L]  ◂ NEW' : 'THE WIRE  [L]');
     const recent: IncidentRecord[] = recentIncidents(this.state, this.feedLines.length);
     for (let i = 0; i < this.feedLines.length; i++) {
       const line = this.feedLines[i];
       const rec = recent[i];
-      line.setPosition(right, 32 + i * 16);
+      line.setPosition(right, 86 + i * 15);
       if (!rec) { line.setText(''); continue; }
-      const sum = rec.summary.length > 50 ? rec.summary.slice(0, 49) + '…' : rec.summary;
+      const sum = rec.summary.length > 46 ? rec.summary.slice(0, 45) + '…' : rec.summary;
       line.setText(`[w${rec.week}] ${sum}`).setColor(IsoScene.feedColor(rec.severity));
     }
   }
@@ -1487,7 +1740,7 @@ export class IsoScene extends Phaser.Scene {
       'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
       '',
       'CAMERA — move around and read the city',
-      '  WASD / arrows pan · drag to pan · mouse-wheel zoom · [F] centre on selection',
+      '  WASD / arrows pan · drag to pan · wheel zoom-to-cursor · [F] follow selection · [Z] frame whole city',
       '',
       'MOUSE — drive your thugs',
       '  LEFT-CLICK a thug to select (SHIFT-click adds more)',

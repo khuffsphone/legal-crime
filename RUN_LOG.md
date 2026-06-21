@@ -1899,3 +1899,52 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   turf only in the war phase; earningBusinesses read). /src/sim Phaser-free invariant green; no
   Gangsters conflations; the 555 base green.
 - Commit: rts22: Readability, Controls & Extort-First Economy — green
+
+## RTS-23 — HUD/UI Elevation & Camera Polish — GREEN  (2026-06-21)
+- Summary: Took the interface from "works" to legible, characterful, RTS-grade — Gangsters' depth +
+  City of Gangsters' clarity + Legal Crime's 1920s noir. All Phaser-side render/camera/input; NO sim
+  logic added, so tick/applyCommand untouched and the 565-test base stands (HUD reads existing pure,
+  already-tested selectors: federalExposure/fedWarningTier, playerWeeklyNet, matchPhase, routeStatus,
+  crewReadout). /src/sim Phaser-free; four channels + 50/70/85 ladder kept; no Gangsters conflations.
+  NOTE: UX_UI_DIRECTION.md did not exist and no HUD spec was pasted — built to the brief's inline
+  anatomy and CREATED docs-style UX_UI_DIRECTION.md as the record (flagged).
+  A) RTS-22 NIT FIXES (done first):
+     1. ZOOM-TO-CURSOR — the wheel now captures the world point under the cursor and the eased zoom
+        keeps it pinned (cam.getWorldPoint re-anchor each frame), so zooming no longer shoves the
+        city into the left third. (was: anchored to screen-centre.)
+     2. [Z] FRAME-CITY — one press fits + centres all 9 districts (computes the iso bounds from the
+        four map corners, sets a clamped zoom with margin, centres).
+     3. ISO HIT-TEST — businessAtScreen() makes a right-click/hover hit a building's BASE TILE even
+        when you click its drawn ROOF (tests the base tile, else any building whose column contains
+        the point; frontmost wins). Used for the right-click menu AND the hover tooltip.
+     4. PROMINENT ROUTE PILL — a framed status pill: "◆ ROUTE · N stops · BANKING $X · ⚠ ROB-RISK /
+        route clear", reddening + pulsing when the route collector is in danger.
+  B) HUD ELEVATION (art-deco brass frames via a shared decoFrame helper; every number labeled +
+     direction-aware + hover-inspectable):
+     • TOP BAR — labeled cells CLEAN $ / DIRTY $ (warns when hoard is fat) / NET ±/wk (green or
+       danger by sign) / a LABELED HEAT METER vs the 50/70/85 ladder (fill = exposure, threshold
+       ticks, ▲/▼/◆ direction, "RAID AT 85 — BUST IMMINENT" caption) / CREW / WEEK + countdown, a
+       PHASE chip (ESTABLISH/CONTEST/ENDGAME), and a week-progress sliver.
+     • THE FOUR CHANNELS as labeled DIALS — name · level $X/wk · a pip ladder · what each concretely
+       BUYS (The Beat→fewer raids · The Bench→survive a bust/−raid heat · City Hall→heat cools/hit
+       cover · The Bureau→fed shield/unlocks lockout) · the [G] bump.
+     • CONTEXT CARD — the selected thug's card (name · skill · loyalty/status · traits) + its valid
+       verbs (right-click a shop → EXTORT/ATTACK).
+     • THE WIRE — reframed as the single clear alert feed (framed, severity-coloured); its title
+       pulses "◂ NEW" on a fresh danger/warning alert.
+     • HOVER EXPLAINS — every top-bar cell + channel + route pill registers a screen-space region
+       whose plain-English explanation shows on hover (the anti-Gangsters fix). The reflow moved the
+       Wire/objective/standings/banners below the full-width top bar.
+  C) AUDIO-FEEDBACK SEAMS — a single discrete signalBeat(kind) hook (a future SFX/VO layer reads it)
+     fired at each major beat (extort confirm, cash banked, route ambush, attack, phase change),
+     plus detectHudBeats() that pulses the Wire on any new danger/warning incident and a centred
+     phase-change banner ("THE WAR IS ON — DECAPITATE A RIVAL" etc.) — discrete visual beats audio
+     can hook even though no audio ships now.
+- Files: src/scenes/IsoScene.ts (camera zoom-to-cursor + frame-city + businessAtScreen; the whole
+  elevated HUD — top bar / heat meter / channel dials / route pill / context card / Wire frame +
+  pulse / hud-region hover / signalBeat + phase beats; legend + status hint). NEW UX_UI_DIRECTION.md.
+  No /src/sim changes.
+- Gate: typecheck ✅  build ✅  test ✅ (565 — unchanged; HUD/camera are render-only, no new sim
+  logic to assert; the existing pure selectors the HUD reads are already covered). /src/sim
+  Phaser-free; no Gangsters conflations.
+- Commit: rts23: HUD/UI Elevation & Camera Polish — green
