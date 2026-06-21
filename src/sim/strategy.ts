@@ -7,7 +7,14 @@
 // no-op, so it only comes alive on the big contested city.
 
 import {
+  AGGRO_DECAY,
+  AGGRO_HQ_STRIKE,
+  ASSASSINATE_MIN_STRENGTH,
+  HEAT_MAX,
+  LOCKOUT_BLEED_CASH,
+  LOCKOUT_BLEED_HEAT,
   POLITICIAN_DETERRENCE,
+  RIVAL_HQ_STRIKE_DAMAGE,
   RIVAL_PUSH_BASE,
   RIVAL_PUSH_PER_STRENGTH,
   STRATEGY_PULSE_SECONDS,
@@ -16,6 +23,8 @@ import { districtIdentity } from './city';
 import { muscleInDistrict } from './commands';
 import { familyStrength } from './conflict';
 import { allBusinesses, businessEarner } from './economy';
+import { damageHQ } from './endgame';
+import { clampDirty } from './laundering';
 import { controlOf, districtHolder } from './territory';
 import { pushPresence, districtsHeld, type PushResult } from './territoryWar';
 import { allFamilies, type District, type Family, type GameState } from './types';
@@ -43,10 +52,12 @@ export function targetScore(state: GameState, rival: Family, d: District): numbe
   let score = ident.wealth * 10 + (100 - topOther) * 0.4;
   if (holder === state.player.id) {
     // Contesting the player: an UNDEFENDED, weakly-held block is the juiciest target of all —
-    // expand where you're ignored. Guards make it costly; City Hall (politicians) deters it.
+    // expand where you're ignored. Guards make it costly; City Hall (politicians) deters it; a
+    // rival you've attacked (aggro) comes for your turf (retaliation).
     const guard = muscleInDistrict(state.player, d.id);
     score += (100 - controlOf(d, state.player.id)) * 0.4 + (guard === 0 ? 14 : -guard * 2);
     score -= state.player.bribes.politicians * (POLITICIAN_DETERRENCE / 10);
+    score += (rival.aggro ?? 0) * 0.12;
   } else if (holder === null) {
     score += 8; // open ground is the easiest expansion
   }
@@ -69,9 +80,9 @@ export function rivalStrategicTarget(state: GameState, rival: Family): District 
   return best;
 }
 
-/** How hard a rival pushes — base plus a strength bonus. */
+/** How hard a rival pushes — base plus a strength bonus, sharpened by aggression (retaliation). */
 export function rivalPushAmount(rival: Family): number {
-  return Math.round(RIVAL_PUSH_BASE + familyStrength(rival) * RIVAL_PUSH_PER_STRENGTH);
+  return Math.round(RIVAL_PUSH_BASE + familyStrength(rival) * RIVAL_PUSH_PER_STRENGTH + (rival.aggro ?? 0) * 0.1);
 }
 
 // ── the telegraph (pure read) ────────────────────────────────────────────────────────────────
@@ -123,18 +134,41 @@ export interface StrategicEvent {
   pushes: PushResult[];
   captures: PushResult[];
   fallen: string[];
+  /** Rival ids that struck the PLAYER's HQ this pulse (escalation / the existential threat). */
+  hqStrikes: string[];
 }
 
-/** One strategic pulse: every living rival makes its telegraphed territorial move, then any
- * crushed rival falls out of the contest. Deterministic; mutates state. */
+/** One strategic pulse (RTS-16/17): locked-down rivals bleed and skip their move; the rest decay
+ * aggression, make their telegraphed territorial push (sharper if you've provoked them), and a
+ * strong, enraged rival STRIKES your HQ. Then any crushed rival falls out. Deterministic. */
 export function resolveStrategicPulse(state: GameState): StrategicEvent {
   const pushes: PushResult[] = [];
+  const hqStrikes: string[] = [];
   for (const rival of state.rivals) {
     if (!rival.alive) continue;
+
+    // Federal lockout: the Bureau has them pinned — they cannot expand and they bleed.
+    if ((rival.lockoutTicks ?? 0) > 0) {
+      rival.lockoutTicks = (rival.lockoutTicks ?? 0) - 1;
+      rival.cash = Math.max(0, rival.cash - LOCKOUT_BLEED_CASH);
+      rival.heat = Math.min(HEAT_MAX, rival.heat + LOCKOUT_BLEED_HEAT);
+      clampDirty(rival);
+      continue;
+    }
+
+    rival.aggro = Math.max(0, (rival.aggro ?? 0) - AGGRO_DECAY);
+
     const target = rivalStrategicTarget(state, rival);
-    if (!target) continue;
-    const res = pushPresence(state, rival.id, target.id, rivalPushAmount(rival));
-    if (res) pushes.push(res);
+    if (target) {
+      const res = pushPresence(state, rival.id, target.id, rivalPushAmount(rival));
+      if (res) pushes.push(res);
+    }
+
+    // Escalation: an enraged, strong rival strikes your HQ — the threat that can end your run.
+    if ((rival.aggro ?? 0) >= AGGRO_HQ_STRIKE && familyStrength(rival) >= ASSASSINATE_MIN_STRENGTH) {
+      damageHQ(state, state.player.id, RIVAL_HQ_STRIKE_DAMAGE);
+      hqStrikes.push(rival.id);
+    }
   }
 
   const fallen: string[] = [];
@@ -150,7 +184,7 @@ export function resolveStrategicPulse(state: GameState): StrategicEvent {
       });
     }
   }
-  return { pushes, captures: pushes.filter((p) => p.captured), fallen };
+  return { pushes, captures: pushes.filter((p) => p.captured), fallen, hqStrikes };
 }
 
 /** Advance the strategic clock by `dt`; fire a pulse for each STRATEGY_PULSE_SECONDS crossed.
@@ -161,7 +195,7 @@ export function advanceStrategy(
   dt: number,
   pulseSeconds: number = STRATEGY_PULSE_SECONDS,
 ): { pulses: number; events: StrategicEvent } {
-  const merged: StrategicEvent = { pushes: [], captures: [], fallen: [] };
+  const merged: StrategicEvent = { pushes: [], captures: [], fallen: [], hqStrikes: [] };
   if (!(dt > 0) || !(pulseSeconds > 0)) return { pulses: 0, events: merged };
   state.strategyElapsed += dt;
   let pulses = 0;
@@ -171,6 +205,7 @@ export function advanceStrategy(
     merged.pushes.push(...ev.pushes);
     merged.captures.push(...ev.captures);
     merged.fallen.push(...ev.fallen);
+    merged.hqStrikes.push(...ev.hqStrikes);
     pulses++;
   }
   return { pulses, events: merged };

@@ -1538,3 +1538,86 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   trajectory bands + allRivalsCrushed; driver integration captures + ledger territory incidents +
   legacy no-op). /src/sim Phaser-free invariant green; the 488-test base untouched and all green.
 - Commit: rts16: The Living City & The Turf War — green
+
+## RTS-17 — The Offensive & The Endgame — GREEN  (2026-06-21)
+- Summary: Gave the war a POINT. RTS-16 let you only react and grow; now you take the fight to the
+  rivals and can WIN or LOSE the city. Built as NEW PURE modules in /src/sim (offense.ts, endgame.ts)
+  plus deterministic escalation in strategy.ts, all wired through the real-time WRAPPER — tick/
+  applyCommand's settlement math is untouched, every new field is additive/default-safe, and the
+  whole layer is opt-in on the big city, so all 507 prior tests stayed green (now 525).
+  1. OFFENSIVE ACTIONS (src/sim/offense.ts, pure; seeded for combat risk) — four EARNED player
+     COMMANDS resolved in the wrapper like extort/collect, each gated and each raising the target's
+     aggro (→ retaliation):
+       • RAID a district — muscle in by force. Costs $500 + heat, needs ≥2 crew + a rival to hit.
+         Shoves player presence in (RAID_FORCE + strength/2 → can SEIZE the block) and zeroes the
+         defender's takings there; can be REPELLED by guarding muscle (seeded roll), costing a man.
+       • SABOTAGE a racket/front — interdict a rival economy. $350 + heat, ≥1 crew, target must earn
+         for a rival. A front's protection is BROKEN (extortedBy cleared, takings zeroed); an
+         operation is seeded-WRECKED (removed) or torched (uncollected zeroed).
+       • ASSASSINATE a rival Don — the decapitating blow. $1500 + heavy heat, needs ≥12 muscle.
+         Seeded success vs the rival's strength; on success the HQ takes ASSASSINATE_HQ_DAMAGE 45 and
+         may FALL; a botched hit costs you a man.
+       • LOCKOUT — sic the Bureau on a rival: pins them for LOCKOUT_DURATION pulses.
+  2. THE FOUR CHANNELS UNLOCK OFFENSE — the canon bribery channels gate/empower the bigger moves:
+       • The Bench (judges) CUTS raid heat (RAID_BENCH_MITIGATION per point, capped 0.7).
+       • City Hall (politicians) buys political COVER on a hit (ASSASSINATE_CITYHALL_COVER, cap 0.6).
+       • The Bureau (feds) UNLOCKS the lockout (needs bribes.feds ≥ LOCKOUT_BUREAU_REQ 20).
+       • Muscle (crew strength) UNLOCKS assassination (ASSASSINATE_MIN_STRENGTH 12).
+     So offense is funded through the economy and earned through the channels you already invest in.
+  3. RIVAL RESPONSE & ESCALATION (src/sim/strategy.ts, deterministic) — every attack raises the
+     target's AGGRO. On the strategic pulse an aggro'd rival pushes HARDER and targets YOU more
+     aggressively (aggro feeds targetScore + rivalPushAmount); an enraged, strong rival STRIKES YOUR
+     HQ (RIVAL_HQ_STRIKE_DAMAGE) when aggro ≥ AGGRO_HQ_STRIKE. Aggro decays over time, so a quiet
+     spell cools them off. A locked-out rival is FROZEN (skips its pulse) and bled cash + heat while
+     pinned. All telegraphed via the standings panel (per-rival HQ% + 🔒 lock state).
+  4. WIN / LOSE CONDITIONS (src/sim/endgame.ts, pure) — evaluateEndgame(state) reads the board each
+     wrapper step and sets GameStatus:
+       • WIN — last family standing (all rivals dead) OR city DOMINANCE (hold ≥ TURF_DOMINANCE 60%).
+       • LOSE — your HQ destroyed (hqIntegrity ≤ 0) OR total COLLAPSE (no crew, no cash, no turf —
+         bankrupt-and-routed). Mutiny/desertion feed the collapse via the existing crew system.
+     Elimination cascades: damageHQ at ≤0 → eliminateFamily (alive=false, logs family-eliminated);
+     a 'game-over' event is logged and projected into The Wire.
+  5. LEGIBLE & STRATEGIC ENDGAME — rivalWeakness(state) ranks rivals most-vulnerable-first (battered
+     HQ + broke + crewless + little turf); weakestRival picks the kill. IsoScene surfaces it: YOUR
+     HQ %, each rival's HQ % and lock state, the weakest-target nudge, the [1]raid/[2]sabo/[3]hit/
+     [4]lock controls, an "OUR HQ IS UNDER ATTACK" telegraph + shake on a rival strike, and a
+     full-screen end-state readout ("YOU TOOK THE CITY" / "THE CITY TOOK YOU") with the game-over line.
+  Driver: updateAndObserve now also runs evaluateEndgame and returns endgame: EndgameResult | null
+  alongside the strategy events; offense + hq-struck + family-eliminated + game-over are projected
+  into The Wire (offense / territory / family_fallen / game_over incident types).
+- Files: src/sim/offense.ts, src/sim/endgame.ts (both new, pure), src/sim/strategy.ts (+aggro-driven
+  escalation, HQ strikes, lockout freeze/bleed in resolveStrategicPulse; hqStrikes in StrategicEvent),
+  src/sim/realtime.ts (+evaluateEndgame folded into updateAndObserve; +endgame in ObserveResult),
+  src/sim/types.ts (+Family.hqIntegrity/lockoutTicks/aggro, all optional), src/sim/constants.ts (+raid/
+  sabotage/assassinate/lockout/aggro/HQ tunables), src/sim/ledger.ts (+offense incident type + mappings),
+  src/sim/index.ts (exports), src/scenes/IsoScene.ts (offense commands [1-4], HQ-strike telegraph,
+  endgame overlay, standings panel HQ%/lock/weakest readout); new tests/offensive.test.ts. tick/
+  applyCommand settlement logic unchanged.
+
+═══ OFFENSE & ENDGAME API — THE RTS-17 PURE CONTRACT ═══
+- OFFENSE (src/sim/offense.ts; seeded for combat): canRaid/canSabotage/canAssassinate/canLockout
+  (state,id) → Gate { ok, reason }; resolveRaid → { ok, repelled?, captured? }; resolveSabotage →
+  { ok, destroyed? }; resolveAssassinate → { ok, success?, eliminated? }; resolveLockout → { ok }.
+- ENDGAME (src/sim/endgame.ts; deterministic): hqIntegrityOf(family) (?? HQ_MAX); damageHQ(state,
+  familyId, amount) → { destroyed } (eliminates at ≤0); eliminateFamily(state,family,cause);
+  playerCollapsed(state); evaluateEndgame(state) → EndgameResult | null (sets status won/lost);
+  rivalWeakness(state) → RivalWeakness[] (most vulnerable first); weakestRival(state).
+- ESCALATION (src/sim/strategy.ts): resolveStrategicPulse → { pushes, captures, fallen, hqStrikes }.
+  CONSTANTS: RAID_COST 500/HEAT 14/MIN_CREW 2/FORCE 22/BENCH_MITIGATION 0.02/BENCH_CAP 0.7/REPELLED_BASE
+  0.15 · SABOTAGE_COST 350/HEAT 9/MIN_CREW 1/DESTROY_CHANCE 0.5 · ASSASSINATE_COST 1500/HEAT 30/MIN_
+  STRENGTH 12/HQ_DAMAGE 45/CITYHALL_COVER 0.02/CAP 0.6 · LOCKOUT_COST 800/BUREAU_REQ 20/DURATION 4/
+  BLEED_CASH 200/BLEED_HEAT 6 · AGGRO_ON_ATTACK 40/DECAY 8/HQ_STRIKE 60 · RIVAL_HQ_STRIKE_DAMAGE 12 ·
+  HQ_MAX 100.
+- DRIVER: updateAndObserve(...) → { result, strategy: StrategicEvent, endgame: EndgameResult | null,
+  state }.
+- Decisions: endgame + escalation are DETERMINISTIC (NO RNG) so win/lose detection and retaliation are
+  fully testable; offense uses the serialized state.rngState cursor for combat risk; all of it lives in
+  the real-time WRAPPER so tick/applyCommand are untouched; hqIntegrity/lockoutTicks/aggro are additive
+  default-safe Family fields; every system asserted; scene render human-validated.
+- Gate: typecheck ✅  build ✅  test ✅ (525 total; +18 offensive: gating earned/channel-aware; raid
+  cost/heat/Bench-mitigation/force; sabotage break-front + wreck-op; damageHQ + elimination cascade;
+  assassinate cost/heat/CityHall-cover/success-or-man-lost; lockout set + freeze + bleed; rival HQ-
+  strike escalation; evaluateEndgame win-last-standing/win-dominance/lose-hq/lose-collapse/null-while-
+  live; rivalWeakness/weakestRival; driver offense+endgame flow + ledger projection). /src/sim Phaser-
+  free invariant green; the 507-test base untouched and all green.
+- Commit: rts17: The Offensive & The Endgame — green

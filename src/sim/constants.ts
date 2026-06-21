@@ -198,6 +198,41 @@ export const RIVAL_PUSH_BASE = 12; // base control a rival pushes into a target 
 export const RIVAL_PUSH_PER_STRENGTH = 0.4; // extra push per point of family strength
 export const POLITICIAN_DETERRENCE = 6; // City Hall (politicians) bribe deters pushes on your turf
 export const TURF_DOMINANCE = 0.6; // fraction of districts that reads as "dominant" in the standings
+
+// RTS-17 — the offensive. Each player attack costs money + crew and draws heat; the canon four
+// channels gate or ease the bigger moves. Tuned so offense is an earned strategic choice.
+export const RAID_COST = 500; // cash to muscle into a rival district by force
+export const RAID_HEAT = 14; // heat a raid draws (before The Bench mitigation)
+export const RAID_MIN_CREW = 2; // crew needed to mount a raid
+export const RAID_FORCE = 22; // control a raid shoves into the district
+export const RAID_BENCH_MITIGATION = 0.02; // heat cut per The Bench (judges) point, capped
+export const RAID_BENCH_CAP = 0.7; // max raid-heat reduction from The Bench
+export const RAID_REPELLED_BASE = 0.15; // base chance a raid is repelled (rises with rival guard)
+
+export const SABOTAGE_COST = 350;
+export const SABOTAGE_HEAT = 9;
+export const SABOTAGE_MIN_CREW = 1;
+export const SABOTAGE_DESTROY_CHANCE = 0.5; // chance a sabotaged operation is wrecked outright
+
+export const ASSASSINATE_COST = 1500; // the decapitating blow is expensive
+export const ASSASSINATE_HEAT = 30; // ...and loud (before City Hall political cover)
+export const ASSASSINATE_MIN_STRENGTH = 12; // muscle enables the hit
+export const ASSASSINATE_HQ_DAMAGE = 45; // HQ integrity destroyed on a successful strike
+export const ASSASSINATE_CITYHALL_COVER = 0.02; // heat cut per City Hall point, capped
+export const ASSASSINATE_CITYHALL_CAP = 0.6;
+
+export const LOCKOUT_COST = 800;
+export const LOCKOUT_BUREAU_REQ = 20; // The Bureau (feds) investment needed to drop the dime
+export const LOCKOUT_DURATION = 4; // strategic pulses a rival stays locked down
+export const LOCKOUT_BLEED_CASH = 200; // cash a locked rival loses per pulse
+export const LOCKOUT_BLEED_HEAT = 6; // heat a locked rival gains per pulse
+
+// Rival retaliation / escalation (RTS-17).
+export const AGGRO_ON_ATTACK = 40; // aggression a rival gains when you hit it
+export const AGGRO_DECAY = 8; // aggression shed per strategic pulse
+export const AGGRO_HQ_STRIKE = 60; // aggression above which a strong rival strikes YOUR HQ
+export const RIVAL_HQ_STRIKE_DAMAGE = 12; // HQ integrity a rival strike costs you
+export const HQ_MAX = 100;
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)

@@ -171,6 +171,33 @@ export {
   type CityStanding,
 } from './contest';
 export {
+  canRaid,
+  canSabotage,
+  canAssassinate,
+  canLockout,
+  resolveRaid,
+  resolveSabotage,
+  resolveAssassinate,
+  resolveLockout,
+  type Gate,
+  type RaidResult,
+  type SabotageResult,
+  type AssassinateResult,
+  type LockoutResult,
+} from './offense';
+export {
+  hqIntegrityOf,
+  damageHQ,
+  eliminateFamily,
+  playerCollapsed,
+  evaluateEndgame,
+  rivalWeakness,
+  weakestRival,
+  type EndKind,
+  type EndgameResult,
+  type RivalWeakness,
+} from './endgame';
+export {
   recordIncident,
   harvestIncidents,
   isLedgerKind,

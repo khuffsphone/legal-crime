@@ -65,6 +65,15 @@ export interface Family {
   fedImminentTicks: number;
   alive: boolean; // boss alive; false => family eliminated
   gangsters: Gangster[];
+  /** HQ integrity 0..100 (RTS-17). Absent ⇒ full (100). Assassination/HQ strikes reduce it; at
+   * 0 the family's HQ is destroyed and the family is eliminated. Additive, default-safe. */
+  hqIntegrity?: number;
+  /** Federal lockout pulses remaining (RTS-17) — a rival under a Bureau lockout cannot expand and
+   * bleeds. Absent ⇒ 0. */
+  lockoutTicks?: number;
+  /** Aggression toward the player (RTS-17), raised by being attacked and decaying over pulses —
+   * drives retaliation (harder pushes onto your turf, HQ strikes). Absent ⇒ 0. */
+  aggro?: number;
   /** Interpersonal ties between crew members (RTS-14). Absent ⇒ none; a wronged member's ally
    * loses heart too. Additive — default-absent so prior states are byte-identical. */
   ties?: CrewTie[];

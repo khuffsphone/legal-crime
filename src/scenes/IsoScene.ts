@@ -55,6 +55,18 @@ import {
   cityStanding,
   telegraphedPushes,
   districtHolder,
+  canRaid,
+  resolveRaid,
+  canSabotage,
+  resolveSabotage,
+  canAssassinate,
+  resolveAssassinate,
+  canLockout,
+  resolveLockout,
+  weakestRival,
+  hqIntegrityOf,
+  allBusinesses,
+  businessEarner,
   type GameState,
   type MapLayout,
   type Selection,
@@ -138,6 +150,7 @@ export class IsoScene extends Phaser.Scene {
   private strategyPanel?: Phaser.GameObjects.Text;
   private strategyTitle?: Phaser.GameObjects.Text;
   private pressureBanner?: Phaser.GameObjects.Text;
+  private endgameShown = false;
   private selection: Selection = emptySelection();
   private pressX = 0;
   private pressY = 0;
@@ -371,7 +384,14 @@ export class IsoScene extends Phaser.Scene {
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) this.flashTerritory(cap.districtId, cap.before === 'player');
     for (const fid of obs.strategy.fallen) this.setStatus(`${fid} has been driven out of the city`);
+    // RTS-17: a rival struck our HQ — telegraph the blow.
+    if (obs.strategy.hqStrikes.length > 0) {
+      this.cameras.main.shake(220, 0.006);
+      this.setStatus('OUR HQ IS UNDER ATTACK');
+    }
     this.state = harvestIncidents(this.state);
+    // RTS-17: the contest resolved — surface the win/lose readout.
+    if (obs.endgame || this.state.status !== 'playing') this.showEndgame();
 
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
     const now = this.time.now;
@@ -650,6 +670,69 @@ export class IsoScene extends Phaser.Scene {
     this.setStatus(paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`);
   }
 
+  // ── the offensive (RTS-17) ───────────────────────────────────────────────────────────────
+
+  /** [1] RAID the first rival-held/contested district by force. */
+  private commandRaid(): void {
+    const target = this.state.districts.find((d) => { const h = districtHolder(d); return !!h && h !== 'player'; })
+      ?? this.state.districts.find((d) => Object.entries(d.control).some(([f, v]) => f !== 'player' && v > 0));
+    if (!target) { this.setStatus('no rival turf to raid'); return; }
+    const g = canRaid(this.state, target.id);
+    if (!g.ok) { this.setStatus(`RAID ${target.name}: ${g.reason}`); return; }
+    const res = resolveRaid(this.state, target.id);
+    this.state = harvestIncidents(this.state);
+    this.flashTerritory(target.id, false);
+    this.setStatus(res.repelled ? `raid on ${target.name} was REPELLED` : `RAID on ${target.name}!`);
+  }
+
+  /** [2] SABOTAGE the first rival racket — interdict their economy. */
+  private commandSabotage(): void {
+    const biz = allBusinesses(this.state).find((b) => { const e = businessEarner(b); return !!e && e !== 'player'; });
+    if (!biz) { this.setStatus('no rival racket to hit'); return; }
+    const g = canSabotage(this.state, biz.id);
+    if (!g.ok) { this.setStatus(`SABOTAGE: ${g.reason}`); return; }
+    const res = resolveSabotage(this.state, biz.id);
+    this.state = harvestIncidents(this.state);
+    this.setStatus(res.destroyed ? 'racket WRECKED' : 'rival racket sabotaged');
+  }
+
+  /** [3] ASSASSINATE the weakest rival's Don — the decapitating blow. */
+  private commandAssassinate(): void {
+    const w = weakestRival(this.state);
+    if (!w) { this.setStatus('no rival Don left to hit'); return; }
+    const g = canAssassinate(this.state, w.familyId);
+    if (!g.ok) { this.setStatus(`HIT ${w.name}: ${g.reason}`); return; }
+    const res = resolveAssassinate(this.state, w.familyId);
+    this.state = harvestIncidents(this.state);
+    const hq = hqIntegrityOf(this.state.rivals.find((r) => r.id === w.familyId)!);
+    this.setStatus(res.success ? (res.eliminated ? `${w.name} ELIMINATED` : `struck ${w.name}'s HQ — integrity ${hq}`) : `the hit on ${w.name} failed`);
+  }
+
+  /** [4] LOCKOUT the weakest rival via The Bureau — freeze and bleed them. */
+  private commandLockout(): void {
+    const w = weakestRival(this.state);
+    if (!w) { this.setStatus('no rival to lock down'); return; }
+    const g = canLockout(this.state, w.familyId);
+    if (!g.ok) { this.setStatus(`LOCKOUT ${w.name}: ${g.reason}`); return; }
+    resolveLockout(this.state, w.familyId);
+    this.state = harvestIncidents(this.state);
+    this.setStatus(`the Bureau is locking down ${w.name}`);
+  }
+
+  /** The victory/defeat readout when the contest resolves (RTS-17). */
+  private showEndgame(): void {
+    if (this.endgameShown) return;
+    this.endgameShown = true;
+    const won = this.state.status === 'won';
+    const w = this.scale.width, h = this.scale.height;
+    this.add.rectangle(0, 0, 6000, 4000, PAL.soot, 0.82).setOrigin(0, 0).setScrollFactor(0).setDepth(200000);
+    const last = [...this.state.log].reverse().find((e) => e.kind === 'game-over');
+    this.add.text(w / 2, h / 2 - 30, won ? 'YOU TOOK THE CITY' : 'THE CITY TOOK YOU', {
+      fontFamily: NOIR_FONT, fontSize: '34px', color: won ? SPEC.brass : SPEC.danger, fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
+    this.add.text(w / 2, h / 2 + 16, last?.message ?? '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.bone }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
+  }
+
   /** Give a freshly-shaken front a little back-pay so the collect step is immediately playable. */
   private seedBackPay(businessId: string): void {
     for (const d of this.state.districts) {
@@ -747,6 +830,11 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-K', () => this.toggleCrew());
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
     this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
+    // RTS-17 — the offensive.
+    this.input.keyboard?.on('keydown-ONE', () => this.commandRaid());
+    this.input.keyboard?.on('keydown-TWO', () => this.commandSabotage());
+    this.input.keyboard?.on('keydown-THREE', () => this.commandAssassinate());
+    this.input.keyboard?.on('keydown-FOUR', () => this.commandLockout());
   }
 
   update(_t: number, delta: number): void {
@@ -814,11 +902,20 @@ export class IsoScene extends Phaser.Scene {
     const standing = cityStanding(this.state);
     this.strategyTitle.setPosition(right, 196);
     const lines = [standing.read, ''];
+    lines.push(`YOUR HQ: ${Math.round(hqIntegrityOf(this.state.player))}%`);
     for (const r of standing.rows) {
-      const tag = r.isPlayer ? 'YOU' : r.name.replace('The ', '').replace(' Family', '').replace(' Crew', '');
-      const dead = r.alive ? '' : ' †';
-      lines.push(`${tag}: ${r.districtsHeld} blocks · pwr ${r.power}${dead}`);
+      if (r.isPlayer) continue;
+      const fam = this.state.rivals.find((x) => x.id === r.familyId);
+      const tag = r.name.replace('The ', '').replace(' Family', '').replace(' Crew', '');
+      if (!r.alive) { lines.push(`${tag}: † finished`); continue; }
+      const hq = fam ? Math.round(hqIntegrityOf(fam)) : 100;
+      const locked = (fam?.lockoutTicks ?? 0) > 0 ? ' 🔒' : '';
+      lines.push(`${tag}: ${r.districtsHeld} blk · HQ ${hq}%${locked}`);
     }
+    // who's the softest target right now — nudge the player at a kill.
+    const weak = weakestRival(this.state);
+    if (weak) { lines.push(''); lines.push(`weakest: ${weak.name.replace('The ', '').replace(' Family', '').replace(' Crew', '')}`); }
+    lines.push('[1]raid [2]sabo [3]hit [4]lock');
     this.strategyPanel.setText(lines.join('\n')).setPosition(right, 216);
     this.strategyPanel.setColor(standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
       : standing.trajectory === 'behind' || standing.trajectory === 'crushed' ? SPEC.danger : NOIR_PALETTE.bone);

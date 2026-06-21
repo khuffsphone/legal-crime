@@ -28,6 +28,7 @@ export type IncidentType =
   | 'extortion'
   | 'territory'
   | 'family_fallen'
+  | 'offense'
   | 'game_over';
 
 export interface IncidentRecord {
@@ -107,6 +108,13 @@ const LOG_KIND_MAP: Record<string, KindMapping> = {
   // The turf war (RTS-16).
   'district-captured': { type: 'territory', severity: 'danger' },
   'family-fallen': { type: 'family_fallen', severity: 'gain' },
+  // The offensive (RTS-17).
+  'raid': { type: 'offense', severity: 'warning' },
+  'sabotage': { type: 'offense', severity: 'warning' },
+  'assassination': { type: 'offense', severity: 'danger' },
+  'lockout': { type: 'offense', severity: 'info' },
+  'hq-struck': { type: 'territory', severity: 'danger' },
+  'family-eliminated': { type: 'family_fallen', severity: 'gain' },
   // Terminal.
   'game-over': { type: 'game_over', severity: 'danger' },
 };
