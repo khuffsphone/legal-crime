@@ -1948,3 +1948,35 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   logic to assert; the existing pure selectors the HUD reads are already covered). /src/sim
   Phaser-free; no Gangsters conflations.
 - Commit: rts23: HUD/UI Elevation & Camera Polish — green
+
+## RTS-23 (completion) — Phase Header, Offense Previews, Win/Loss Proximity & Business Card — GREEN  (2026-06-21)
+- Summary: Completes the rts23 HUD elevation against the fuller brief + UX_UI_DIRECTION.md (the base
+  — camera nits, top bar, channel dials, Wire, thug card, audio seams — shipped at 257337d). Adds
+  the components that brief called out and the base lacked. Pure HUD readouts in /src/sim (unit-
+  tested); the rest is render. tick/applyCommand untouched; /src/sim Phaser-free; four channels +
+  50/70/85 ladder kept; NO new economic systems (the trade/resource mini-game stays deferred).
+  565 → 571 green (+6 real assertions). NOTE: no Design HUD spec / GPT review file was present —
+  built to UX_UI_DIRECTION.md + the inline brief.
+  • 4-STAGE MATCH-PHASE HEADER (src/sim/pacing.ts hudPhase, pure+tested): ESTABLISH → FIRST BLOOD →
+    CONTEST → DECAPITATE, derived from matchPhase + blocks held (FIRST BLOOD = your first secured
+    block; CONTEST = ≥2). Drives the top-bar PHASE chip (hover-explained), the standings header, and
+    the phase-change banner (renamed to the 4 stages).
+  • OFFENSE PREVIEWS (src/sim/pacing.ts offensePreview, pure+tested): each offensive verb now shows
+    cost · heat · EFFECT · RETALIATION before commit, grounded in the tuned constants — e.g.
+    "[3] Assassinate $1500 +30🔥 ↳ −40 HQ integrity (≈3 hits topple a Don); rival: ENRAGES — strikes
+    your HQ". Rendered as a sub-line under each offence-board row.
+  • WIN/LOSS PROXIMITY (src/sim/endgame.ts victoryProximity, pure+tested): a readable "how close is
+    anyone" — playerWinPct (dominance held/total vs TURF_DOMINANCE, or rivals-eliminated toward
+    last-standing), playerLosePct (HQ razed / collapse), and the leading family + blocks-from-the-
+    city. Surfaced as "WIN n% · LOSE n%" + a clipped read in the standings.
+  • BUSINESS CONTEXT CARD (render): the bottom-left context panel now shows a HOVERED business's
+    card — name · state (yours/rival/shut/un-shaken, colour-coded) · yield $/wk · heat/wk ·
+    uncollected — and its valid verbs with EXPECTED EFFECT (✓ EXTORT → +30% protection income / ✓
+    ATTACK → shut Nwk, +heat, or ✗ + why-locked). Falls back to the selected thug's card.
+- Files: src/sim/pacing.ts (hudPhase + offensePreview), src/sim/endgame.ts (victoryProximity),
+  src/sim/index.ts (exports), src/scenes/IsoScene.ts (top-bar 4-stage chip + hover, standings
+  win/loss + offence previews, business context card, 4-stage phase banner). New tests/hudReadouts.test.ts.
+- Gate: typecheck ✅  build ✅  test ✅ (571; +6 hudReadouts: the 4-stage header ESTABLISH→FIRST
+  BLOOD→CONTEST→DECAPITATE + reads; offense previews state effect+retaliation from the constants;
+  victoryProximity win%/lose%/leader/read). /src/sim Phaser-free; no Gangsters conflations.
+- Commit: rts23: HUD/UI Elevation & Camera Polish — green

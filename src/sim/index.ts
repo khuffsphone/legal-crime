@@ -214,6 +214,8 @@ export {
 export {
   offenseReadout,
   matchPhase,
+  hudPhase,
+  offensePreview,
   playerWeeklyNet,
   buildReadout,
   weeksToAfford,
@@ -223,6 +225,9 @@ export {
   type OffenseOption,
   type MatchPhase,
   type PhaseReadout,
+  type HudPhase,
+  type HudPhaseReadout,
+  type OffensePreview,
   type BuildKey,
   type BuildOption,
 } from './pacing';
@@ -234,6 +239,8 @@ export {
   evaluateEndgame,
   rivalWeakness,
   weakestRival,
+  victoryProximity,
+  type VictoryProximity,
   type EndKind,
   type EndgameResult,
   type RivalWeakness,

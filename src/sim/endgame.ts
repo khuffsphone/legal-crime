@@ -146,3 +146,49 @@ export function weakestRival(state: GameState): RivalWeakness | null {
   const living = rivalWeakness(state).filter((r) => r.alive);
   return living.length > 0 ? living[0] : null;
 }
+
+// ── RTS-23 — WIN/LOSS PROXIMITY: how close is anyone to winning or losing ───────────────────────
+
+export interface VictoryProximity {
+  /** 0..100 — how close the PLAYER is to a WIN (dominance held/total vs TURF_DOMINANCE, OR the
+   * share of rivals already eliminated toward last-family-standing). */
+  playerWinPct: number;
+  /** 0..100 — how close the PLAYER is to LOSING (HQ damage toward razed, the primary failure). */
+  playerLosePct: number;
+  /** The family holding the most turf right now (the looming threat) + how dominant it is. */
+  leaderId: string;
+  leaderName: string;
+  leaderHeld: number;
+  total: number;
+  /** A clipped, plain-English readout of the race. */
+  read: string;
+}
+
+/** Read how close the match is to resolving — the player's progress toward a win, their proximity
+ * to a loss, and the leading family's grip on the city. Pure; never mutates. (RTS-23 HUD readout.) */
+export function victoryProximity(state: GameState): VictoryProximity {
+  const total = state.districts.length;
+  const playerHeld = districtsHeld(state, state.player.id).length;
+  const playerDom = total > 0 ? playerHeld / total : 0;
+  const rivals = state.rivals;
+  const rivalsDead = rivals.filter((r) => !r.alive).length;
+  const lastStandingPct = rivals.length > 0 ? rivalsDead / rivals.length : 0;
+  const playerWinPct = Math.round(Math.min(1, Math.max(playerDom / TURF_DOMINANCE, lastStandingPct)) * 100);
+
+  const playerHq = hqIntegrityOf(state.player);
+  const playerLosePct = Math.round(Math.min(1, Math.max((HQ_MAX - playerHq) / HQ_MAX, playerCollapsed(state) ? 1 : 0)) * 100);
+
+  // the family (incl. player) holding the most blocks = the looming leader.
+  let leaderId = state.player.id, leaderName = state.player.name, leaderHeld = playerHeld;
+  for (const f of [state.player, ...rivals]) {
+    if (!f.alive) continue;
+    const h = districtsHeld(state, f.id).length;
+    if (h > leaderHeld) { leaderHeld = h; leaderId = f.id; leaderName = f.name; }
+  }
+  const need = Math.max(0, Math.ceil(TURF_DOMINANCE * total) - leaderHeld);
+  const read = leaderId === state.player.id
+    ? (playerHeld === 0 ? 'No one holds the city yet — establish your corner.' : `You lead ${leaderHeld}/${total} — ${need} more block${need === 1 ? '' : 's'} to dominance.`)
+    : `${leaderName} leads ${leaderHeld}/${total} — ${need} from taking the city. Don't let them.`;
+
+  return { playerWinPct, playerLosePct, leaderId, leaderName, leaderHeld, total, read };
+}

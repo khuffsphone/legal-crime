@@ -58,7 +58,9 @@ import {
   telegraphedPushes,
   resolveStrategicPulse,
   offenseReadout,
-  matchPhase,
+  hudPhase,
+  offensePreview,
+  victoryProximity,
   playerWeeklyNet,
   buildReadout,
   expandTargetDistrictId,
@@ -70,6 +72,8 @@ import {
   RECRUIT_COST,
   CONTROL_HOLD,
   ASSASSINATE_MIN_STRENGTH,
+  ATTACK_SHUTDOWN_WEEKS,
+  ATTACK_HEAT,
   canRaid,
   resolveRaid,
   canSabotage,
@@ -1340,11 +1344,13 @@ export class IsoScene extends Phaser.Scene {
     // who's the softest target right now — nudge the player at a kill.
     const weak = weakestRival(this.state);
     if (weak) { lines.push(''); lines.push(`weakest: ${weak.name.replace('The ', '').replace(' Family', '').replace(' Crew', '')}`); }
-    // RTS-19 legibility: the match phase + the offence board (what each action costs in cash+heat,
-    // and whether you can pull it off right now — ✓ ready / ✗ + the reason).
-    const phase = matchPhase(this.state);
+    // RTS-23: the 4-stage phase header + WIN/LOSS PROXIMITY readout (how close anyone is).
+    const phase = hudPhase(this.state);
+    const vp = victoryProximity(this.state);
     lines.push('');
-    lines.push(`— ${phase.phase.toUpperCase()} —`);
+    lines.push(`— ${phase.phase} —`);
+    lines.push(`WIN ${vp.playerWinPct}% · LOSE ${vp.playerLosePct}%`);
+    lines.push(vp.read.length > 40 ? vp.read.slice(0, 39) + '…' : vp.read);
     // RTS-20/21 build board: the verbs that grow the outfit out of ESTABLISH (expand → HOLD → RAID,
     // recruit → muscle → ASSASSINATE), with a "when can I afford it" ETA when short on cash.
     for (const b of buildReadout(this.state)) {
@@ -1352,13 +1358,15 @@ export class IsoScene extends Phaser.Scene {
       const eta = b.affordable ? '' : IsoScene.etaTag(b.affordEtaWeeks);
       lines.push(`${mark} [${b.hotkey}] ${b.label} $${b.cost}${eta} — ${b.effect}`);
     }
+    // RTS-23 OFFENSE PREVIEWS — each verb shows cost · heat · effect · retaliation before you commit.
     for (const o of offenseReadout(this.state)) {
       const mark = o.available ? '✓' : '✗';
       const heat = o.heat > 0 ? ` +${o.heat}🔥` : '';
       const tail = o.available ? '' : ` (${o.reason})`;
-      // show the cash ETA only when cash is the (or a) blocker, so a muscle/Bureau-gated row isn't noisy.
       const eta = !o.available && o.affordEtaWeeks !== 0 ? IsoScene.etaTag(o.affordEtaWeeks) : '';
+      const pv = offensePreview(o.key);
       lines.push(`${mark} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}${eta}`);
+      lines.push(`      ↳ ${pv.effect}; rival: ${pv.retaliation}`);
     }
     this.strategyPanel.setText(lines.join('\n')).setPosition(right, 276);
     this.strategyPanel.setColor(standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
@@ -1495,11 +1503,13 @@ export class IsoScene extends Phaser.Scene {
       cx += def.w + 10;
     }
 
-    // PHASE chip at the bar's right end
-    const phase = matchPhase(this.state);
+    // PHASE chip at the bar's right end — the 4-stage arc header.
+    const phase = hudPhase(this.state);
     if (this.phaseChip) {
-      const pc = phase.phase === 'endgame' ? SPEC.danger : phase.phase === 'establish' ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
-      this.phaseChip.setText(`◆ ${phase.phase.toUpperCase()}`).setColor(pc).setPosition(barX + barW - 14, barY + barH / 2);
+      const pc = phase.phase === 'DECAPITATE' ? SPEC.danger : phase.phase === 'ESTABLISH' ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
+      this.phaseChip.setText(`◆ ${phase.phase}`).setColor(pc).setPosition(barX + barW - 14, barY + barH / 2);
+      const chipW = this.phaseChip.width + 12;
+      this.hudRegions.push({ x: barX + barW - 14 - chipW, y: barY, w: chipW, h: barH, explain: `PHASE: ${phase.phase} — ${phase.read}  (ESTABLISH → FIRST BLOOD → CONTEST → DECAPITATE)` });
     }
     // week progress sliver along the bottom edge of the top bar
     g.fillStyle(PAL.brass, 0.85).fillRect(barX + 1, barY + barH - 2, (barW - 2) * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 2);
@@ -1605,14 +1615,42 @@ export class IsoScene extends Phaser.Scene {
     this.hudRegions.push({ x, y, w, h: 26, explain: 'Your automated collection route. The collector banks takings itself — but it can still be robbed; guard the route when ⚠ ROB-RISK shows.' });
   }
 
-  /** RTS-23 — the CONTEXT card: the selected thug's card + what it can do. */
+  /** RTS-23 — the CONTEXT card (bottom-left): a HOVERED business's card (state · yield · heat + its
+   * valid verbs with expected effect), else the SELECTED thug's card. Every value labeled. */
   private drawContextCard(g: Phaser.GameObjects.Graphics): void {
     if (!this.ctxCardTitle || !this.ctxCardBody) return;
+    const w = 268, x = 12;
+    // Prefer a business under the cursor (only over the world, not the HUD panels).
+    const ptr = this.input.activePointer;
+    const overWorld = ptr.y > 60 && ptr.x < this.scale.width - 320 && ptr.y < this.scale.height - 96;
+    const bizId = overWorld ? this.businessAtScreen(ptr.worldX, ptr.worldY) : undefined;
+    if (bizId) {
+      const b = inspectBusiness(this.state, bizId);
+      const raw = allBusinesses(this.state).find((x2) => x2.id === bizId);
+      const acts = businessActions(this.state, bizId, 'player');
+      if (b && raw && acts) {
+        const h = 84, y = this.scale.height - h - 12;
+        this.decoFrame(g, x, y, w, h);
+        const shut = isShutDown(raw);
+        const state = shut ? 'SHUT DOWN' : b.payingProtection ? 'YOURS — paying' : b.earnerName ? `${b.earnerName}'s` : 'un-shaken';
+        const stateCol = shut ? SPEC.danger : b.payingProtection ? SPEC.brass : b.earnerName ? SPEC.rival : NOIR_PALETTE.fog;
+        this.ctxCardTitle.setText(`▣ ${b.name} (${b.kind}) · ${state}`).setColor(stateCol).setPosition(x + 8, y + 6).setVisible(true);
+        const ex = acts.extort.ok ? `✓ EXTORT → +30% protection income` : `✗ EXTORT (${acts.extort.reason})`;
+        const at = acts.attack.ok ? `✓ ATTACK → shut it ${ATTACK_SHUTDOWN_WEEKS}wk, +${ATTACK_HEAT}🔥` : `✗ ATTACK (${acts.attack.reason})`;
+        this.ctxCardBody.setText([
+          `yield $${b.income}/wk · heat ${raw.heatPerTick}/wk · uncollected $${b.uncollected}`,
+          ex, at,
+        ].join('\n')).setColor(NOIR_PALETTE.bone).setPosition(x + 8, y + 24).setVisible(true);
+        this.hudRegions.push({ x, y, w, h, explain: `${b.name}: ${state}. Yield $${b.income}/wk. Right-click → EXTORT (take protection) or ATTACK (shut it down).` });
+        return;
+      }
+    }
+    // else: the selected thug's card.
     const id = this.selection.ids[0];
     const view = id ? this.units.find((u) => u.unit.id === id) : undefined;
     const insp = id ? inspectUnit(this.state, id) : null;
     if (!view || !insp) { this.ctxCardTitle.setVisible(false); this.ctxCardBody.setVisible(false); return; }
-    const w = 250, h = 76, x = 12, y = this.scale.height - h - 12;
+    const h = 76, y = this.scale.height - h - 12;
     this.decoFrame(g, x, y, w, h);
     const member = crewReadout(this.state.player).find((m) => m.id === id);
     const role = view.unit.role === 'collector' ? 'collector' : view.faction === 'player' ? 'button man' : 'rival';
@@ -1653,8 +1691,14 @@ export class IsoScene extends Phaser.Scene {
 
   /** A centred banner when the match phase changes (a clear visual beat for audio/VO to hook). */
   private flashPhaseChange(phase: string): void {
-    const label = phase === 'endgame' ? 'THE WAR IS ON — DECAPITATE A RIVAL' : phase === 'contest' ? 'YOU HOLD GROUND — CONTEST THE CITY' : 'ESTABLISH YOUR RACKET';
-    const t = this.add.text(this.scale.width / 2, 120, label, { fontFamily: NOIR_FONT, fontSize: '22px', color: phase === 'endgame' ? SPEC.danger : SPEC.brass, fontStyle: 'bold' })
+    const labels: Record<string, string> = {
+      'ESTABLISH': 'ESTABLISH YOUR RACKET — EXTORT THE NEIGHBOURHOOD',
+      'FIRST BLOOD': 'FIRST BLOOD — MAKE YOUR MOVE ON A RIVAL',
+      'CONTEST': 'CONTEST THE CITY — THE TURF WAR IS ON',
+      'DECAPITATE': 'DECAPITATE — FINISH A RIVAL FAMILY',
+    };
+    const label = labels[phase] ?? phase;
+    const t = this.add.text(this.scale.width / 2, 120, label, { fontFamily: NOIR_FONT, fontSize: '22px', color: phase === 'DECAPITATE' ? SPEC.danger : SPEC.brass, fontStyle: 'bold' })
       .setOrigin(0.5).setScrollFactor(0).setDepth(100002).setScale(0.6).setAlpha(0);
     this.tweens.add({ targets: t, scale: 1, alpha: 1, duration: 320, ease: 'Back.Out' });
     this.tweens.add({ targets: t, alpha: 0, y: 100, delay: 1600, duration: 600, onComplete: () => t.destroy() });

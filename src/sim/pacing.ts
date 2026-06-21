@@ -10,13 +10,16 @@ import {
   ASSASSINATE_HEAT,
   ASSASSINATE_CITYHALL_CAP,
   ASSASSINATE_CITYHALL_COVER,
+  ASSASSINATE_HQ_DAMAGE,
   ASSASSINATE_MIN_STRENGTH,
   CONTROL_HOLD,
   EXPAND_COST,
   LOCKOUT_COST,
+  LOCKOUT_DURATION,
   RAID_BENCH_CAP,
   RAID_BENCH_MITIGATION,
   RAID_COST,
+  RAID_FORCE,
   RAID_HEAT,
   RECRUIT_COST,
   SABOTAGE_COST,
@@ -224,5 +227,59 @@ export function isNearlyHeld(state: GameState, districtId: string): boolean {
   if (!d) return false;
   const c = controlOf(d, state.player.id);
   return c > 0 && c < CONTROL_HOLD;
+}
+
+// ── RTS-23 — the 4-stage match-phase header (ESTABLISH → FIRST BLOOD → CONTEST → DECAPITATE) ────
+
+export type HudPhase = 'ESTABLISH' | 'FIRST BLOOD' | 'CONTEST' | 'DECAPITATE';
+
+export interface HudPhaseReadout {
+  phase: HudPhase;
+  /** A clipped noir line naming the stage + what to push on. */
+  read: string;
+}
+
+/**
+ * The player-facing 4-stage arc header (RTS-23), derived deterministically from matchPhase + how
+ * much turf the player holds:
+ *  • ESTABLISH   — hold no block yet: extort the neighbourhood, secure your corner.
+ *  • FIRST BLOOD — your first block is secured: make your first move on a rival.
+ *  • CONTEST     — you hold ≥2 blocks: a real turf war over the city.
+ *  • DECAPITATE  — you can finish a rival (muscle, a battered/locked rival, or near dominance).
+ * Pure read; never mutates.
+ */
+export function hudPhase(state: GameState): HudPhaseReadout {
+  const mp = matchPhase(state).phase;
+  if (mp === 'establish') return { phase: 'ESTABLISH', read: 'Extort the neighbourhood — build income before any war.' };
+  if (mp === 'endgame') return { phase: 'DECAPITATE', read: 'Finish a rival — raid to soften, lockout to pin, then assassinate.' };
+  const held = districtsHeld(state, state.player.id).length;
+  return held >= 2
+    ? { phase: 'CONTEST', read: 'A real turf war — hold your blocks and take rival ground.' }
+    : { phase: 'FIRST BLOOD', read: 'Your corner is secure — make your first move on a rival.' };
+}
+
+// ── RTS-23 — offense previews (cost / effect / heat / retaliation BEFORE commit) ────────────────
+
+export interface OffensePreview {
+  key: OffenseKey;
+  /** What the strike does, in plain mob English (derived from the tuned constants). */
+  effect: string;
+  /** How the rival hits back. */
+  retaliation: string;
+}
+
+/** The effect + retaliation a player should read BEFORE committing an offensive verb (RTS-23). Cost
+ * and heat live on the OffenseOption; this adds the consequence preview. Pure, deterministic. */
+export function offensePreview(key: OffenseKey): OffensePreview {
+  switch (key) {
+    case 'sabotage':
+      return { key, effect: 'wreck/shut a rival racket — it stops earning', retaliation: 'the owner gets sore (minor)' };
+    case 'raid':
+      return { key, effect: `shove ~${RAID_FORCE} control + scatter their take (softens; one raid won't seize)`, retaliation: 'the defender enrages — may push your turf' };
+    case 'lockout':
+      return { key, effect: `the Feds freeze + bleed the rival for ${LOCKOUT_DURATION} weeks`, retaliation: 'mild — a quiet move' };
+    case 'assassinate':
+      return { key, effect: `−${ASSASSINATE_HQ_DAMAGE} HQ integrity (≈3 hits topple a Don)`, retaliation: 'the rival ENRAGES — strikes your HQ' };
+  }
 }
 
