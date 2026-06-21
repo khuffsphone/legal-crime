@@ -133,6 +133,44 @@ export {
 } from './mapEconomy';
 export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
 export {
+  CITY_ARCHETYPES,
+  GRID3_NEIGHBORS,
+  districtIdentity,
+  districtNeighbors,
+  districtValue,
+  isBigCity,
+  type DistrictIdentity,
+} from './city';
+export {
+  districtStatus,
+  pushPresence,
+  applyCapture,
+  districtsHeld,
+  exposedDistricts,
+  districtIncomeFor,
+  type DistrictStatus,
+  type PushResult,
+} from './territoryWar';
+export {
+  targetScore,
+  rivalStrategicTarget,
+  rivalPushAmount,
+  telegraphedPushes,
+  familyIsFallen,
+  resolveStrategicPulse,
+  advanceStrategy,
+  type TelegraphedPush,
+  type StrategicEvent,
+} from './strategy';
+export {
+  familyPower,
+  cityStanding,
+  allRivalsCrushed,
+  type Trajectory,
+  type StandingRow,
+  type CityStanding,
+} from './contest';
+export {
   recordIncident,
   harvestIncidents,
   isLedgerKind,

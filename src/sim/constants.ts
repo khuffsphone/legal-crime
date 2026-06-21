@@ -190,6 +190,14 @@ export const DANGER_RADIUS = 2.5; // tiles
 // a hostile enforcer is within this distance of a collection source or the HQ, so a new player
 // can learn to TIME the run (wait for clear) instead of facing a blind cliff on run #2.
 export const ROUTE_DANGER_RADIUS = 4.0; // tiles
+
+// RTS-16 — the turf war. Rival families make a territorial move on this real-time cadence
+// (deterministic, telegraphed). Tunable so the contest is a fight, not a stomp.
+export const STRATEGY_PULSE_SECONDS = 22; // ~5 rival moves per 120s week
+export const RIVAL_PUSH_BASE = 12; // base control a rival pushes into a target each pulse
+export const RIVAL_PUSH_PER_STRENGTH = 0.4; // extra push per point of family strength
+export const POLITICIAN_DETERRENCE = 6; // City Hall (politicians) bribe deters pushes on your turf
+export const TURF_DOMINANCE = 0.6; // fraction of districts that reads as "dominant" in the standings
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)

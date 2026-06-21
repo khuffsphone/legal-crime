@@ -1463,3 +1463,78 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   loops idle-slow; factionColor; satchelTier bands; dangerStageColor stages; federalBarColor tiers;
   loyaltyMotion). /src/sim Phaser-free invariant green; the 477-test base untouched and all green.
 - Commit: rts15: Visual Elevation — Fedora Noir — green
+
+## RTS-16 — The Living City & The Turf War — GREEN  (2026-06-20)
+- Summary: Turned the loop into a real-time crime STRATEGY contest — a bigger contested city,
+  active rival families that fight for it, real territorial control/conflict, the three tensions
+  interlocked, and a readable contest trajectory. Built as ONE interlocking web of NEW PURE
+  modules in /src/sim, all unit-tested with seeded determinism; the economic settlement
+  (tick/applyCommand) is WRAPPED not modified, and the whole layer is a NO-OP on the legacy
+  5-district map (it activates only on the big city), so all 488 prior tests stayed green.
+  1. A BIGGER, CONTESTED CITY (src/sim/city.ts) — a 9-district 3×3 city with identity: per-
+     district wealth (1..5), heat-sensitivity, Chicago archetype (Dockside…The Loop…The Levee),
+     and orthogonal ADJACENCY (the fronts families push along). districtIdentity DERIVES values
+     for the legacy map, so nothing breaks. Opt-in via createInitialState({ bigCity }) — default
+     stays the 5-district map. buildMapLayout now wraps districts into a 2nd column (back-compatible
+     so districts 0–4 keep their exact tiles + tests).
+  2. ACTIVE RIVAL FAMILIES (src/sim/strategy.ts) — a real-time, DETERMINISTIC strategic AI on a
+     strategic clock (STRATEGY_PULSE_SECONDS, ~5 moves/week). Each pulse every living rival pushes
+     PRESENCE into its best reachable target — richest + weakest along adjacency — EXPANDING into
+     open ground and CONTESTING your turf when you leave it undefended (an undefended, weakly-held
+     player block is the juiciest target of all). Every move is TELEGRAPHED (telegraphedPushes = the
+     exact next move) so the player can respond, like the run-2 threat telegraph. A crushed rival
+     (no turf/crew/rackets/cash) FALLS out of the contest (familyIsFallen → alive=false).
+  3. TERRITORIAL CONTROL & CONFLICT (src/sim/territoryWar.ts) — pushPresence raises control and
+     erodes the defender, BLUNTED by guarding muscle (defense matters). When a push DISPLACES a
+     holder, the capture bites: the loser's rackets are SEIZED by the captor and their fronts are
+     BROKEN (lost protection income). exposedDistricts surfaces where you're overextended — the
+     logistics read. Losing a block hurts (lost income + rackets), so limited crew = a real choice.
+  4. THE INTERLOCK — the three tensions now bite together: limited crew across offense/defense/
+     collection (guards blunt rival pushes AND escort collectors AND give extort muscle — you can't
+     do all three); economy under heat (richer districts are worth more but the Loop is heat-
+     sensitive; launder-vs-hold while expanding); and the canon four channels matter to the WAR —
+     City Hall (politicians) bribes DETER rivals from pushing your turf (POLITICIAN_DETERRENCE),
+     while the Bureau still shields the federal ladder. Grab/defend turf vs the Feds is now a live
+     tradeoff.
+  5. A CONTEST WITH STAKES (src/sim/contest.ts) — cityStanding scores every family (wealth-weighted
+     turf + rackets + war chest + muscle), ranks them, and reads the player's trajectory: dominant /
+     ahead / contested / behind / crushed / eliminated, with a clipped noir line. allRivalsCrushed +
+     the canon flow.ts win condition give the war a real direction to push on.
+  Driver: updateAndObserve now also advances the turf war (advanceStrategy) and returns its events;
+  district-captured / family-fallen are projected into The Wire. IsoScene renders the big city with
+  per-district nameplates recoloured by holder (brass you / rival-red / fog neutral), a turf-war
+  STANDINGS panel (trajectory + per-family blocks/power), a rival-PRESSURE telegraph banner ("MORETTI
+  IS PUSHING INTO THE LOOP — DEFEND OR GREASE CITY HALL"), and BLOCK LOST/TAKEN beats with a shake.
+- Files: src/sim/city.ts, src/sim/territoryWar.ts, src/sim/strategy.ts, src/sim/contest.ts (all new,
+  pure), src/sim/types.ts (+District identity/adjacency, +GameState.strategyElapsed), src/sim/state.ts
+  (+bigCity 9-district seeding), src/sim/mapEconomy.ts (2-column layout, back-compatible), src/sim/
+  realtime.ts (advanceStrategy folded into updateAndObserve; +strategy in ObserveResult), src/sim/
+  ledger.ts (+territory/family_fallen incident types), src/sim/constants.ts (+strategy tunables),
+  src/sim/index.ts (exports), src/scenes/IsoScene.ts (big-city render, standings panel, pressure
+  telegraph, capture beats, district nameplates); new tests/turfWar.test.ts. tick/applyCommand
+  settlement logic unchanged.
+
+═══ TURF-WAR API — THE RTS-16 PURE CONTRACT ═══
+- CITY: createInitialState(seed, { bigCity }) → 9 districts. districtIdentity(d,index) →
+  { wealth, heatSensitivity, archetype }; districtNeighbors; districtValue; isBigCity; CITY_ARCHETYPES.
+- TERRITORY: pushPresence(state, familyId, districtId, amount) → { before, after, captured } (erodes
+  defender, blunted by muscleInDistrict; displacement seizes rackets/breaks fronts); districtStatus;
+  districtsHeld; exposedDistricts; districtIncomeFor.
+- STRATEGY (deterministic): targetScore · rivalStrategicTarget · rivalPushAmount · telegraphedPushes
+  (the telegraph) · familyIsFallen · resolveStrategicPulse · advanceStrategy(state,dt,pulseSeconds?).
+  CONSTANTS: STRATEGY_PULSE_SECONDS 22 · RIVAL_PUSH_BASE 12 · RIVAL_PUSH_PER_STRENGTH 0.4 ·
+  POLITICIAN_DETERRENCE 6 · TURF_DOMINANCE 0.6.
+- CONTEST: familyPower · cityStanding(state) → { rows, leaderId, playerDominance, trajectory, read } ·
+  allRivalsCrushed.
+- DRIVER: updateAndObserve(...) → { result, strategy: StrategicEvent, state }.
+- Decisions: the entire strategic layer is deterministic (NO RNG) so rivals are fully testable and
+  the telegraph is exact; it lives in the real-time WRAPPER (advanceStrategy) so tick is untouched;
+  it is gated on adjacency so the legacy map (and every prior test) is unaffected; bigCity/identity/
+  strategyElapsed are additive default-safe fields. All systems asserted; scene render human-validated.
+- Gate: typecheck ✅  build ✅  test ✅ (507 total; +19 turfWar: 9-district city + identity + adjacency
+  + determinism + RNG-neutral default; push/erode/muscle-blunt; capture seizes rackets + breaks fronts;
+  districtStatus/exposedDistricts; rival target + telegraph match + City Hall deterrence; rivals expand;
+  undefended player block taken; family-fallen; strategic clock fires/legacy-no-op; familyPower +
+  trajectory bands + allRivalsCrushed; driver integration captures + ledger territory incidents +
+  legacy no-op). /src/sim Phaser-free invariant green; the 488-test base untouched and all green.
+- Commit: rts16: The Living City & The Turf War — green

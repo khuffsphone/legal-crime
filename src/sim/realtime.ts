@@ -9,6 +9,7 @@
 import { advanceClock } from './clock';
 import { advanceUnits } from './movement';
 import { resolveInterceptions, type InterceptionEvent } from './interception';
+import { advanceStrategy, type StrategicEvent } from './strategy';
 import { harvestIncidents, recordIncident } from './ledger';
 import { federalExposure } from './federal';
 import { cleanCash } from './laundering';
@@ -45,6 +46,8 @@ export function update(
 export interface ObserveResult {
   /** The same data plain update() returns. */
   result: UpdateResult;
+  /** Territorial moves the rival families made this step (RTS-16). */
+  strategy: StrategicEvent;
   /** The state with the incident ledger advanced (a NEW object — reassign your reference). */
   state: GameState;
 }
@@ -82,11 +85,15 @@ export function updateAndObserve(
   state: GameState,
   dt: number,
   weekDuration: number = WEEK_DURATION_SECONDS,
+  pulseSeconds?: number,
 ): ObserveResult {
   const before = snapshotPlayer(state);
   const result = update(state, dt, weekDuration); // mutates state in place (logs included)
+  // RTS-16: advance the turf war (rival territorial moves). A no-op on the legacy map (no
+  // adjacency), so existing 5-district tests are unaffected.
+  const strategy = advanceStrategy(state, dt, pulseSeconds).events;
 
-  let s = harvestIncidents(state); // project the new log entries (interceptions + tick events)
+  let s = harvestIncidents(state); // project the new log entries (interceptions + tick + turf-war)
 
   if (result.weeksFired > 0) {
     const after = snapshotPlayer(s);
@@ -113,5 +120,5 @@ export function updateAndObserve(
     });
   }
 
-  return { result, state: s };
+  return { result, strategy, state: s };
 }

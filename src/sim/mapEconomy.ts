@@ -72,8 +72,11 @@ export function buildMapLayout(state: GameState, cols = 16, rows = 16): MapLayou
   state.districts.forEach((d, di) => {
     d.businesses.forEach((b, bi) => {
       // District bands run down the map; businesses step across within a band. Clamped to grid.
-      const gx = Math.min(cols - 2, 2 + bi * 2);
-      const gy = Math.min(rows - 2, 1 + di * 3);
+      // Districts run down in columns of 5 (RTS-16: a 9-district city wraps into a 2nd column).
+      // Backward-compatible: districts 0–4 keep their original tiles, so the legacy layout (and
+      // its tests) are unchanged.
+      const gx = Math.min(cols - 2, 2 + Math.floor(di / 5) * 7 + bi * 2);
+      const gy = Math.min(rows - 2, 1 + (di % 5) * 3);
       businessTiles[b.id] = { gx, gy };
     });
   });

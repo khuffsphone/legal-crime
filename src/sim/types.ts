@@ -95,6 +95,15 @@ export interface District {
   control: Record<string, number>;
   policePresence: number; // 0..100
   businesses: Business[];
+  /** Wealth tier 1..5 (RTS-16) — richer districts have fatter businesses and are worth more.
+   * Absent ⇒ derived by districtIdentity from the district index. */
+  wealth?: number;
+  /** How readily the law leans on this district, 0..1 (RTS-16). Scales heat pressure. */
+  heatSensitivity?: number;
+  /** Neighbourhood archetype (RTS-16) — Chicago flavour + identity. */
+  archetype?: string;
+  /** Ids of adjacent districts (RTS-16) — the fronts a family can push along. */
+  neighbors?: string[];
 }
 
 /** A queued hit, ordered by one family against another, resolved at the next tick. */
@@ -147,6 +156,9 @@ export interface GameState {
    * interception. startCollectorRun marks a run protected and decrements this while > 0, so a
    * new player's first paycheck cannot be robbed before they're taught the counter. Default 0. */
   tutorialFreeRuns: number;
+  /** Real-time seconds accumulated toward the next strategic pulse (RTS-16) — the cadence on
+   * which rival families make territorial moves. Driven by advanceStrategy; default 0. */
+  strategyElapsed: number;
   /** Causal incident ledger (RTS-9): a bounded, curated, newest-last list of structured records
    * projected from `log` + settlement summaries. Additive observe layer — no mechanic writes it;
    * the ledger functions do. Empty by default. */

@@ -52,6 +52,9 @@ import {
   inspectUnit,
   inspectBusiness,
   inspectDistrict,
+  cityStanding,
+  telegraphedPushes,
+  districtHolder,
   type GameState,
   type MapLayout,
   type Selection,
@@ -131,6 +134,10 @@ export class IsoScene extends Phaser.Scene {
   private layout!: MapLayout;
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
+  private districtLabels = new Map<string, Phaser.GameObjects.Text>();
+  private strategyPanel?: Phaser.GameObjects.Text;
+  private strategyTitle?: Phaser.GameObjects.Text;
+  private pressureBanner?: Phaser.GameObjects.Text;
   private selection: Selection = emptySelection();
   private pressX = 0;
   private pressY = 0;
@@ -175,9 +182,9 @@ export class IsoScene extends Phaser.Scene {
     cam.setBackgroundColor(PAL.soot);
 
     // RTS-11: start with a small loyal crew so the opening is fair (muscle + defense).
-    // RTS-12: a small loyal crew (fair opening) + one protected collector run (first paycheck
-    // is guaranteed home so a new player isn't robbed before being taught the counter).
-    this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1 });
+    // RTS-12/16: a fair opening (loyal crew + one protected run) on the BIG contested city —
+    // a 9-district turf war against two active rival families.
+    this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
     this.layout = buildMapLayout(this.state, COLS, ROWS);
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
 
@@ -286,6 +293,14 @@ export class IsoScene extends Phaser.Scene {
           .setVisible(false);
         this.bizMarkers.set(biz.id, { coin, glow, roofX: roof.roofX, roofY: roof.roofY });
       }
+      // RTS-16: a district nameplate at its first tile, recoloured each frame by who holds it.
+      const first = d.businesses[0] && businessTileOf(this.layout, d.businesses[0].id);
+      if (first) {
+        const c = gridToScreen(first.gx, first.gy);
+        this.districtLabels.set(d.id, this.add
+          .text(c.x, c.y - 2, d.name.toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.fog, fontStyle: 'bold' })
+          .setOrigin(0.5, 0.5).setDepth(depthValue(first.gx, first.gy) * 10 + 8));
+      }
     }
 
     // HQs — a distinct brass-trimmed tower with a faction flag
@@ -353,6 +368,9 @@ export class IsoScene extends Phaser.Scene {
     this.state = obs.state;
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
+    // RTS-16: the turf war moved — call out captures and routed families over the district.
+    for (const cap of obs.strategy.captures) this.flashTerritory(cap.districtId, cap.before === 'player');
+    for (const fid of obs.strategy.fallen) this.setStatus(`${fid} has been driven out of the city`);
     this.state = harvestIncidents(this.state);
 
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
@@ -738,6 +756,7 @@ export class IsoScene extends Phaser.Scene {
     this.refreshObjective();
     this.refreshFeed();
     this.refreshCrew();
+    this.refreshStrategy();
     this.refreshNight();
 
     const cam = this.cameras.main;
@@ -780,6 +799,56 @@ export class IsoScene extends Phaser.Scene {
     }
     // Mutiny telegraph banner (top-centre, under the objective) — legible, earned, with a countdown.
     this.mutinyBanner = this.add.text(this.scale.width / 2, 60, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+
+    // RTS-16 turf-war standings (right side, under THE WIRE) + rival-pressure telegraph banner.
+    this.strategyTitle = this.add.text(0, 196, 'THE CITY', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
+    this.strategyPanel = this.add.text(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
+    this.pressureBanner = this.add.text(this.scale.width / 2, 84, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+  }
+
+  /** Turf-war readout (RTS-16): trajectory + standings + rival-pressure telegraph, and recolour
+   * the district nameplates by who holds them (brass = you, rival-red = a rival, fog = neutral). */
+  private refreshStrategy(): void {
+    if (!this.strategyPanel || !this.strategyTitle || !this.pressureBanner) return;
+    const right = this.scale.width - 12;
+    const standing = cityStanding(this.state);
+    this.strategyTitle.setPosition(right, 196);
+    const lines = [standing.read, ''];
+    for (const r of standing.rows) {
+      const tag = r.isPlayer ? 'YOU' : r.name.replace('The ', '').replace(' Family', '').replace(' Crew', '');
+      const dead = r.alive ? '' : ' †';
+      lines.push(`${tag}: ${r.districtsHeld} blocks · pwr ${r.power}${dead}`);
+    }
+    this.strategyPanel.setText(lines.join('\n')).setPosition(right, 216);
+    this.strategyPanel.setColor(standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
+      : standing.trajectory === 'behind' || standing.trajectory === 'crushed' ? SPEC.danger : NOIR_PALETTE.bone);
+
+    // recolour district nameplates by holder
+    for (const [id, label] of this.districtLabels) {
+      const d = this.state.districts.find((x) => x.id === id);
+      const holder = d ? districtHolder(d) : null;
+      label.setColor(holder === 'player' ? SPEC.brass : holder && holder.startsWith('rival') ? SPEC.rival : NOIR_PALETTE.fog);
+    }
+
+    // rival-pressure telegraph: the most urgent push onto your turf (like the run-2 threat).
+    const onPlayer = telegraphedPushes(this.state).find((t) => t.onPlayer);
+    if (onPlayer) {
+      this.pressureBanner.setText(`⚔ ${onPlayer.familyName.toUpperCase()} IS PUSHING INTO ${onPlayer.districtName.toUpperCase()} — DEFEND OR GREASE CITY HALL`)
+        .setPosition(this.scale.width / 2, 84).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(this.time.now / 300)));
+    } else {
+      this.pressureBanner.setVisible(false);
+    }
+  }
+
+  /** A turf-war beat (RTS-16): a district changed hands — called out over its nameplate. */
+  private flashTerritory(districtId: string, lostByPlayer: boolean): void {
+    const label = this.districtLabels.get(districtId);
+    if (!label) return;
+    const txt = lostByPlayer ? 'BLOCK LOST!' : 'BLOCK TAKEN';
+    const t = this.add.text(label.x, label.y - 14, txt, { fontFamily: NOIR_FONT, fontSize: '15px', color: lostByPlayer ? SPEC.danger : SPEC.rival, fontStyle: 'bold' })
+      .setOrigin(0.5, 1).setDepth(100002);
+    this.tweens.add({ targets: t, y: t.y - 30, alpha: 0, duration: 1800, onComplete: () => t.destroy() });
+    if (lostByPlayer) this.cameras.main.shake(160, 0.004);
   }
 
   private toggleCrew(): void {

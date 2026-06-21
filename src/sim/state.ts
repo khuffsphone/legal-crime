@@ -2,6 +2,7 @@
 // produces the same world for the same seed.
 
 import { STARTING_CREW_UPKEEP } from './constants';
+import { CITY_ARCHETYPES, GRID3_NEIGHBORS } from './city';
 import { Rng, seedToCursor } from './rng';
 import type { Business, District, Family, GameState } from './types';
 
@@ -65,9 +66,46 @@ function makeFamily(id: string, name: string, isPlayer: boolean): Family {
  * front businesses and a police-presence rating. Player starts in the first district
  * with a small foothold; two rival families seed control in others.
  */
+/** RTS-16 — the big 9-district contested city (a 3×3 grid with identities + adjacency). Opt-in
+ * (createInitialState({ bigCity: true })) so the legacy 5-district map stays the default. */
+function buildBigCity(rng: Rng): District[] {
+  return CITY_ARCHETYPES.map((proto, di) => {
+    const id = `district-${di}`;
+    const businessCount = rng.nextInt(2, 4);
+    const businesses: Business[] = [];
+    for (let bi = 0; bi < businessCount; bi++) {
+      const baseIncome = 50 + proto.wealth * 22 + rng.nextInt(0, 4) * 10; // richer = fatter
+      businesses.push({
+        id: `${id}-front-${bi}`,
+        name: FRONT_NAMES[rng.nextInt(0, FRONT_NAMES.length - 1)],
+        kind: 'front',
+        baseIncome,
+        heatPerTick: 0,
+        districtId: id,
+        uncollected: 0,
+      });
+    }
+    const control: Record<string, number> = {};
+    if (di === 0) control.player = 30; // your home corner
+    if (di === 2) control['rival-a'] = 40; // The Moretti home (rich Heights)
+    if (di === 6) control['rival-b'] = 40; // The Kowalski home (South Side)
+    return {
+      id,
+      name: proto.name,
+      control,
+      policePresence: rng.nextInt(10, 30) + Math.round(proto.heatSensitivity * 30),
+      businesses,
+      wealth: proto.wealth,
+      heatSensitivity: proto.heatSensitivity,
+      archetype: proto.archetype,
+      neighbors: GRID3_NEIGHBORS[di].map((n) => `district-${n}`),
+    };
+  });
+}
+
 export function createInitialState(
   seed: number,
-  options?: { shocks?: boolean; startingCrew?: boolean; tutorialFreeRuns?: number },
+  options?: { shocks?: boolean; startingCrew?: boolean; tutorialFreeRuns?: number; bigCity?: boolean },
 ): GameState {
   const rng = new Rng(seedToCursor(seed));
 
@@ -89,26 +127,22 @@ export function createInitialState(
     player.ties = [{ a: 'player-g-0', b: 'player-g-1', kind: 'ally' }];
   }
 
-  const districts: District[] = DISTRICT_NAMES.map((name, di) => {
-    const id = `district-${di}`;
-    const businessCount = rng.nextInt(2, 4);
-    const businesses: Business[] = [];
-    for (let bi = 0; bi < businessCount; bi++) {
-      businesses.push(makeFront(rng, id, bi, rng));
-    }
-    const control: Record<string, number> = {};
-    // Player gets a foothold in district 0; rivals seed their home turf.
-    if (di === 0) control.player = 30;
-    if (di === 2) control['rival-a'] = 40;
-    if (di === 4) control['rival-b'] = 40;
-    return {
-      id,
-      name,
-      control,
-      policePresence: rng.nextInt(10, 40),
-      businesses,
-    };
-  });
+  const districts: District[] = options?.bigCity
+    ? buildBigCity(rng)
+    : DISTRICT_NAMES.map((name, di) => {
+        const id = `district-${di}`;
+        const businessCount = rng.nextInt(2, 4);
+        const businesses: Business[] = [];
+        for (let bi = 0; bi < businessCount; bi++) {
+          businesses.push(makeFront(rng, id, bi, rng));
+        }
+        const control: Record<string, number> = {};
+        // Player gets a foothold in district 0; rivals seed their home turf.
+        if (di === 0) control.player = 30;
+        if (di === 2) control['rival-a'] = 40;
+        if (di === 4) control['rival-b'] = 40;
+        return { id, name, control, policePresence: rng.nextInt(10, 40), businesses };
+      });
 
   return {
     seed,
@@ -124,6 +158,7 @@ export function createInitialState(
     weekElapsed: 0,
     units: [],
     tutorialFreeRuns: options?.tutorialFreeRuns ?? 0,
+    strategyElapsed: 0,
     incidents: [],
     incidentSeq: 0,
     incidentLogCursor: 0,
