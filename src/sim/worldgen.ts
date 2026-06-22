@@ -109,6 +109,11 @@ export function generateWorld(state: GameState, opts: WorldGenOptions = {}): Wor
     if (inb(size, t.gx, t.gy)) tiles[idx(size, t.gx, t.gy)] = 'building';
   });
 
+  // SIDEWALKS — every open 'ground' tile fronting a road becomes a curbed sidewalk strip (the half-tone
+  // band the ground layer reads + the pedestrian graph a later pass walks). Derived last so it never
+  // overwrites a building/park/plaza tile; only 'ground' is reclassified.
+  paintSidewalks(tiles, size);
+
   return { size, cols: size, rows: size, tiles, districtOfTile, districts: worldDistricts, hqTiles, businessTiles };
 }
 
@@ -162,6 +167,23 @@ export function tileKindAt(layout: WorldLayout, gx: number, gy: number): TileKin
   return layout.tiles[y * layout.size + g];
 }
 
+const ORTHO: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+/** Reclassify open 'ground' tiles that orthogonally front an avenue/street as 'sidewalk'. Reads the
+ * original road kinds only (no cascade), so it never touches building/park/plaza tiles. */
+function paintSidewalks(tiles: TileKind[], size: number): void {
+  const road = (gx: number, gy: number): boolean => {
+    if (!inb(size, gx, gy)) return false;
+    const k = tiles[idx(size, gx, gy)];
+    return k === 'avenue' || k === 'street';
+  };
+  const snapshot = tiles.slice();
+  for (let gy = 0; gy < size; gy++) for (let gx = 0; gx < size; gx++) {
+    if (snapshot[idx(size, gx, gy)] !== 'ground') continue;
+    if (ORTHO.some(([dx, dy]) => road(gx + dx, gy + dy))) tiles[idx(size, gx, gy)] = 'sidewalk';
+  }
+}
+
 /** Fraction of a district's tiles that are OPEN (not building) — the sparseness read (≥ ~0.9 here). */
 export function openFraction(layout: WorldLayout, districtId: string): number {
   let total = 0, open = 0;
@@ -172,4 +194,48 @@ export function openFraction(layout: WorldLayout, districtId: string): number {
     if (layout.tiles[gy * layout.size + gx] !== 'building') open++;
   }
   return total > 0 ? open / total : 1;
+}
+
+// ── STATIC SET DRESSING scatter (RTS-30b-ground) ───────────────────────────────────────────────
+// Pure placement of faction-NEUTRAL scenery props, driven entirely by the worldgen tile classes:
+// lampposts + hydrants/mailboxes on sidewalk corners, curbside parked cars on roads, trees/benches in
+// parks + plazas, trees/fences in the open yard 'ground' setbacks. Deterministic per (layout, seed) so
+// a city is stable. NEVER places on a 'building' tile, so a prop can never read as interactive. The
+// scene bakes a cached texture per kind once and blits these — render stays viewport-culled + LOD'd.
+
+export type PropKind = 'lamppost' | 'tree' | 'hydrant' | 'mailbox' | 'bench' | 'car' | 'fence';
+export interface PropPlacement { kind: PropKind; gx: number; gy: number; }
+export interface ScatterOptions { seed?: number; }
+
+/** Deterministic static-prop scatter from the tile classes. Pure (no Phaser). */
+export function scatterProps(layout: WorldLayout, opts: ScatterOptions = {}): PropPlacement[] {
+  const size = layout.size;
+  const prng = new Rng(((opts.seed ?? 1) ^ 0x30b0) >>> 0);
+  const rng = (): number => prng.nextFloat();
+  const kindAt = (gx: number, gy: number): TileKind => (inb(size, gx, gy) ? layout.tiles[idx(size, gx, gy)] : 'ground');
+  const isRoad = (k: TileKind): boolean => k === 'avenue' || k === 'street';
+  const roadNeighbours = (gx: number, gy: number): number => ORTHO.reduce((n, [dx, dy]) => n + (isRoad(kindAt(gx + dx, gy + dy)) ? 1 : 0), 0);
+  const touches = (gx: number, gy: number, k: TileKind): boolean => ORTHO.some(([dx, dy]) => kindAt(gx + dx, gy + dy) === k);
+  const out: PropPlacement[] = [];
+  // walk in a fixed row-major order; advance the rng once per tile so accepts are order-stable.
+  for (let gy = 0; gy < size; gy++) for (let gx = 0; gx < size; gx++) {
+    const k = kindAt(gx, gy);
+    if (k === 'building') continue; // never on an interactive/business tile
+    const r = rng();
+    if (k === 'sidewalk') {
+      const corner = roadNeighbours(gx, gy);
+      if (corner >= 2 && r < 0.14) out.push({ kind: r < 0.07 ? 'hydrant' : 'mailbox', gx, gy });
+      else if (corner >= 1 && r < 0.13) out.push({ kind: 'lamppost', gx, gy });
+    } else if (k === 'park') {
+      if (r < 0.20) out.push({ kind: 'tree', gx, gy });
+      else if (r < 0.26) out.push({ kind: 'bench', gx, gy });
+    } else if (k === 'plaza') {
+      if (r < 0.07) out.push({ kind: 'bench', gx, gy });
+    } else if (isRoad(k)) {
+      if (touches(gx, gy, 'sidewalk') && r < 0.05) out.push({ kind: 'car', gx, gy }); // curbside parking
+    } else if (k === 'ground') {
+      if (touches(gx, gy, 'building') && r < 0.12) out.push({ kind: r < 0.05 ? 'tree' : 'fence', gx, gy }); // yard edge
+    }
+  }
+  return out;
 }

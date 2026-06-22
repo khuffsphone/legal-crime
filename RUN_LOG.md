@@ -2541,3 +2541,59 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
 - Gate: typecheck ✅  build ✅  test ✅ (647). ?reveal=1 shows the full sparse city; fly-to-unseen now
   lands with a named, outlined target instead of a black dead-end.
 - Commit: rts30a.1: reveal-all flag + scout hint for map UAT — green
+
+## RTS-30b-ground (Ground plane + static set dressing) — GREEN  (2026-06-22)
+- Summary: Render the GROUND PLANE + scatter STATIC SET DRESSING so the sparse 96² city reads as a
+  living period city instead of buildings floating in black void (Cowork's ?reveal=1 finding: the
+  ground between buildings + the dressing weren't drawn). VISUAL-ONLY — no economy/content/logic/balance
+  change; tick/applyCommand untouched; /src/sim stays Phaser-free; procedural/vector only. NO moving
+  entities (pedestrians/traffic) and NO new building categories — those are the later Tier-3 / living-
+  city passes. 647 → 651 green (+4 pure scatter/sidewalk tests).
+- ROOT CAUSE of the "void": GROUND_COLOR painted every kind near-black + undifferentiated (ground
+  0x1a1a1a, avenue 0x141210, street 0x1b1917) with no seams/curbs/parks/plazas/fountains or props, so
+  with ?reveal=1 the whole map read as black. The data was correct-by-construction; only the render was
+  missing.
+- 1) THE GROUND PLANE (drawn INTO the existing viewport-culled drawGround) — a new GROUND_TONES
+  [lit,shadow] 2-tone per tile kind (low-contrast soot paving, clearly differentiated, never flat
+  black), checker-picked per tile. Per-kind detail at CLOSE+MID (dropped at FAR by LOD): AVENUE/STREET
+  get a dark lane seam; SIDEWALK (newly classified, see below) gets a light CURB edge; PLAZA gets a deco
+  inlay cross; PARK gets grass tufts. FOUNTAINS — each district's plaza landmark — draw as concentric
+  basin ellipses + a slow (900ms, calm/ambient) water shimmer, only for the revealed, in-view districts
+  (~9 max, never per-tile). The black gaps are now asphalt avenues, curbed sidewalks, grass parks, deco
+  plazas + fountains.
+- SIDEWALKS: worldgen never classified them. Added a pure paintSidewalks pass — open 'ground' tiles
+  orthogonally fronting an avenue/street become 'sidewalk' (derived last, reads only road kinds → no
+  cascade, never overwrites a building/park/plaza). This both gives the curb read AND lays the
+  sidewalk graph a future pedestrian pass will walk. (~1253 sidewalk tiles at 96².)
+- 2) STATIC SET DRESSING — a new PURE scatterProps(layout, seed) in worldgen.ts places faction-NEUTRAL
+  scenery driven entirely by the tile classes: lampposts + hydrants/mailboxes on sidewalk corners,
+  curbside parked cars on roads (touching a sidewalk), trees/benches in parks + plazas, trees/fences on
+  the open yard 'ground' setbacks — NEVER on a 'building' tile, so a prop can never read as interactive.
+  ~300 props on the 9216-tile map (3.3% — lived-in, not cluttered; keeps the ~90% soot read). New baked
+  cached textures (cityArt): tree, hydrant, mailbox, bench, fence (all muted greys/browns/greens — no
+  brass, no rival-red, honoring the colour reservation); lamppost + neutral car reused.
+- 3) PLACEMENT — deterministic per (layout, seed) so a city is stable; density tuned sparse; props sit
+  only where the ground type allows (cars curbside, trees in yards/parks, hydrants/mailboxes on sidewalk
+  corners). At most one prop per tile.
+- ⭐ PERFORMANCE (held): the ground enrichment draws through the SAME culled drawGround (only the
+  cam.worldView tile window, padded) — cost bounded by SCREEN, not the 96² map; detail is LOD-dropped at
+  FAR (the existing bulk-soot path). Props are baked-ONCE cached textures (the established lamppost/car
+  pattern), placed as static Images, and kept cheap by: (a) FAR-LOD bulk-hide of ALL props at the
+  strategy zoom (one threshold-cross pass), (b) fog-gating — props start hidden and are revealed by an
+  in-place swap-remove scan (NO per-frame allocation) that's skipped entirely on frames where the fog
+  didn't grow (size-gated → O(1) at rest). No iterating the full tile array per frame; no new hot-loop
+  allocation. ~300 cached sprites is trivial for the batcher. FPS can't be sampled headlessly — the
+  live [P] overlay remains for Cowork; the culled/cached/LOD'd structure says the baseline holds.
+- TESTS (+4, all pure): scatterProps determinism per (layout, seed) + never on a building tile;
+  per-kind tile-class legality (cars on roads, trees in parks/yards, lamppost/hydrant/mailbox on
+  sidewalks, …); sparseness (≤1 prop/tile, < 10% of tiles); sidewalk classification (every sidewalk
+  fronts a road; no business tile became a sidewalk). 647 + 4 = 651.
+- Files: src/sim/worldgen.ts (paintSidewalks + scatterProps + PropKind/PropPlacement), src/sim/index.ts
+  (exports), src/scenes/cityArt.ts (bakeTree/Hydrant/Mailbox/Bench/Fence + TEX keys), src/scenes/
+  IsoScene.ts (GROUND_TONES + groundDetail + drawFountain in the culled drawGround; PROP_SPECS +
+  drawSetDressing + updateDressingVisibility + fields), tests/world.test.ts (+4).
+- Gate: typecheck ✅  build ✅  test ✅ (651). With ?reveal=1 the map now reads as a city: wide asphalt
+  avenues with lane seams, curbed sidewalks, grass parks with tufts/benches/trees, deco plazas with
+  fountains, and ~300 scattered neutral props filling the void — culled + cached + LOD'd so the frame
+  rate holds, and NOT one moving entity or new building category was added (Tier-3).
+- Commit: rts30b-ground: ground plane + static set dressing — green

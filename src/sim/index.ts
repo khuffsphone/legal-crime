@@ -270,10 +270,14 @@ export {
   districtOfTile as districtOfWorldTile,
   tileKindAt,
   openFraction,
+  scatterProps,
   type WorldLayout,
   type WorldDistrict,
   type TileKind,
   type WorldGenOptions,
+  type PropKind,
+  type PropPlacement,
+  type ScatterOptions,
 } from './worldgen';
 export {
   districtStatusOf,

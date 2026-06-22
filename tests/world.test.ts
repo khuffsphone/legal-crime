@@ -1,7 +1,7 @@
 // RTS-30a — the sparse world generator invariants + the reworked district-status read.
 import { describe, it, expect } from 'vitest';
 import { createInitialState } from '../src/sim/state';
-import { generateWorld, tileKindAt, districtOfTile, openFraction } from '../src/sim/worldgen';
+import { generateWorld, tileKindAt, districtOfTile, openFraction, scatterProps } from '../src/sim/worldgen';
 import { districtStatusOf, cityRoster, citySummary } from '../src/sim/districtStatus';
 import { businessTileOf, hqTileOf } from '../src/sim/mapEconomy';
 import { HOLD_THRESHOLD } from '../src/sim/constants';
@@ -66,6 +66,60 @@ describe('sparse world generator', () => {
     const b = generateWorld(big(7), { size: 64 });
     expect(a.tiles).toEqual(b.tiles);
     expect(a.businessTiles).toEqual(b.businessTiles);
+  });
+
+  it('SIDEWALKS: open ground fronting a road is reclassified, and a sidewalk never overwrites a building', () => {
+    const s = big();
+    const w = generateWorld(s, { size: 64 });
+    const isRoad = (gx: number, gy: number): boolean => { const k = tileKindAt(w, gx, gy); return k === 'avenue' || k === 'street'; };
+    let sidewalks = 0;
+    for (let gx = 0; gx < w.size; gx++) for (let gy = 0; gy < w.size; gy++) {
+      if (tileKindAt(w, gx, gy) !== 'sidewalk') continue;
+      sidewalks++;
+      // every sidewalk tile fronts at least one road (it was derived that way)
+      expect(isRoad(gx + 1, gy) || isRoad(gx - 1, gy) || isRoad(gx, gy + 1) || isRoad(gx, gy - 1)).toBe(true);
+    }
+    expect(sidewalks).toBeGreaterThan(0);
+    // no business tile became a sidewalk
+    for (const d of s.districts) for (const b of d.businesses) {
+      const t = businessTileOf(w, b.id)!;
+      expect(tileKindAt(w, t.gx, t.gy)).toBe('building');
+    }
+  });
+});
+
+describe('static set-dressing scatter (RTS-30b-ground)', () => {
+  it('is deterministic per (layout, seed) and NEVER places a prop on a building/business tile', () => {
+    const s = big();
+    const w = generateWorld(s, { size: 64 });
+    const a = scatterProps(w, { seed: s.seed });
+    const b = scatterProps(w, { seed: s.seed });
+    expect(a).toEqual(b);
+    expect(a.length).toBeGreaterThan(0);
+    for (const p of a) expect(tileKindAt(w, p.gx, p.gy)).not.toBe('building');
+  });
+
+  it('places each prop only where its tile class allows (cars on roads, trees in parks/yards, …)', () => {
+    const s = big();
+    const w = generateWorld(s, { size: 64 });
+    for (const p of scatterProps(w, { seed: s.seed })) {
+      const k = tileKindAt(w, p.gx, p.gy);
+      if (p.kind === 'lamppost' || p.kind === 'hydrant' || p.kind === 'mailbox') expect(k).toBe('sidewalk');
+      else if (p.kind === 'car') expect(k === 'avenue' || k === 'street').toBe(true);
+      else if (p.kind === 'bench') expect(k === 'park' || k === 'plaza').toBe(true);
+      else if (p.kind === 'tree') expect(k === 'park' || k === 'ground').toBe(true);
+      else if (p.kind === 'fence') expect(k).toBe('ground');
+    }
+  });
+
+  it('stays sparse — at most one prop per tile, lived-in not cluttered', () => {
+    const s = big();
+    const w = generateWorld(s, { size: 96 });
+    const props = scatterProps(w, { seed: s.seed });
+    const seen = new Set<string>();
+    for (const p of props) { const key = `${p.gx},${p.gy}`; expect(seen.has(key)).toBe(false); seen.add(key); }
+    // well under one prop per ~10 tiles of the 9216-tile map (sparse, keeps the soot read)
+    expect(props.length).toBeLessThan(w.size * w.size * 0.1);
   });
 });
 

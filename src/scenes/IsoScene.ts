@@ -109,9 +109,11 @@ import {
   citySummary,
   generateWorld,
   tileKindAt,
+  scatterProps,
   WORLD_SIZE,
   type WorldLayout,
   type WorldDistrict,
+  type PropPlacement,
   recordExtortVisit,
   extortProgress,
   createFog,
@@ -177,11 +179,35 @@ const SCENE_WEEK_SECONDS = 55;
 const SCENE_PULSE_SECONDS = 10;
 
 
-// RTS-30a — the sparse-world ground palette (per tile kind), ~90% soot/asphalt per the world-spec.
-const GROUND_COLOR: Record<string, number> = {
-  ground: 0x1a1a1a, avenue: 0x141210, street: 0x1b1917, sidewalk: 0x2e2b27,
-  park: 0x2c3a2c, plaza: 0x262320, building: 0x14110f,
+// RTS-30b-ground — the sparse-world ground palette, per tile kind, as a [lit, shadow] 2-tone (the
+// low-contrast paving the world-spec asks for — soot-dark but clearly DIFFERENTIATED, never flat
+// black so the gaps between buildings read as real ground/roads/parks, not void). Checker-picked.
+const GROUND_TONES: Record<string, [number, number]> = {
+  ground: [0x242019, 0x1e1b15],   // dirt / soot lot
+  avenue: [0x262320, 0x201d1b],   // wide asphalt
+  street: [0x242120, 0x1d1b19],   // asphalt
+  sidewalk: [0x39342c, 0x322d26], // half-tone lighter paving (the curb read)
+  park: [0x33442f, 0x2a3826],     // grass 2-tone
+  plaza: [0x322d25, 0x29251f],    // deco paving
+  building: [0x14110f, 0x14110f], // (the building Graphics draws over this)
 };
+// RTS-30b-ground — per-prop render spec: baked texture + base-anchor origin + a sub-tile pixel nudge
+// + depth bias (props sort UNDER the building massing but over the ground) + a recede alpha.
+interface PropSpec { tex: string; ox: number; oy: number; dx: number; dy: number; dz: number; alpha: number; }
+const PROP_SPECS: Record<string, PropSpec> = {
+  lamppost: { tex: TEX.lamppost, ox: 0.5, oy: 0.96, dx: 0, dy: 6, dz: 3, alpha: 0.92 },
+  tree: { tex: TEX.tree, ox: 0.5, oy: 0.94, dx: 0, dy: 6, dz: 3, alpha: 0.95 },
+  hydrant: { tex: TEX.hydrant, ox: 0.5, oy: 0.92, dx: -10, dy: 6, dz: 2, alpha: 0.9 },
+  mailbox: { tex: TEX.mailbox, ox: 0.5, oy: 0.92, dx: 10, dy: 6, dz: 2, alpha: 0.9 },
+  bench: { tex: TEX.bench, ox: 0.5, oy: 0.85, dx: 0, dy: 4, dz: 2, alpha: 0.9 },
+  car: { tex: TEX.car, ox: 0.5, oy: 0.72, dx: 0, dy: 2, dz: 4, alpha: 0.85 },
+  fence: { tex: TEX.fence, ox: 0.5, oy: 0.82, dx: 0, dy: 4, dz: 1, alpha: 0.8 },
+};
+const SEAM = 0x15120e;  // dark lane / paving expansion seam
+const CURB = 0x4a443a;  // light curb edge on a sidewalk
+const PARK_TUFT = 0x3c4e36; // grass tuft fleck
+const PLAZA_INLAY = 0x40392f; // plaza deco seam
+const FOUNTAIN_WATER = 0x2e3a3a; // muted water (never bright)
 
 // RTS-30a — the three discrete zoom stops (CLOSE / MID resting / FAR strategy).
 const ZOOM_STOPS = [1.0, 0.6, 0.35] as const;
@@ -212,6 +238,12 @@ export class IsoScene extends Phaser.Scene {
   private groundGfx?: Phaser.GameObjects.Graphics; // culled per-frame ground/streets/parks + fog
   private uiCam?: Phaser.Cameras.Scene2D.Camera; // RTS-30a fixed HUD camera (never zooms)
   private scoutCue?: { card: Phaser.GameObjects.Text; outline: Phaser.GameObjects.Graphics }; // RTS-30a.1 fly-to cue
+  // RTS-30b-ground: static set-dressing props (baked-once Images). `dressingDark` is the monotonically
+  // shrinking list still under fog; `dressingFar` tracks the FAR-LOD bulk-hide threshold.
+  private dressing: { img: Phaser.GameObjects.Image; gx: number; gy: number }[] = [];
+  private dressingDark: { img: Phaser.GameObjects.Image; gx: number; gy: number }[] = [];
+  private dressingFar = false;
+  private lastFogSize = -1; // gate the prop-reveal scan: only run when the fog actually grew
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
@@ -382,6 +414,7 @@ export class IsoScene extends Phaser.Scene {
     this.groundGfx = this.add.graphics().setDepth(0);
 
     this.drawCity();
+    this.drawSetDressing(); // RTS-30b-ground: faction-neutral static props on the open tiles
     this.spawnUnits();
     // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
     // the opening pocket around the HQ + starting units into the revealed set.
@@ -540,6 +573,53 @@ export class IsoScene extends Phaser.Scene {
     }
   }
 
+  /** RTS-30b-ground — scatter the faction-NEUTRAL static set dressing (lampposts, trees, parked cars,
+   * hydrants/mailboxes, benches, fences) onto the open non-building tiles the worldgen classified.
+   * Deterministic (seeded by the map seed) + baked-once cached textures. The props start HIDDEN and are
+   * revealed by the fog pass / hidden in bulk at FAR zoom (managed in update) so render stays bounded by
+   * the viewport. Drawn before setupUiCamera so the world/HUD camera split already ignores them. */
+  private drawSetDressing(): void {
+    const props: PropPlacement[] = scatterProps(this.world, { seed: this.state.seed });
+    for (const p of props) {
+      const spec = PROP_SPECS[p.kind];
+      if (!spec) continue;
+      const c = gridToScreen(p.gx, p.gy);
+      const img = this.add.image(c.x + spec.dx, c.y + spec.dy, spec.tex)
+        .setOrigin(spec.ox, spec.oy)
+        .setAlpha(spec.alpha)
+        .setDepth(depthValue(p.gx, p.gy) * 10 + spec.dz)
+        .setVisible(false); // shown when its tile is fog-revealed (update)
+      const rec = { img, gx: p.gx, gy: p.gy };
+      this.dressing.push(rec);
+      this.dressingDark.push(rec);
+    }
+  }
+
+  /** RTS-30b-ground — keep the static dressing viewport-cheap: bulk-hide ALL props at FAR (the strategy
+   * zoom needs washes, not specks), and lazily reveal props as the fog peels back (monotonic — the dark
+   * list only shrinks, via in-place swap-remove so there's NO per-frame allocation). The reveal scan is
+   * skipped entirely on frames where the fog didn't grow (size unchanged), so it's O(1) at rest. */
+  private updateDressingVisibility(): void {
+    const far = this.cameras.main.zoom < 0.45;
+    if (far !== this.dressingFar) {
+      this.dressingFar = far;
+      // threshold cross only: hide all at FAR; on return, re-show the fog-revealed ones.
+      for (const p of this.dressing) p.img.setVisible(!far && isRevealed(this.fog, p.gx, p.gy));
+      this.lastFogSize = -1; // visibility was just overwritten — force one rescan next non-far frame
+    }
+    if (far) return;
+    const fogSize = this.fog.size;
+    if (fogSize === this.lastFogSize) return; // fog didn't grow → nothing newly revealed
+    this.lastFogSize = fogSize;
+    for (let i = this.dressingDark.length - 1; i >= 0; i--) {
+      const p = this.dressingDark[i];
+      if (!isRevealed(this.fog, p.gx, p.gy)) continue;
+      p.img.setVisible(true);
+      this.dressingDark[i] = this.dressingDark[this.dressingDark.length - 1];
+      this.dressingDark.pop();
+    }
+  }
+
   /** RTS-30a — CULLED ground render: each frame draw only the tiles in the camera's view (the big
    * sparse map is ~4096 tiles; we never touch offscreen ones). Fog over unrevealed tiles; a faint
    * district ownership wash; LOD drops per-tile detail at FAR zoom for performance. */
@@ -569,20 +649,58 @@ export class IsoScene extends Phaser.Scene {
       // FAR LOD: a cheap soot fill over the view + only the non-ground features + washes + fog.
       g.fillStyle(0x161310, 1).fillRect(view.x, view.y, view.width, view.height);
     }
+    const detail = !far; // fine paving seams / curbs / grass at CLOSE+MID; dropped at FAR (LOD)
     for (let gx = minGx; gx <= maxGx; gx++) {
       for (let gy = minGy; gy <= maxGy; gy++) {
         const pts = tileCorners(gx, gy);
         if (!isRevealed(this.fog, gx, gy)) { g.fillStyle(0x0e0c0b, 0.97).fillPoints(pts, true); continue; }
         const k = tileKindAt(this.world, gx, gy);
+        const checker = (gx + gy) % 2 === 0;
         if (far && k === 'ground') { /* covered by the bulk soot fill */ }
         else {
-          const checker = (gx + gy) % 2 === 0;
-          g.fillStyle(GROUND_COLOR[k] ?? (checker ? 0x1c1a18 : 0x201d1a), 1).fillPoints(pts, true);
+          const tone = GROUND_TONES[k] ?? GROUND_TONES.ground;
+          g.fillStyle(checker ? tone[0] : tone[1], 1).fillPoints(pts, true);
+          if (detail) this.groundDetail(g, pts, k, gx, gy);
         }
         const w = wash.get(this.world.districtOfTile[gy * size + gx]);
         if (w) { g.fillStyle(w.c, w.a).fillPoints(pts, true); }
       }
     }
+    // FOUNTAINS — the plaza landmark of each (revealed, in-view) district: concentric ellipses with a
+    // slow shimmer. ~9 districts; only the visible ones draw — a handful of ops, never per-tile.
+    if (!far) for (const d of this.world.districts) {
+      if (d.plaza.gx < minGx || d.plaza.gx > maxGx || d.plaza.gy < minGy || d.plaza.gy > maxGy) continue;
+      if (!isRevealed(this.fog, d.plaza.gx, d.plaza.gy)) continue;
+      this.drawFountain(g, d.plaza.gx, d.plaza.gy);
+    }
+  }
+
+  /** Per-tile ground texture by kind (only at CLOSE/MID): road lane seams, the sidewalk curb, plaza
+   * deco inlay, park tufts. Cheap vector — a couple of ops, bounded by the visible-tile count. */
+  private groundDetail(g: Phaser.GameObjects.Graphics, pts: ReturnType<typeof tileCorners>, k: string, gx: number, gy: number): void {
+    const [top, right, bottom, left] = pts;
+    if (k === 'avenue' || k === 'street') {
+      g.lineStyle(1, SEAM, 0.5); g.beginPath(); g.moveTo(left.x, left.y); g.lineTo(right.x, right.y); g.strokePath();
+    } else if (k === 'sidewalk') {
+      // a light curb line along the NW edge (the raised-kerb read)
+      g.lineStyle(1.5, CURB, 0.4); g.beginPath(); g.moveTo(left.x, left.y); g.lineTo(top.x, top.y); g.strokePath();
+    } else if (k === 'plaza') {
+      g.lineStyle(1, PLAZA_INLAY, 0.55); g.beginPath();
+      g.moveTo(top.x, top.y); g.lineTo(bottom.x, bottom.y); g.moveTo(left.x, left.y); g.lineTo(right.x, right.y); g.strokePath();
+    } else if (k === 'park' && (gx * 7 + gy * 3) % 4 === 0) {
+      g.fillStyle(PARK_TUFT, 0.8); g.fillCircle((left.x + right.x) / 2 + ((gx % 3) - 1) * 8, left.y + ((gy % 3) - 1) * 4, 1.6);
+    }
+  }
+
+  /** A plaza FOUNTAIN landmark — concentric basin ellipses + a slow water shimmer (calm, ambient). */
+  private drawFountain(g: Phaser.GameObjects.Graphics, gx: number, gy: number): void {
+    const c = gridToScreen(gx, gy);
+    const shimmer = 0.5 + 0.5 * Math.sin(this.time.now / 900); // slow, never the danger tempo
+    g.fillStyle(0x322d25, 1); g.fillEllipse(c.x, c.y, 46, 24); // stone basin rim
+    g.fillStyle(0x29251f, 1); g.fillEllipse(c.x, c.y, 38, 19);
+    g.fillStyle(FOUNTAIN_WATER, 1); g.fillEllipse(c.x, c.y, 30, 15); // water
+    g.fillStyle(0x3a4a4a, 0.5 + 0.3 * shimmer); g.fillEllipse(c.x, c.y - 1, 16 + shimmer * 4, 8); // shimmer ring
+    g.fillStyle(0x4a5a5a, 0.6); g.fillEllipse(c.x, c.y - 2, 4, 3); // central jet base
   }
 
   // ── units ────────────────────────────────────────────────────────────────────────────────
@@ -1785,6 +1903,7 @@ export class IsoScene extends Phaser.Scene {
     this.updateUnits(dt);
     this.revealFog(); // RTS-29: peel back the fog around the HQ + moving units
     this.drawGround(); // RTS-30a: culled ground/streets/parks/fog/washes for the visible tiles only
+    this.updateDressingVisibility(); // RTS-30b-ground: fog-reveal + FAR-LOD bulk-hide of static props
     this.refreshHud();
     this.refreshObjective();
     this.refreshFeed();

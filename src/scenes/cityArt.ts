@@ -66,6 +66,12 @@ export const TEX = {
   carPlayer: 'lcr_car_player', // hero ride, brass coachline + hubs
   carRival: 'lcr_car_rival', // hero ride, blood coachline + hubs
   lamppost: 'lcr_lamppost',
+  // RTS-30b-ground: faction-NEUTRAL static set dressing (muted, low-contrast — never brass/red).
+  tree: 'lcr_tree',
+  hydrant: 'lcr_hydrant',
+  mailbox: 'lcr_mailbox',
+  bench: 'lcr_bench',
+  fence: 'lcr_fence',
   coin: 'lcr_coin',
   tileStreet: 'lcr_tile_street',
   tileLot: 'lcr_tile_lot',
@@ -367,6 +373,83 @@ function bakeLamppost(scene: Phaser.Scene): void {
   g.destroy();
 }
 
+// ── RTS-30b-ground: faction-neutral STATIC SET DRESSING (muted greys/browns/greens only) ───────
+// The governing law: ambient scenery is atmosphere behind the instrument panel — never brass (player/
+// money), never red (rival/danger). Drawn once, cached, blitted by the culled scene draw.
+
+/** A deco street TREE — a soot-dark trunk + a muted two-tone canopy. Anchored at the base. */
+function bakeTree(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.tree)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 26, H = 34, cx = W / 2;
+  g.fillStyle(PAL.sootDeep, 0.3); g.fillEllipse(cx, H - 2, 16, 5); // contact shadow
+  g.fillStyle(0x3a2c20, 1); g.fillRect(cx - 1.5, H - 12, 3, 12); // trunk
+  g.fillStyle(0x283626, 1); g.fillEllipse(cx, H - 17, 22, 18); // canopy (shadow tone)
+  g.fillStyle(0x33442f, 1); g.fillEllipse(cx - 2, H - 19, 16, 13); // NW-lit canopy mass
+  g.fillStyle(0x3c4e36, 0.8); g.fillEllipse(cx - 4, H - 22, 8, 7); // top highlight clump
+  g.generateTexture(TEX.tree, W, H);
+  g.destroy();
+}
+
+/** A cast-iron FIRE HYDRANT — dull iron, NOT rival-red (the law). Tiny. */
+function bakeHydrant(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.hydrant)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 10, H = 14, cx = W / 2;
+  g.fillStyle(PAL.sootDeep, 0.3); g.fillEllipse(cx, H - 1, 8, 3);
+  g.fillStyle(0x4a4036, 1); g.fillRoundedRect(cx - 2.5, 4, 5, 9, 1.5); // body
+  g.fillStyle(0x5a5043, 1); g.fillRect(cx - 2.5, 4, 2, 9); // NW lit edge
+  g.fillStyle(0x4a4036, 1); g.fillRect(cx - 4, 7, 8, 2); // side caps
+  g.fillStyle(0x3a342e, 1); g.fillEllipse(cx, 3.5, 6, 3); // bonnet
+  g.generateTexture(TEX.hydrant, W, H);
+  g.destroy();
+}
+
+/** A civic MAILBOX — muted slate-blue civic box on a post (neutral, not federal-green/brass). */
+function bakeMailbox(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.mailbox)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 12, H = 16, cx = W / 2;
+  g.fillStyle(PAL.sootDeep, 0.3); g.fillEllipse(cx, H - 1, 9, 3);
+  g.fillStyle(0x2a2620, 1); g.fillRect(cx - 1, 8, 2, 7); // post
+  g.fillStyle(0x3a4048, 1); g.fillRoundedRect(cx - 4, 3, 8, 7, 2); // domed body (slate)
+  g.fillStyle(0x474f59, 1); g.fillRect(cx - 4, 3, 8, 2); // lit dome top
+  g.fillStyle(PAL.sootDeep, 1); g.fillRect(cx - 3, 6.5, 6, 1.4); // letter slot
+  g.generateTexture(TEX.mailbox, W, H);
+  g.destroy();
+}
+
+/** A park/plaza BENCH — wood slats on iron legs, muted. Low + wide. */
+function bakeBench(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.bench)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 24, H = 14, cx = W / 2;
+  g.fillStyle(PAL.sootDeep, 0.3); g.fillEllipse(cx, H - 1, 20, 4);
+  g.fillStyle(0x2a2620, 1); g.fillRect(4, 7, 2, 6); g.fillRect(W - 6, 7, 2, 6); // iron legs
+  g.fillStyle(0x4a3a2a, 1); g.fillRect(3, 6, W - 6, 2.4); // seat plank
+  g.fillStyle(0x563f2c, 1); g.fillRect(3, 5.6, W - 6, 1); // lit plank edge
+  g.fillStyle(0x4a3a2a, 1); g.fillRect(3, 1, W - 6, 2.2); // back rail
+  g.fillStyle(0x2a2620, 1); g.fillRect(4, 1, 1.6, 5); g.fillRect(W - 5.6, 1, 1.6, 5); // back posts
+  g.generateTexture(TEX.bench, W, H);
+  g.destroy();
+}
+
+/** A low yard FENCE segment — a soot-iron picket row (yard-edge dressing). */
+function bakeFence(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEX.fence)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 44, H = 16;
+  g.fillStyle(PAL.sootDeep, 0.25); g.fillEllipse(W / 2, H - 1, 40, 4);
+  g.fillStyle(0x322a22, 1); g.fillRect(2, 9, W - 4, 1.6); // bottom rail
+  g.fillStyle(0x322a22, 1); g.fillRect(2, 4, W - 4, 1.6); // top rail
+  g.fillStyle(0x3a322a, 1);
+  for (let x = 3; x < W - 3; x += 4) g.fillRect(x, 2, 1.4, 10); // pickets
+  g.fillStyle(0x241c17, 1);
+  for (let x = 3; x < W - 3; x += 4) g.fillRect(x + 1, 2, 0.5, 10); // shadow side
+  g.generateTexture(TEX.fence, W, H);
+  g.destroy();
+}
+
 /** The rotating brass "protection" coin (a % badge) that floats over an extorted front. */
 function bakeCoin(scene: Phaser.Scene): void {
   if (scene.textures.exists(TEX.coin)) return;
@@ -486,6 +569,11 @@ export function buildCityTextures(scene: Phaser.Scene): void {
   bakeCar(scene, TEX.carPlayer, PAL.brass, false); // hero ride (brass coachline + hubs)
   bakeCar(scene, TEX.carRival, PAL.blood, false); // hero ride (blood coachline + hubs)
   bakeLamppost(scene);
+  bakeTree(scene);
+  bakeHydrant(scene);
+  bakeMailbox(scene);
+  bakeBench(scene);
+  bakeFence(scene);
   bakeCoin(scene);
   bakeTile(scene, TEX.tileStreet, PAL.charcoal, PAL.slate, PAL.soot);
   bakeTile(scene, TEX.tileLot, 0x221d18, PAL.charcoal, PAL.ink);
