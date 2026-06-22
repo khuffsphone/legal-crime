@@ -125,7 +125,8 @@ import {
 import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, heatLabel, shockFlavor, bribeChannelLabel } from './theme';
 import {
   buildCityTextures,
-  figureKeyForRole,
+  figureKeyFor,
+  richArt,
   drawIsoBuilding,
   BUILDING_STYLES,
   TEX,
@@ -193,6 +194,9 @@ export class IsoScene extends Phaser.Scene {
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
+  // RTS-26: the drawn building per business + its current style key + tile, so a vice upgrade can
+  // MORPH it (speakeasy → casino) by redrawing on the event (cached between events, never per-frame).
+  private bizBuildings = new Map<string, { gfx: Phaser.GameObjects.Graphics; styleKey: string; gx: number; gy: number; depth: number }>();
   private routeGfx?: Phaser.GameObjects.Graphics; // RTS-22 the drawn collection route
   private ctxMenu?: Phaser.GameObjects.Container; // RTS-22 right-click EXTORT/ATTACK menu
   private ctxRect?: { x: number; y: number; w: number; h: number };
@@ -317,6 +321,7 @@ export class IsoScene extends Phaser.Scene {
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
 
     this.drawCity();
+    this.drawPeriodDressing();
     this.spawnUnits();
 
     // RTS-22: frame the player's home neighbourhood (where the extort-first opening happens), zoomed
@@ -420,8 +425,13 @@ export class IsoScene extends Phaser.Scene {
           .setStrokeStyle(1.5, hexNum(SPEC.fog), 0.5)
           .setDepth(depthValue(t.gx, t.gy) * 10 + 1);
         this.bizPlates.set(biz.id, plate);
-        const styleKey = biz.kind === 'front' ? 'storefront' : biz.kind === 'speakeasy' || biz.kind === 'numbers' ? 'speakeasy' : 'warehouse';
-        const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], depthValue(t.gx, t.gy) * 10 + 5);
+        // RTS-26: an upgraded vice racket (rts24 viceRung) reads as a CASINO; else its base style.
+        const upgraded = (biz.viceRung ?? 0) >= 2 && (biz.kind === 'speakeasy' || biz.kind === 'numbers');
+        const styleKey = upgraded ? 'casino'
+          : biz.kind === 'front' ? 'storefront' : biz.kind === 'speakeasy' || biz.kind === 'numbers' ? 'speakeasy' : 'warehouse';
+        const bdepth = depthValue(t.gx, t.gy) * 10 + 5;
+        const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], bdepth);
+        this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth });
         const glow = this.add
           .image(roof.roofX, roof.roofY - 6, TEX.glow)
           .setDepth(depthValue(t.gx, t.gy) * 10 + 6)
@@ -464,6 +474,34 @@ export class IsoScene extends Phaser.Scene {
 
   // ── units ────────────────────────────────────────────────────────────────────────────────
 
+  /** RTS-26 — sparse period set-dressing drawn ONCE (cached, never per-frame): cast-iron lampposts
+   * with a warm glow at street corners, and a few parked Cadillacs along the kerb. Rich-art only. */
+  private drawPeriodDressing(): void {
+    if (!richArt()) return;
+    const occupied = new Set<string>();
+    for (const b of BLOCKS) occupied.add(`${b.gx},${b.gy}`);
+    for (const id of this.bizBuildings.keys()) { const r = this.bizBuildings.get(id)!; occupied.add(`${r.gx},${r.gy}`); }
+    // lampposts at a handful of road intersections
+    let lamps = 0;
+    for (let gx = 4; gx < COLS && lamps < 7; gx += 4) {
+      for (let gy = 4; gy < ROWS && lamps < 7; gy += 8) {
+        if (occupied.has(`${gx},${gy}`)) continue;
+        const c = gridToScreen(gx, gy);
+        const d = depthValue(gx, gy) * 10 + 4;
+        this.add.image(c.x, c.y - 18, TEX.glow).setTint(hexNum(SPEC.brass)).setScale(0.5).setAlpha(0.18).setDepth(d - 1);
+        this.add.image(c.x, c.y, TEX.lamppost).setOrigin(0.5, 0.95).setDepth(d);
+        lamps++;
+      }
+    }
+    // a few parked Cadillacs along the kerb (road columns, between blocks)
+    const carSpots: [number, number][] = [[4, 2], [8, 10], [12, 6], [4, 14]];
+    for (const [gx, gy] of carSpots) {
+      if (occupied.has(`${gx},${gy}`)) continue;
+      const c = gridToScreen(gx, gy);
+      this.add.image(c.x, c.y + 4, TEX.car).setOrigin(0.5, 0.7).setDepth(depthValue(gx, gy) * 10 + 4);
+    }
+  }
+
   private spawnUnits(): void {
     // Your two starting button men, near the home front (the player drives the first move now).
     this.addUnit(spawnUnit('muscle-1', 3, 2), 'player');
@@ -487,7 +525,7 @@ export class IsoScene extends Phaser.Scene {
     const shadow = this.add.ellipse(0, 0, 22, 11, PAL.soot, 0.5);
     const factionRing = this.add.ellipse(0, 0, 26, 13).setStrokeStyle(2, ringColor, 0.9);
     const selRing = this.add.ellipse(0, 0, 38, 20).setStrokeStyle(3, PAL.brass, 1).setVisible(false);
-    const sprite = this.add.image(0, 0, figureKeyForRole(unit.role)).setOrigin(0.5, 0.92);
+    const sprite = this.add.image(0, 0, figureKeyFor(unit.role, faction)).setOrigin(0.5, 0.92);
     const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing };
     if (unit.role === 'collector') {
       view.dangerRing = this.add.ellipse(0, 0, 40, 22).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
@@ -1015,10 +1053,33 @@ export class IsoScene extends Phaser.Scene {
       const b = allBusinesses(this.state).find((x) => x.id === id);
       const t = b ? businessTileOf(this.layout, id) : undefined;
       if (t) { const c = gridToScreen(t.gx, t.gy); this.floatText(c.x, c.y - 30, `${ladder.label} ▲`, NOIR_PALETTE.brass); }
+      this.morphBuildingIfUpgraded(id); // RTS-26: speakeasy → casino silhouette on the upgrade
       this.setStatus(`upgraded → ${ladder.next.name} (+$${ladder.next.incomeBump}/wk)`);
     } else {
       this.setStatus(`UPGRADE — ${res.reason}`);
     }
+  }
+
+  /** RTS-26 — redraw a racket's building as a CASINO once its vice rung crosses the morph threshold.
+   * Event-driven: it destroys the old cached Graphics and bakes the new silhouette ONCE, then leaves
+   * it static (no per-frame redraw). A no-op if the style is already current. */
+  private morphBuildingIfUpgraded(bizId: string): void {
+    const rec = this.bizBuildings.get(bizId);
+    const biz = allBusinesses(this.state).find((x) => x.id === bizId);
+    if (!rec || !biz) return;
+    const upgraded = (biz.viceRung ?? 0) >= 2 && (biz.kind === 'speakeasy' || biz.kind === 'numbers');
+    const wantKey = upgraded ? 'casino' : rec.styleKey;
+    if (wantKey === rec.styleKey && wantKey !== 'casino') return;
+    if (rec.styleKey === 'casino') return; // already morphed
+    if (!upgraded) return;
+    rec.gfx.destroy();
+    const c = gridToScreen(rec.gx, rec.gy);
+    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.casino, rec.depth);
+    this.bizBuildings.set(bizId, { ...rec, gfx: roof.gfx, styleKey: 'casino' });
+    // lift the coin/glow markers to the taller roof
+    const m = this.bizMarkers.get(bizId);
+    if (m) { m.roofY = roof.roofY; m.coin.setY(roof.roofY - 6); if (m.glow) m.glow.setY(roof.roofY - 6); }
+    this.cameras.main.flash(180, 184, 134, 43, false); // a brass flash beat (event, ≤1.1s)
   }
 
   /** [M] open/close THE MARKET right-dock tab. */

@@ -2127,3 +2127,54 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
 - Gate: typecheck ✅  build ✅  test ✅ (602 — unchanged; no new pure /src/sim helpers, so no new
   tests, per the brief). No behaviour/test regressions.
 - Commit: rts25: Readability & Performance — green
+
+## RTS-26 (Procedural Gangster Art) — GREEN  (2026-06-22)
+- Summary: A procedural-ART elevation pass — the units and city now read as 1920s Prohibition Chicago,
+  still 100% code-drawn vector (no raster assets imported). NO new systems/content/logic; tick &
+  applyCommand untouched; /src/sim pure & Phaser-free. Built on the rts25 frame loop (which is left
+  byte-for-byte unchanged) so the perf fixes hold. 602 → 607 green (+5 for the extracted pure flag
+  parser). All new art is baked to textures or drawn ONCE at create — zero new per-frame work.
+- UNIT SILHOUETTES (cityArt.ts drawFigureRich, baked once per faction to 32×48 textures):
+  • THUG — fedora with a real brim + pinched crown, DOUBLE-BREASTED suit (broad padded shoulders,
+    peaked lapels, two columns of faction-coloured buttons), wide stance, a hand tucked in the coat.
+  • THOMPSON MAN (role 'enforcer') — same period dress + a TOMMY GUN held diagonally across the body
+    (barrel quad + round drum magazine + wooden stock): the unmistakable "armed" silhouette.
+  • COLLECTOR — the unassuming courier: fedora, a shoulder strap, and a fat CASH SATCHEL with a brass
+    clasp on the hip, so the interceptable-courier reads on sight.
+  • CADILLAC (TEX.car) — a period 1930s sedan (long hood, rounded fenders over the wheels, running
+    board, vertical grille, lit headlamp, cabin windows). Shipped as parked SET-DRESSING (no car unit
+    exists in the sim; adding one would be a logic change), which also serves the "parked-car" period
+    detail the brief asked for.
+- FACTION READ: figureKeyFor(role, faction) resolves a faction-specific baked texture — PLAYER figures
+  carry BRASS accents (hatband/tie/buttons), RIVAL figures carry static BLOOD-RED #9E1B1B accents —
+  on top of the existing brass/blood foot-ring. Player-vs-rival is unmistakable by accent + colour,
+  never by text. Danger-red #E11D1D stays motion-only (red discipline preserved).
+- BUILDINGS (drawIsoBuilding, drawn once at create): elevated with an art-deco stepped CORNICE, a
+  striped door AWNING, and a hanging neon SIGN; windows render warm when lit / dead-dark when shut
+  (the lit/shut read), over the existing brick + soot walls and the rts22 ownership PLATE (untouched).
+  New 'casino' style = the rts24 vice-morph target: a speakeasy/numbers racket whose viceRung ≥ 2
+  MORPHS (taller, brass-trimmed casino silhouette) — redrawn once on the upgrade event via
+  morphBuildingIfUpgraded (destroy + re-bake the one Graphics, then static), with a brass camera flash.
+- PERIOD DETAILS (drawPeriodDressing, once, rich-only): cast-iron LAMPPOSTS with a warm glow at a few
+  street corners + parked CADILLACS along the kerb, placed off building/block tiles.
+- MOTION: within budget — figures keep the rts-era idle sway / brass selection ring; the morph + flash
+  are ≤1.1s one-shots. No figure is re-rendered per frame (they're GPU-resident baked textures).
+- CACHING / PERFORMANCE (non-negotiable, held): every figure/car/lamppost is generateTexture-baked
+  ONCE at boot; every building + dressing is drawn ONCE at create; the morph is event-driven (a vice
+  upgrade), never per-frame. The rts25 update() loop is unchanged (updateUnits → refreshHud →
+  refreshObjective → refreshFeed → refreshCrew → refreshStrategy → refreshNight → samplePerf) — ZERO
+  new per-frame work. So FPS is structurally identical to the rts25 baseline; the in-app [P] overlay
+  (FPS · frame ms · text-raster/s) verifies it live, and `?art=lean` A/Bs rich-vs-old to isolate any
+  perf concern. (Browser FPS can't be sampled in this headless env; the proof is the unchanged frame
+  loop + the all-cached art — figures remain the same 32×48 textured quads they were, so per-frame
+  GPU cost is unchanged.)
+- FEATURE FLAG: parseArtMode() (NEW pure, Phaser-free, src/scenes/artMode.ts; tested) → richArt().
+  Default = rich; `?art=lean` (also basic/off/0/false) = the pre-rts26 "shapes" path (drawFigureLean +
+  plain buildings), baked to the same keys so both paths are drop-in.
+- Files: NEW src/scenes/artMode.ts + tests/artMode.test.ts (5); src/scenes/cityArt.ts (drawFigureRich/
+  Lean, faction bakes, bakeCar/bakeLamppost, casino style, rich drawIsoBuilding, figureKeyFor,
+  richArt); src/scenes/IsoScene.ts (figureKeyFor for unit textures, bizBuildings tracking +
+  morphBuildingIfUpgraded, drawPeriodDressing). No sim changes.
+- Gate: typecheck ✅  build ✅  test ✅ (607; +5 artMode). Procedural/vector only; four channels +
+  50/70/85 untouched; red discipline kept; behaviour/tests un-regressed.
+- Commit: rts26: Procedural Gangster Art — green
