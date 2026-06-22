@@ -2178,3 +2178,67 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
 - Gate: typecheck ✅  build ✅  test ✅ (607; +5 artMode). Procedural/vector only; four channels +
   50/70/85 untouched; red discipline kept; behaviour/tests un-regressed.
 - Commit: rts26: Procedural Gangster Art — green
+
+## RTS-26 (Procedural Gangster Art — built to PROCEDURAL_ART_SPEC) — GREEN  (2026-06-22)
+- Summary: The authoritative PROCEDURAL_ART_SPEC.md (Design canvas) was pasted into this pass, so the
+  rts26 draw routines were ELEVATED to its exact layer breakdowns (the first rts26 commit d7027b4
+  established the pipeline/flag/morph/caching; this builds the spec-faithful art on top). Still 100%
+  code-drawn LAYERED VECTOR, no raster. NO sim/content/logic changes; tick/applyCommand untouched;
+  /src/sim Phaser-free. Built on rts25's frame loop (unchanged) so the perf fixes hold. 607 green
+  (the +5 artMode tests carried from the first pass). All art baked-once / drawn-once; only two cheap
+  per-frame BOOLEAN gates added (satchel-tier change, shut transition) — no new per-frame redraws.
+- UNIT SILHOUETTES (cityArt.drawFigureRich, baked once per faction to 38×56 textures; spec §1):
+  • THUG — broadest planted block: 26px double-breasted shoulders, pinstripe verticals, lapel-V +
+    shirt/tie wedge, two rows of 2 brass-dark buttons, stubby out-held arms+fists, heavy jaw, fedora
+    (brim ellipse + pinched crown). Faction reads TWICE high in the silhouette: hatband + chest
+    POCKET-SQUARE triangle.
+  • THOMPSON MAN — suited mass BROKEN by the gun: a gunmetal barrel quad on the iso diagonal + the
+    DRUM-MAGAZINE circle (the recognition key, always visible) + Cutts compensator + wood stock;
+    bladed stance, brown suit to vary the crowd. Faction = hatband + a small lapel pin (gun stays the
+    read). Muzzle flash stays a motion one-shot (not baked).
+  • COLLECTOR — deliberately unimposing: 18px soft shoulders, forward hunch, mid-stride brown
+    trousers, no gun. Hero prop = the SATCHEL in THREE size TIERS keyed to the carried cash (Light/
+    Heavy/Stuffed; tier-3 gets a brass money-glint notch), swapped by texture only when the tier
+    changes (state-driven). Thin MUTED hatband (lightly marked by design).
+  • CADILLAC — long low 64px sedan: rounded fender arches over the two near wheels (hub + 4 spoke
+    ticks), running boards, long hood + greenhouse cabin (split windscreen), tall vertical-slat grille
+    + twin headlamps + chrome bumper. FACTION accent only on the coachline pinstripe + wheel-hub
+    centres (never the body): a brass hero ride parked at the player HQ, a blood-red one at rival HQs,
+    and a dim faction-NEUTRAL parked variant as street dressing.
+- FACTION READ: figureKeyFor(role, faction[, tier]) → faction-specific baked textures; ONE saturated
+  accent placed at the silhouette's clearest points (brass player / static blood-red #9E1B1B rival),
+  never smeared over the body, plus the existing foot-ring. Danger-red #E11D1D / muzzle #FF5A2C stay
+  motion-only (red discipline).
+- BUILDINGS (drawIsoBuilding rich, per-KIND facade above the brick massing + the ownership PLATE; §2):
+  running-bond brick (mortar courses + offset verticals), stepped deco cornice, soot streaks; then —
+  • STOREFRONT: shop window (mullion cross) + striped awning + hanging shingle; warm pavement spill
+    when lit.  • SPEAKEASY: discreet — narrow recessed door + 4px grilled PEEPHOLE (the recognition
+    detail) + basement-grate amber leak + a contradicting "legit" sign.  • CASINO: a tall deco BLADE
+    SIGN off the corner (ziggurat finial) + a bulb-lined marquee canopy + chevron inlays.  • HQ:
+    pilaster spine + stepped brass crown cornice + two torchère lamps + a faction CREST (brass player
+    / #9E1B1B rival — mirrored seats). Windows render warm amber when LIT, dead-dark + timber X-boards
+    when SHUT/raided. The ownership plate keeps doing faction color; the art layers above it.
+  • SPEAKEASY→CASINO MORPH (rts24 beat preserved, §2.5): on a vice upgrade (viceRung ≥ 2) the building
+    re-bakes to the casino silhouette ONCE + a 0.6s scale-pop (a TRANSFORM tween, not a per-frame
+    redraw) + a brass "OPEN" wax-stamp + flash.
+- PERIOD SET DRESSING (drawPeriodDressing, once, rich-only, non-buildable tiles; §3): cast-iron deco
+  LAMPPOSTS with a hexagon cage + a soft warm pavement glow POOL; a few dim faction-neutral parked
+  Cadillacs along the kerb. Soot-dark, low-contrast, faction-neutral so they never muddy the read.
+- CACHING / PERFORMANCE (held, non-negotiable): every figure/car/lamppost is generateTexture-baked
+  ONCE at boot; every building + dressing is drawn ONCE at create; the morph and the lit/shut relight
+  are EVENT-driven re-bakes (vice upgrade / attack), never per-frame. The rts25 update() loop is
+  unchanged; the only per-frame additions are two O(1) boolean gates (satchel tier-change → setTexture;
+  shut transition → one relight). So FPS is structurally identical to the rts25/rts26 baseline — the
+  in-app [P] overlay (FPS · frame ms · text-raster/s) verifies it live, and `?art=lean` A/Bs rich-vs-
+  the-old-shapes path. (Headless FPS can't be sampled here; the proof is the unchanged frame loop +
+  all-cached art — figures are still single textured quads, now 38×56 vs 32×48.)
+- FEATURE FLAG: parseArtMode() (pure, tested, src/scenes/artMode.ts) → richArt(), cached on the scene.
+  Default rich; `?art=lean` (basic/off/0/false) = the pre-rts26 shapes path (drawFigureLean + plain
+  buildings), baked to the same keys (drop-in).
+- Files: src/scenes/cityArt.ts (spec tokens; drawFigureRich + drawFedora; 3-tier collector bakes;
+  bakeCar faction/parked variants; bakeLamppost hex cage; BuildingStyle.kind + drawFacade per kind +
+  brick texture + lit/shut); src/scenes/IsoScene.ts (figureKeyFor + tier swap; HQ faction crest +
+  hero car; relightBuilding on shut transition; morph scale-pop + OPEN stamp; cached art flag).
+- Gate: typecheck ✅  build ✅  test ✅ (607). Procedural/vector only; four channels + 50/70/85
+  untouched; faction-accent law + red discipline honoured; behaviour/tests un-regressed.
+- Commit: rts26: Procedural Gangster Art — green

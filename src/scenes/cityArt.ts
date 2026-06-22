@@ -16,22 +16,42 @@ export function richArt(): boolean {
 export const PAL = {
   // world / structure (the spec's dominant tones)
   soot: 0x16130f,
+  sootDeep: 0x0e0c0b,
+  sootWarm: 0x1a1410,
   ink: 0x0d0b0a, // deepest shadow
   charcoal: 0x241c17,
   slate: 0x322a22,
   fog: 0x9a8f80,
   brick: 0x7e3326, // lit wall (spec brickLight)
   brickDark: 0x5a241b, // shadow wall (spec brickDark)
+  brickBase: 0x3a211a, // PROCEDURAL_ART_SPEC brick base
+  brickLit: 0x5a3326, // spec brick lit course
+  mortar: 0x6b5344,
   bone: 0xe8e2d4,
   skin: 0xc9a883,
+  fleshLit: 0xc9a07a,
+  fleshDark: 0x9a7355,
   windowLit: 0xe8c87a,
+  // RTS-26 ART SPEC material tokens
+  suitCharcoal: 0x23211e,
+  pinstripe: 0x2e2b27,
+  suitBrown: 0x3a2c20,
+  shirt: 0xd8cdb0,
+  glass: 0x2e3a3a,
+  glassGlow: 0xe3a12b,
+  lamp: 0xf2c879,
+  gunmetal: 0x2a2a2e,
   // state / identity — never decoration
   brass: 0xb8862b, // player + money/value
+  brassHi: 0xe3c36a,
   brassDim: 0x7c5c1d,
+  brassDark: 0x7a5a1e,
   blood: 0x9e1b1b, // RIVAL identity (static)
   bloodDim: 0x5e1414,
   danger: 0xe11d1d, // DANGER motion only
+  muzzle: 0xff5a2c, // muzzle-flash core (motion only)
   cashGreen: 0x4e8b5a, // cash in motion
+  federalGreen: 0x4e8b5a,
 } as const;
 
 /** Texture keys baked once at boot. */
@@ -42,7 +62,9 @@ export const TEX = {
   thug: 'lcr_fig_thug',
   enforcer: 'lcr_fig_enforcer',
   boss: 'lcr_fig_boss',
-  car: 'lcr_car', // a parked period Cadillac (set-dressing)
+  car: 'lcr_car', // neutral parked Cadillac (set-dressing, no faction accent)
+  carPlayer: 'lcr_car_player', // hero ride, brass coachline + hubs
+  carRival: 'lcr_car_rival', // hero ride, blood coachline + hubs
   lamppost: 'lcr_lamppost',
   coin: 'lcr_coin',
   tileStreet: 'lcr_tile_street',
@@ -55,9 +77,11 @@ export const TEX = {
 type Faction = 'player' | 'rival';
 type FigRole = 'thug' | 'thompson' | 'collector';
 
-/** The baked texture key for a unit role + faction (player/rival). */
-export function figureKeyFor(role: string | undefined, faction: Faction): string {
-  const r: FigRole = role === 'collector' ? 'collector' : role === 'enforcer' ? 'thompson' : 'thug';
+/** The baked texture key for a unit role + faction. Collectors have 3 satchel TIERS (1/2/3) keyed
+ * to the carried cash; the scene swaps the texture only when the tier changes (state-driven). */
+export function figureKeyFor(role: string | undefined, faction: Faction, tier: 1 | 2 | 3 = 1): string {
+  if (role === 'collector') return `lcr_fig_collector_${faction}_t${tier}`;
+  const r: FigRole = role === 'enforcer' ? 'thompson' : 'thug';
   return `lcr_fig_${r}_${faction}`;
 }
 
@@ -110,155 +134,211 @@ function drawFigureLean(
   }
 }
 
+// RICH figure canvas — taller than the lean 32×48 so the spec proportions (26px shoulders, the gun
+// bar, the satchel bulge) read. Foot-anchored near the bottom-centre; the scene sets origin 0.5,0.93.
+const FIG_W = 38;
+const FIG_H = 56;
+const FIG_CX = 19;
+const FIG_GROUND = 52;
+
+/** Shared FEDORA — brim ellipse + pinched crown trapezoid + a 2px faction HATBAND (the high, always-
+ * legible faction read). `soft` flattens it for the collector's plainer hat. */
+function drawFedora(g: Phaser.GameObjects.Graphics, cx: number, topY: number, brimW: number, band: number, soft: boolean): void {
+  const crownW = brimW * 0.62;
+  // brim (lit top edge + dark underside so it shadows the eyes)
+  g.fillStyle(PAL.sootDeep, 1);
+  g.fillEllipse(cx, topY + 7, brimW, soft ? 4 : 5);
+  g.fillStyle(PAL.ink, 1);
+  g.fillEllipse(cx + 2, topY + 7.5, brimW * 0.6, 2.6); // front brim shadow over the eyes
+  // pinched crown (trapezoid, NW-lit left face)
+  g.fillStyle(soft ? PAL.suitBrown : PAL.ink, 1);
+  g.fillPoints([
+    { x: cx - crownW / 2, y: topY + 7 }, { x: cx + crownW / 2, y: topY + 7 },
+    { x: cx + crownW / 2 - 1.5, y: topY + (soft ? 1.5 : 0.5) }, { x: cx - crownW / 2 + 1.5, y: topY + (soft ? 1.5 : 0.5) },
+  ], true);
+  g.fillStyle(PAL.slate, 0.5);
+  g.fillRect(cx - crownW / 2 + 1, topY + 1.5, 1.5, 5.5); // NW light edge of the crown
+  if (!soft) { g.fillStyle(PAL.sootDeep, 1); g.fillRect(cx - 1, topY + 1, 2, 5.5); } // pinch crease
+  // hatband (faction)
+  g.fillStyle(band, 1);
+  g.fillRect(cx - crownW / 2, topY + 5.4, crownW, soft ? 1.4 : 2);
+}
+
 /**
- * RICH (rts26) figure — reads as a period mob character: a fedora with a real BRIM + pinched crown, a
- * DOUBLE-BREASTED suit (broad padded shoulders, peaked lapels, two columns of accent buttons), and a
- * wide stance. role adds the readable prop: THOMPSON = a Tommy gun held across the body; COLLECTOR =
- * an unassuming courier with a fat CASH SATCHEL + shoulder strap. `accent` is the faction colour
- * (brass = player, blood-red = rival) on the hatband, lapels and buttons — so faction reads from the
- * silhouette itself. Facing RIGHT, feet at (16, 45). Drawn once, baked to a texture.
+ * RICH (rts26, built to PROCEDURAL_ART_SPEC §1) period mob figure. Silhouette-first + the FACTION
+ * ACCENT LAW: exactly ONE saturated faction read placed twice high in the silhouette (hatband +
+ * pocket-square / lapel pin / cash-glint), never smeared over the body. role drives the silhouette:
+ *   THUG      — broadest (26px shoulders), double-breasted pinstripe, planted wide stance.
+ *   THOMPSON  — suited mass BROKEN by the gun bar + the drum-magazine circle (the recognition key).
+ *   COLLECTOR — narrow (18px), hunched, mid-stride, a fat 3-tier CASH SATCHEL, no gun.
+ * `accent` = faction colour (brass player / blood rival). Facing RIGHT; the scene flips for left.
  */
 function drawFigureRich(
   g: Phaser.GameObjects.Graphics,
   role: FigRole,
   accent: number,
   accentDim: number,
+  tier = 2,
 ): void {
-  const cx = 16;
-  const broad = role !== 'collector';
-  const coat = PAL.charcoal; // period black/charcoal suit for everyone; faction = the accent + ring
-  const coatDark = PAL.ink;
-  const shoulderW = broad ? 22 : 17;
-  const torsoW = broad ? 16 : 12;
+  const cx = FIG_CX;
+  const shoulderW = role === 'thug' ? 26 : role === 'thompson' ? 22 : 18;
+  const waistW = role === 'collector' ? 13 : 18;
+  const suit = role === 'thompson' ? PAL.suitBrown : role === 'collector' ? PAL.suitBrown : PAL.suitCharcoal;
+  const suitDark = role === 'thompson' ? 0x2a2018 : PAL.sootDeep;
+  const hunch = role === 'collector' ? 2 : 0; // forward lean
+  const topY = 1 + hunch;
+  const headY = 11 + hunch;
+  const shoulderY = 17 + hunch;
 
-  // wide stance: two trouser legs angled out + shoes
-  g.fillStyle(coatDark, 1);
-  g.fillRect(cx - (broad ? 7 : 5), 33, 4, 12); // left leg
-  g.fillRect(cx + (broad ? 3 : 1), 33, 4, 12); // right leg
-  g.fillStyle(PAL.ink, 1);
-  g.fillEllipse(cx - (broad ? 5 : 3), 45, 9, 4); // left shoe
-  g.fillEllipse(cx + (broad ? 5 : 3), 45, 9, 4); // right shoe
-
-  // long double-breasted coat (trapezoid: wide shoulders → nipped waist → flare)
-  g.fillStyle(coat, 1);
-  g.fillPoints([
-    { x: cx - shoulderW / 2, y: 18 },
-    { x: cx + shoulderW / 2, y: 18 },
-    { x: cx + torsoW / 2, y: 38 },
-    { x: cx - torsoW / 2, y: 38 },
-  ], true);
-  // shadowed right half (two flat tones per face — VISUAL_DIRECTION §6)
-  g.fillStyle(coatDark, 1);
-  g.fillPoints([
-    { x: cx, y: 18 }, { x: cx + shoulderW / 2, y: 18 }, { x: cx + torsoW / 2, y: 38 }, { x: cx, y: 38 },
-  ], true);
-  // padded shoulders
-  g.fillStyle(coat, 1);
-  g.fillEllipse(cx, 19, shoulderW + 3, 8);
-  // peaked lapels (a faint accent V) + a tie
-  g.fillStyle(accentDim, 1);
-  g.fillTriangle(cx, 21, cx - 5, 20, cx - 1, 31); // left lapel
-  g.fillTriangle(cx, 21, cx + 5, 20, cx + 1, 31); // right lapel
-  g.fillStyle(accent, 1);
-  g.fillRect(cx - 1, 21, 2, 11); // tie
-  // two columns of double-breasted buttons (the period read), faction-coloured
-  g.fillStyle(accent, 1);
-  for (let r = 0; r < 3; r++) {
-    g.fillCircle(cx - 4, 24 + r * 4, 1.1);
-    g.fillCircle(cx + 4, 24 + r * 4, 1.1);
-  }
-
-  // neck + head
-  g.fillStyle(PAL.skin, 1);
-  g.fillRect(cx - 2, 12, 4, 4);
-  g.fillCircle(cx, 9, 4.6);
-
-  // FEDORA — a real brim ellipse + pinched crown + accent band
-  g.fillStyle(PAL.ink, 1);
-  g.fillEllipse(cx, 8, 20, 5.5); // brim
-  g.fillEllipse(cx + 4, 7.5, 9, 3); // brim front dip
-  g.fillRoundedRect(cx - 5, 0.5, 10, 6.5, 2.5); // crown
-  g.fillStyle(coatDark, 1);
-  g.fillRect(cx - 1.5, 1, 3, 5); // crown pinch (a dark crease)
-  g.fillStyle(accent, 1);
-  g.fillRect(cx - 5, 5, 10, 1.6); // hatband (faction)
-
-  if (role === 'thompson') {
-    // TOMMY GUN held diagonally across the chest — a barrel quad (hip → forward-up), round drum
-    // magazine, and a wooden stock. Drawn as flat polygons so it bakes cleanly to a texture.
-    g.fillStyle(PAL.slate, 1);
-    g.fillRect(cx - 7, 31, 7, 2.6); // wooden stock at the hip
+  // ── legs + shoes ──
+  if (role === 'collector') {
+    // mid-stride plain brown trousers (one forward, one back) — the "always moving" read
+    g.fillStyle(PAL.suitBrown, 1);
+    g.fillPoints([{ x: cx - 6, y: 37 }, { x: cx - 1, y: 37 }, { x: cx - 4, y: FIG_GROUND }, { x: cx - 9, y: FIG_GROUND }], true);
+    g.fillPoints([{ x: cx + 1, y: 37 }, { x: cx + 6, y: 37 }, { x: cx + 10, y: FIG_GROUND - 1 }, { x: cx + 5, y: FIG_GROUND - 1 }], true);
     g.fillStyle(PAL.ink, 1);
-    g.fillPoints([ // diagonal barrel + receiver across the body
-      { x: cx - 2, y: 34 }, { x: cx - 1, y: 30.5 }, { x: cx + 15, y: 21.5 }, { x: cx + 14, y: 25 },
-    ], true);
-    g.fillRect(cx + 11, 20, 5, 1.8); // foresight / muzzle
-    g.fillStyle(PAL.ink, 1);
-    g.fillCircle(cx + 5, 31, 3.4); // drum magazine
-    g.fillStyle(PAL.slate, 1);
-    g.fillCircle(cx + 5, 31, 1.4); // drum hub
-  } else if (role === 'collector') {
-    // shoulder STRAP across the chest + a fat CASH SATCHEL on the hip (the courier read)
-    g.fillStyle(coatDark, 1);
-    g.fillRect(cx - 6, 19, 14, 2.2); // strap (rotated-ish, simple band)
-    g.fillStyle(PAL.brassDim, 1);
-    g.fillRoundedRect(cx + 5, 27, 10, 10, 2.5); // satchel body
-    g.fillStyle(PAL.bone, 1);
-    g.fillRect(cx + 5, 27, 10, 3); // flap
-    g.fillStyle(accent, 1);
-    g.fillCircle(cx + 10, 31, 1.6); // brass clasp
+    g.fillEllipse(cx - 7, FIG_GROUND, 9, 3.5); g.fillEllipse(cx + 8, FIG_GROUND - 1, 9, 3.5);
   } else {
-    // THUG: one hand tucked in the coat (the "heater under the arm" read) — a small dark cuff
-    g.fillStyle(coatDark, 1);
-    g.fillRect(cx + 3, 27, 4, 3);
-    g.fillStyle(PAL.skin, 1);
-    g.fillRect(cx + 6, 28, 2, 2);
+    const stance = role === 'thompson' ? 5 : 8; // thug = planted wide; thompson = bladed
+    g.fillStyle(suit, 1);
+    g.fillPoints([{ x: cx - stance - 3, y: 36 }, { x: cx - stance + 3, y: 36 }, { x: cx - stance + 2, y: FIG_GROUND }, { x: cx - stance - 4, y: FIG_GROUND }], true);
+    g.fillPoints([{ x: cx + stance - 3, y: 36 }, { x: cx + stance + 3, y: 36 }, { x: cx + stance + 4, y: FIG_GROUND }, { x: cx + stance - 2, y: FIG_GROUND }], true);
+    g.fillStyle(PAL.ink, 1);
+    g.fillEllipse(cx - stance, FIG_GROUND, 11, 4); g.fillEllipse(cx + stance, FIG_GROUND, 11, 4);
   }
+
+  // ── torso (double-breasted for suited; soft sack coat for the collector) ──
+  const torso = [
+    { x: cx - shoulderW / 2, y: shoulderY + 1 }, { x: cx + shoulderW / 2, y: shoulderY + 1 },
+    { x: cx + waistW / 2, y: 38 }, { x: cx - waistW / 2, y: 38 },
+  ];
+  g.fillStyle(suit, 1); g.fillPoints(torso, true);
+  // SE shadow half (light from NW — 2 tone per material)
+  g.fillStyle(suitDark, 0.55);
+  g.fillPoints([{ x: cx, y: shoulderY + 1 }, { x: cx + shoulderW / 2, y: shoulderY + 1 }, { x: cx + waistW / 2, y: 38 }, { x: cx, y: 38 }], true);
+  // padded shoulders
+  g.fillStyle(suit, 1); g.fillEllipse(cx, shoulderY, shoulderW + (role === 'thug' ? 4 : 2), role === 'collector' ? 6 : 9);
+
+  if (role !== 'collector') {
+    // pinstripe verticals (texture, not noise)
+    g.lineStyle(1, PAL.pinstripe, role === 'thug' ? 0.7 : 0.4);
+    for (let x = -shoulderW / 2 + 3; x <= shoulderW / 2 - 3; x += 4) { g.beginPath(); g.moveTo(cx + x, shoulderY + 3); g.lineTo(cx + x * (waistW / shoulderW), 37); g.strokePath(); }
+    // lapel V + shirt + tie wedge
+    g.fillStyle(PAL.shirt, 1);
+    g.fillTriangle(cx, 20 + hunch, cx - 4, 21 + hunch, cx, 31 + hunch);
+    g.fillTriangle(cx, 20 + hunch, cx + 4, 21 + hunch, cx, 31 + hunch);
+    g.fillStyle(suitDark, 1); g.fillRect(cx - 1, 22 + hunch, 2, 9); // tie
+    // two rows of 2 double-breasted buttons (brass-dark — value-metal, not the faction read)
+    g.fillStyle(PAL.brassDark, 1);
+    for (const by of [27 + hunch, 32 + hunch]) { g.fillCircle(cx - 4, by, 1.2); g.fillCircle(cx + 4, by, 1.2); }
+  }
+
+  // ── arms ──
+  if (role === 'thug') {
+    // stubby cylinders held slightly out + fists
+    g.fillStyle(suit, 1);
+    g.fillRoundedRect(cx - shoulderW / 2 - 1, shoulderY + 2, 5, 14, 2);
+    g.fillRoundedRect(cx + shoulderW / 2 - 4, shoulderY + 2, 5, 14, 2);
+    g.fillStyle(PAL.fleshDark, 1);
+    g.fillCircle(cx - shoulderW / 2 + 1.5, shoulderY + 17, 2.4); g.fillCircle(cx + shoulderW / 2 - 1.5, shoulderY + 17, 2.4);
+  }
+
+  // ── neck + head + heavy jaw ──
+  g.fillStyle(PAL.fleshDark, 1); g.fillRect(cx - 2, headY + 2, 4, 3); // neck
+  g.fillStyle(PAL.fleshLit, 1); g.fillCircle(cx - 0.7, headY, 4.5); // head (NW lit)
+  g.fillStyle(PAL.fleshDark, 1); g.fillCircle(cx + 1.6, headY + 0.6, 3.6); // SE shadow cheek/jaw
+  if (role === 'thug') { g.fillStyle(PAL.fleshDark, 1); g.fillEllipse(cx, headY + 3.2, 8, 3.5); } // heavy jaw
+
+  // ── the prop / weapon layer (in front of the torso) ──
+  if (role === 'thompson') {
+    // TOMMY GUN across the chest on the iso diagonal — the BROKEN silhouette + the DRUM is the key.
+    g.fillStyle(PAL.suitBrown, 1); // wooden stock into the shoulder
+    g.fillPoints([{ x: cx - 9, y: 30 }, { x: cx - 4, y: 27 }, { x: cx - 2, y: 30 }, { x: cx - 7, y: 33 }], true);
+    g.fillStyle(PAL.gunmetal, 1); // barrel + receiver bar
+    g.fillPoints([{ x: cx - 3, y: 31 }, { x: cx - 1.5, y: 28 }, { x: cx + 16, y: 22 }, { x: cx + 15, y: 25 }], true);
+    g.fillRect(cx + 14, 21, 5, 1.8); // Cutts compensator / muzzle
+    g.fillStyle(PAL.gunmetal, 1); g.fillRect(cx + 5, 27, 2.4, 5); // front grip
+    g.fillStyle(PAL.sootDeep, 1); g.fillCircle(cx + 4, 31, 4.6); // DRUM magazine (recognition key)
+    g.fillStyle(PAL.gunmetal, 1); g.fillCircle(cx + 4, 31, 3.2);
+    g.fillStyle(PAL.brassDark, 1); g.fillCircle(cx + 4, 31, 1); // drum pin
+    // front arm to the grip
+    g.fillStyle(suit, 1); g.fillRoundedRect(cx + 3, shoulderY + 3, 4, 9, 2);
+  } else if (role === 'collector') {
+    // SATCHEL — hero prop, 3 size TIERS keyed to the carried cash (spec §1.3).
+    const bw = tier === 1 ? 11 : tier === 2 ? 15 : 19;
+    const bh = tier === 1 ? 9 : tier === 2 ? 12 : 14;
+    const bx = cx + 3, by = 30;
+    g.lineStyle(2, PAL.suitBrown, 1); g.beginPath(); g.moveTo(cx - 6, shoulderY + 1); g.lineTo(bx + bw / 2 - 3, by); g.strokePath(); // diagonal strap
+    g.fillStyle(0x5a4634, 1); g.fillRoundedRect(bx - bw / 2, by - bh / 2, bw, bh, 2.5); // leather body (lit)
+    g.fillStyle(0x3a2c20, 1); g.fillRoundedRect(bx, by - bh / 2, bw / 2, bh, 2.5); // SE shadow half
+    g.fillStyle(0x6a523c, 1); g.fillRect(bx - bw / 2, by - bh / 2, bw, 3); // flap
+    g.fillStyle(PAL.brassDark, 1); g.fillRect(bx - 1.5, by - 1, 3, 3); // buckle
+    if (tier === 3) { g.fillStyle(PAL.brassHi, 1); g.fillRect(bx + bw / 2 - 3, by - bh / 2 + 1, 2.5, 2.5); } // money-glint notch (overfull)
+    // arm clutching the strap (protective)
+    g.fillStyle(suit, 1); g.fillRoundedRect(cx - shoulderW / 2, shoulderY + 3, 4, 11, 2);
+    g.fillStyle(PAL.fleshDark, 1); g.fillCircle(bx - bw / 2 + 1, by - bh / 2, 2);
+  } else {
+    // THUG accent #2 — chest POCKET-SQUARE triangle (faction), high in the silhouette
+    g.fillStyle(accent, 1);
+    g.fillTriangle(cx - 6, 24 + hunch, cx - 2.5, 24 + hunch, cx - 4.3, 27.5 + hunch);
+  }
+
+  // ── fedora (front) + the second faction accent for thompson ──
+  drawFedora(g, cx, topY, role === 'thug' ? 17 : role === 'collector' ? 13 : 15, role === 'collector' ? accentDim : accent, role === 'collector');
+  if (role === 'thompson') { g.fillStyle(accent, 1); g.fillCircle(cx - 3.5, 22 + hunch, 1.3); } // lapel pin (small — gun stays the read)
 }
 
-interface FigSpec { role: FigRole; accent: number; accentDim: number; lean: Parameters<typeof drawFigureLean>[1]; }
+interface FigSpec { role: FigRole; accent: number; accentDim: number; tier?: number; lean: Parameters<typeof drawFigureLean>[1]; }
 
 function bakeFigureVariant(scene: Phaser.Scene, key: string, rich: boolean, spec: FigSpec): void {
   if (scene.textures.exists(key)) return;
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
-  if (rich) drawFigureRich(g, spec.role, spec.accent, spec.accentDim);
-  else drawFigureLean(g, spec.lean);
-  g.generateTexture(key, 32, 48);
+  if (rich) { drawFigureRich(g, spec.role, spec.accent, spec.accentDim, spec.tier ?? 2); g.generateTexture(key, FIG_W, FIG_H); }
+  else { drawFigureLean(g, spec.lean); g.generateTexture(key, 32, 48); }
   g.destroy();
 }
 
-/** A parked period CADILLAC — long hood, rounded fenders, running board, headlamp, vertical grille.
- * Set-dressing (no car unit exists in the sim). Faction-neutral black with a faint brass trim. */
-function bakeCar(scene: Phaser.Scene): void {
-  if (scene.textures.exists(TEX.car)) return;
+/**
+ * A long low 1930s CADILLAC (PROCEDURAL_ART_SPEC §1.4) along the 2:1 axis: rounded fender arches over
+ * the two near wheels, running board, long hood + cabin greenhouse, a tall vertical-slat grille and
+ * twin headlamps. `accent` (brass/blood) paints ONLY the coachline pinstripe + wheel-hub centres (the
+ * faction read — never the body). `parked` dims it ~20% and drops the accent so set-dressing recedes.
+ */
+function bakeCar(scene: Phaser.Scene, key: string, accent: number | null, parked: boolean): void {
+  if (scene.textures.exists(key)) return;
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
-  const W = 50, H = 30;
-  // shadow
-  g.fillStyle(PAL.ink, 0.4); g.fillEllipse(W / 2, H - 3, 46, 7);
-  // rear + front rounded fenders (humps over the wheels)
-  g.fillStyle(PAL.ink, 1);
-  g.fillEllipse(12, 20, 18, 14);
-  g.fillEllipse(38, 20, 18, 14);
-  // body (low, long)
-  g.fillStyle(0x1a1714, 1);
-  g.fillRoundedRect(5, 13, 40, 9, 3); // hood + trunk line
-  // raised cabin
-  g.fillStyle(0x14110f, 1);
-  g.fillRoundedRect(17, 5, 18, 10, 3);
-  g.fillStyle(PAL.slate, 0.9);
-  g.fillRect(19, 7, 6, 5); // windshield
-  g.fillRect(27, 7, 6, 5); // rear window
-  // running board
-  g.fillStyle(PAL.ink, 1); g.fillRect(8, 21, 34, 2.5);
-  // wheels
-  g.fillStyle(PAL.ink, 1); g.fillCircle(13, 23, 5.5); g.fillCircle(37, 23, 5.5);
-  g.fillStyle(PAL.slate, 1); g.fillCircle(13, 23, 2.2); g.fillCircle(37, 23, 2.2);
-  // vertical grille + headlamp (front = right)
-  g.fillStyle(PAL.brassDim, 1); g.fillRect(44, 14, 1.6, 7); // grille trim
-  g.fillStyle(PAL.windowLit, 1); g.fillCircle(45, 13, 2); // headlamp
-  // brass beltline trim
-  g.lineStyle(1, PAL.brassDim, 0.8); g.beginPath(); g.moveTo(6, 16); g.lineTo(44, 16); g.strokePath();
-  g.generateTexture(TEX.car, W, H);
+  const W = 64, H = 30;
+  const body = parked ? 0x141210 : 0x1c1916;
+  const bodyLit = parked ? 0x1c1916 : 0x262220;
+  const chrome = parked ? PAL.slate : PAL.brassDim;
+  g.fillStyle(PAL.sootDeep, 0.4); g.fillEllipse(W / 2, H - 2, 60, 8); // big soft shadow
+  // rounded FENDER ARCHES over the two near wheels (the era's signature)
+  g.fillStyle(body, 1); g.fillEllipse(15, 19, 22, 15); g.fillEllipse(49, 19, 22, 15);
+  // main body + long hood (rounded-top), lit roof/hood vs darker shadow side
+  g.fillStyle(bodyLit, 1); g.fillRoundedRect(5, 11, 54, 11, 4);
+  g.fillStyle(body, 1); g.fillRect(5, 17, 54, 5); // SE shadow underside
+  // greenhouse cabin (dark glass trapezoid)
+  g.fillStyle(0x14110f, 1); g.fillRoundedRect(22, 3, 22, 11, 3);
+  g.fillStyle(PAL.glass, 1); g.fillRect(24, 5, 8, 6); g.fillRect(34, 5, 8, 6); // split windscreen
+  g.fillStyle(PAL.bone, 0.18); g.fillRect(24, 5, 8, 1.2); // 1px hi
+  // running boards
+  g.fillStyle(PAL.sootDeep, 1); g.fillRect(8, 21, 48, 3);
+  // NEAR wheels: black tori + hub + 4 spoke ticks
+  for (const wx of [15, 49]) {
+    g.fillStyle(PAL.sootDeep, 1); g.fillCircle(wx, 23, 6);
+    g.fillStyle(0x5a5048, 1); g.fillCircle(wx, 23, 2.6); // hub
+    g.fillStyle(accent ?? 0x5a5048, 1); g.fillCircle(wx, 23, 1.2); // hub centre = faction accent
+    g.lineStyle(1, 0x3a342e, 1);
+    for (let a = 0; a < 4; a++) { const ang = a * Math.PI / 2 + 0.4; g.beginPath(); g.moveTo(wx, 23); g.lineTo(wx + Math.cos(ang) * 5, 23 + Math.sin(ang) * 5); g.strokePath(); }
+  }
+  // tall vertical-slat grille + twin headlamps + thin chrome bumper (front = right)
+  g.fillStyle(PAL.gunmetal, 1); g.fillRect(57, 10, 4, 11);
+  g.lineStyle(1, chrome, 0.9); for (let i = 0; i < 4; i++) { g.beginPath(); g.moveTo(57.5 + i, 10); g.lineTo(57.5 + i, 21); g.strokePath(); }
+  g.fillStyle(PAL.lamp, 1); g.fillCircle(60, 9, 2.1); g.fillCircle(60, 22, 1.6); // twin headlamps
+  g.fillStyle(chrome, 1); g.fillRect(56, 22, 7, 1.4); // bumper
+  // beltline coachline (faction coachline pinstripe when accented)
+  g.lineStyle(1, accent ?? chrome, parked ? 0.7 : 1); g.beginPath(); g.moveTo(6, 14); g.lineTo(57, 14); g.strokePath();
+  g.generateTexture(key, W, H);
   g.destroy();
 }
 
@@ -266,17 +346,23 @@ function bakeCar(scene: Phaser.Scene): void {
 function bakeLamppost(scene: Phaser.Scene): void {
   if (scene.textures.exists(TEX.lamppost)) return;
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
-  const W = 16, H = 46;
-  g.fillStyle(PAL.ink, 0.4); g.fillEllipse(W / 2, H - 2, 12, 4); // base shadow
-  g.fillStyle(PAL.slate, 1);
-  g.fillRect(W / 2 - 1.5, 8, 3, H - 9); // post
-  g.fillRect(W / 2 - 3, H - 4, 6, 3); // foot
-  g.fillStyle(PAL.ink, 1);
-  g.fillRoundedRect(W / 2 - 1.5, 6, 8, 2, 1); // arm
-  g.fillStyle(0x2a2520, 1);
-  g.fillRoundedRect(W / 2 + 3, 3, 6, 7, 2); // lantern housing
-  g.fillStyle(PAL.windowLit, 0.95);
-  g.fillRect(W / 2 + 4, 4.5, 4, 4.5); // lit pane
+  const W = 18, H = 48;
+  const px = W / 2;
+  g.fillStyle(PAL.sootDeep, 0.35); g.fillEllipse(px, H - 2, 12, 4); // base shadow
+  // stepped deco base
+  g.fillStyle(PAL.slate, 1); g.fillRect(px - 3, H - 6, 6, 4); g.fillRect(px - 2, H - 9, 4, 3);
+  g.fillRect(px - 1.2, 12, 2.4, H - 18); // thin deco standard
+  g.fillStyle(PAL.charcoal, 1); g.fillRect(px - 0.5, 12, 1, H - 18); // shadow edge
+  // deco bracket scroll up to the lamp arm
+  g.fillStyle(PAL.slate, 1); g.fillRoundedRect(px - 1, 9, 7, 2, 1);
+  // hexagonal lantern cage holding the glow
+  const hx = px + 5, hy = 7;
+  g.fillStyle(0x2a2520, 1); g.fillPoints([
+    { x: hx - 3, y: hy - 1 }, { x: hx, y: hy - 4 }, { x: hx + 3, y: hy - 1 },
+    { x: hx + 3, y: hy + 3 }, { x: hx, y: hy + 6 }, { x: hx - 3, y: hy + 3 },
+  ], true);
+  g.fillStyle(PAL.lamp, 0.95); g.fillCircle(hx, hy + 1, 2.2); // warm glow pane
+  g.lineStyle(1, PAL.brassDark, 0.8); g.strokeCircle(hx, hy + 1, 2.4); // brass cage ring
   g.generateTexture(TEX.lamppost, W, H);
   g.destroy();
 }
@@ -387,13 +473,18 @@ export function buildCityTextures(scene: Phaser.Scene): void {
   for (const { f, accent, accentDim } of factions) {
     bakeFigureVariant(scene, `lcr_fig_thug_${f}`, rich, { role: 'thug', accent, accentDim, lean: leanThug });
     bakeFigureVariant(scene, `lcr_fig_thompson_${f}`, rich, { role: 'thompson', accent, accentDim, lean: { ...leanThompson, coat: f === 'rival' ? PAL.bloodDim : PAL.charcoal } });
-    bakeFigureVariant(scene, `lcr_fig_collector_${f}`, rich, { role: 'collector', accent, accentDim, lean: leanCollector });
+    // collector: three satchel tiers (Light / Heavy / Stuffed) keyed to the carried cash
+    for (const tier of [1, 2, 3]) {
+      bakeFigureVariant(scene, `lcr_fig_collector_${f}_t${tier}`, rich, { role: 'collector', accent, accentDim, tier, lean: leanCollector });
+    }
   }
   // legacy single-role keys (kept so any old reference still resolves)
   bakeFigureVariant(scene, TEX.thug, rich, { role: 'thug', accent: PAL.brass, accentDim: PAL.brassDim, lean: leanThug });
   bakeFigureVariant(scene, TEX.collector, rich, { role: 'collector', accent: PAL.brass, accentDim: PAL.brassDim, lean: leanCollector });
   bakeFigureVariant(scene, TEX.enforcer, rich, { role: 'thompson', accent: PAL.blood, accentDim: PAL.bloodDim, lean: leanThompson });
-  bakeCar(scene);
+  bakeCar(scene, TEX.car, null, true); // neutral parked dressing
+  bakeCar(scene, TEX.carPlayer, PAL.brass, false); // hero ride (brass coachline + hubs)
+  bakeCar(scene, TEX.carRival, PAL.blood, false); // hero ride (blood coachline + hubs)
   bakeLamppost(scene);
   bakeCoin(scene);
   bakeTile(scene, TEX.tileStreet, PAL.charcoal, PAL.slate, PAL.soot);
@@ -417,7 +508,10 @@ export function figureKeyForRole(role: string | undefined): string {
 
 // ── parametric iso buildings (drawn straight into the scene) ──────────────────────────────────
 
+export type BuildingKind = 'storefront' | 'speakeasy' | 'casino' | 'hq' | 'warehouse';
+
 export interface BuildingStyle {
+  kind: BuildingKind;
   wall: number;
   wallDark: number;
   roof: number;
@@ -429,13 +523,13 @@ export interface BuildingStyle {
 }
 
 export const BUILDING_STYLES: Record<string, BuildingStyle> = {
-  storefront: { wall: PAL.brick, wallDark: PAL.brickDark, roof: PAL.charcoal, trim: PAL.brass, height: 40, windows: 2 },
-  speakeasy: { wall: PAL.charcoal, wallDark: PAL.soot, roof: PAL.ink, trim: PAL.bloodDim, height: 34, windows: 1 },
-  warehouse: { wall: PAL.slate, wallDark: PAL.charcoal, roof: PAL.charcoal, trim: PAL.fog, height: 30, windows: 1, footHalfW: 60, footHalfH: 30 },
-  hq: { wall: PAL.charcoal, wallDark: PAL.soot, roof: PAL.brassDim, trim: PAL.brass, height: 66, windows: 3 },
-  // RTS-26: the rts24 vice morph target — a taller, brass-trimmed CASINO (the speakeasy "upgraded"
+  storefront: { kind: 'storefront', wall: PAL.brickBase, wallDark: PAL.brickDark, roof: PAL.charcoal, trim: PAL.brass, height: 40, windows: 2 },
+  speakeasy: { kind: 'speakeasy', wall: PAL.charcoal, wallDark: PAL.soot, roof: PAL.ink, trim: PAL.bloodDim, height: 34, windows: 1 },
+  warehouse: { kind: 'warehouse', wall: PAL.slate, wallDark: PAL.charcoal, roof: PAL.charcoal, trim: PAL.fog, height: 30, windows: 1, footHalfW: 60, footHalfH: 30 },
+  hq: { kind: 'hq', wall: PAL.charcoal, wallDark: PAL.soot, roof: PAL.brassDim, trim: PAL.brass, height: 66, windows: 3 },
+  // RTS-26: the rts24 vice morph target — a taller, marquee-crowned CASINO (the speakeasy "upgraded"
   // silhouette). Visual only; the sim's viceRung drives when the scene swaps the style.
-  casino: { wall: PAL.charcoal, wallDark: PAL.ink, roof: PAL.brassDim, trim: PAL.brass, height: 52, windows: 3 },
+  casino: { kind: 'casino', wall: PAL.charcoal, wallDark: PAL.ink, roof: PAL.brassDim, trim: PAL.brass, height: 52, windows: 3 },
 };
 
 /**
@@ -449,7 +543,7 @@ export function drawIsoBuilding(
   cy: number,
   style: BuildingStyle,
   depth: number,
-  opts: { rich?: boolean; lit?: boolean; sign?: number } = {},
+  opts: { rich?: boolean; lit?: boolean; sign?: number; faction?: 'player' | 'rival' } = {},
 ): { roofX: number; roofY: number; gfx: Phaser.GameObjects.Graphics } {
   const rich = opts.rich ?? richArt();
   const lit = opts.lit ?? true;
@@ -481,58 +575,112 @@ export function drawIsoBuilding(
     ],
     true,
   );
-  // brick courses on the lit wall
-  g.lineStyle(1, style.wallDark, 0.5);
-  for (let i = 1; i < style.windows + 2; i++) {
-    const yy = cy - (h * i) / (style.windows + 2);
-    g.beginPath();
-    g.moveTo(bBottom.x, yy + hh);
-    g.lineTo(bRight.x, yy);
-    g.strokePath();
+  if (rich) {
+    // running-bond BRICK on the lit wall: mortar courses every ~5px + offset vertical ticks (texture)
+    g.lineStyle(1, PAL.mortar, 0.35);
+    for (let yy = cy - 4; yy > cy - h; yy -= 5) {
+      g.beginPath(); g.moveTo(bBottom.x, yy + hh - 1); g.lineTo(bRight.x, yy - 1); g.strokePath();
+    }
+    g.lineStyle(1, PAL.mortar, 0.22);
+    for (let f = 0.2; f < 1; f += 0.2) {
+      const sx = bBottom.x + (bRight.x - bBottom.x) * f, sy = (bBottom.y - hh) + (bRight.y - (bBottom.y - hh)) * f;
+      g.beginPath(); g.moveTo(sx, sy - h + 6); g.lineTo(sx, sy - 2); g.strokePath();
+    }
+    // soot streaks under the cornice
+    g.fillStyle(PAL.sootDeep, 0.2); g.fillRect(cx + hw * 0.3, cy - h + 4, hw * 0.5, 4);
+  } else {
+    g.lineStyle(1, style.wallDark, 0.5);
+    for (let i = 1; i < style.windows + 2; i++) {
+      const yy = cy - (h * i) / (style.windows + 2);
+      g.beginPath(); g.moveTo(bBottom.x, yy + hh); g.lineTo(bRight.x, yy); g.strokePath();
+    }
   }
-  // windows on the right wall — warm when lit, dead-dark when shut (the lit/shut read)
-  for (let r = 0; r < style.windows; r++) {
-    const wy = cy - h + 10 + r * ((h - 14) / Math.max(1, style.windows));
-    g.fillStyle(lit ? PAL.windowLit : PAL.ink, lit ? 0.9 : 1);
-    g.fillRect(cx + hw * 0.45, wy, 7, 6);
-    g.fillRect(cx + hw * 0.7, wy + 2, 7, 6);
+
+  // windows on the right wall — warm amber when lit, dead-dark when shut (the lit/shut read).
+  // The speakeasy is discreet (no big windows); its read is the peephole + basement grate below.
+  if (style.kind !== 'speakeasy') {
+    for (let r = 0; r < style.windows; r++) {
+      const wy = cy - h + 10 + r * ((h - 14) / Math.max(1, style.windows));
+      g.fillStyle(lit ? PAL.glassGlow : PAL.glass, 1); g.fillRect(cx + hw * 0.42, wy, 8, 7);
+      g.fillStyle(lit ? PAL.glassGlow : PAL.glass, 1); g.fillRect(cx + hw * 0.68, wy + 2, 8, 7);
+      if (lit) { g.fillStyle(PAL.bone, 0.25); g.fillRect(cx + hw * 0.42, wy, 8, 1.5); g.fillRect(cx + hw * 0.68, wy + 2, 8, 1.5); } // warm sill hi
+    }
   }
-  // brass trim line along the roof eave + a door
+
+  // brass deco eave trim
   g.lineStyle(2, style.trim, 0.9);
-  g.strokePoints(
-    [
-      { x: bTop.x, y: bTop.y - h },
-      { x: bRight.x, y: bRight.y - h },
-      { x: bBottom.x, y: bBottom.y - h },
-      { x: bLeft.x, y: bLeft.y - h },
-    ],
-    true,
-  );
+  g.strokePoints([{ x: bTop.x, y: bTop.y - h }, { x: bRight.x, y: bRight.y - h }, { x: bBottom.x, y: bBottom.y - h }, { x: bLeft.x, y: bLeft.y - h }], true);
   g.fillStyle(PAL.ink, 1);
   g.fillRect(cx - 5, cy + hh - 16, 10, 16); // door at the front base
 
   if (rich) {
-    // ── RTS-26 period elevation: art-deco cornice, a striped door AWNING, and a hanging SIGN ──
-    const top = cy - h;
-    // stepped deco cornice along the right (lit) eave — two brass courses
+    // ── stepped art-deco CORNICE along the lit eave (two courses) ──
     g.fillStyle(style.trim, 0.85);
-    g.fillPoints([{ x: bBottom.x, y: bBottom.y - h }, { x: bRight.x, y: bRight.y - h },
-      { x: bRight.x, y: bRight.y - h + 3 }, { x: bBottom.x, y: bBottom.y - h + 3 }], true);
-    g.fillStyle(PAL.ink, 0.5);
-    g.fillPoints([{ x: bBottom.x, y: bBottom.y - h + 3 }, { x: bRight.x, y: bRight.y - h + 3 },
-      { x: bRight.x, y: bRight.y - h + 5 }, { x: bBottom.x, y: bBottom.y - h + 5 }], true);
-    // striped awning over the front door (canvas-flat trapezoid + dark stripes)
-    const ax = cx, ay = cy + hh - 17;
-    g.fillStyle(style.trim, 0.95);
-    g.fillPoints([{ x: ax - 9, y: ay }, { x: ax + 9, y: ay }, { x: ax + 12, y: ay + 6 }, { x: ax - 12, y: ay + 6 }], true);
-    g.fillStyle(PAL.ink, 0.4);
-    for (let s = -2; s <= 2; s++) g.fillRect(ax + s * 5 - 0.8, ay, 1.6, 6);
-    // a small hanging sign on the lit wall (neon dot when lit)
-    g.fillStyle(PAL.ink, 1);
-    g.fillRect(cx + hw * 0.6, top + 14, 12, 7);
-    g.fillStyle(lit ? (opts.sign ?? PAL.windowLit) : PAL.slate, lit ? 0.95 : 1);
-    g.fillRect(cx + hw * 0.6 + 2, top + 16, 8, 3);
+    g.fillPoints([{ x: bBottom.x, y: bBottom.y - h }, { x: bRight.x, y: bRight.y - h }, { x: bRight.x, y: bRight.y - h + 3 }, { x: bBottom.x, y: bBottom.y - h + 3 }], true);
+    g.fillStyle(PAL.sootDeep, 0.5);
+    g.fillPoints([{ x: bBottom.x, y: bBottom.y - h + 3 }, { x: bRight.x, y: bRight.y - h + 3 }, { x: bRight.x, y: bRight.y - h + 5 }, { x: bBottom.x, y: bBottom.y - h + 5 }], true);
+
+    drawFacade(g, cx, cy, hw, hh, h, style, lit, opts.faction);
   }
 
   return { roofX: cx, roofY: cy - h - hh, gfx: g };
+}
+
+/** RTS-26 — the per-KIND deco facade drawn above the brick massing (and above the ownership plate):
+ * storefront window+awning+shingle, speakeasy peephole+grate, casino marquee blade+bulb canopy, HQ
+ * pilaster spine + torchères + faction crest. Lit/shut states drive the warm glows. */
+function drawFacade(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number, hw: number, hh: number, h: number,
+  style: BuildingStyle, lit: boolean, faction?: 'player' | 'rival',
+): void {
+  const doorX = cx, doorY = cy + hh - 16;
+  if (style.kind === 'storefront') {
+    // big shop WINDOW (mullion cross) on the ground floor + a flat striped AWNING + hanging shingle
+    g.fillStyle(lit ? PAL.glassGlow : PAL.glass, 1); g.fillRect(cx + 6, doorY - 2, 16, 12);
+    g.lineStyle(1, PAL.brassDark, 0.8); g.beginPath();
+    g.moveTo(cx + 14, doorY - 2); g.lineTo(cx + 14, doorY + 10); g.moveTo(cx + 6, doorY + 4); g.lineTo(cx + 22, doorY + 4); g.strokePath();
+    if (lit) { g.fillStyle(PAL.glassGlow, 0.25); g.fillEllipse(cx + 14, cy + hh + 4, 26, 7); } // warm pavement spill
+    const ay = doorY - 4;
+    g.fillStyle(style.trim, 0.95); g.fillPoints([{ x: doorX - 10, y: ay }, { x: doorX + 10, y: ay }, { x: doorX + 13, y: ay + 6 }, { x: doorX - 13, y: ay + 6 }], true);
+    g.fillStyle(PAL.sootDeep, 0.4); for (let s = -2; s <= 2; s++) g.fillRect(doorX + s * 5 - 0.8, ay, 1.6, 6);
+    g.fillStyle(PAL.ink, 1); g.fillRect(cx - hw * 0.5, cy - h + 13, 13, 7); // shingle board on a deco bracket
+    g.fillStyle(lit ? PAL.lamp : PAL.slate, lit ? 0.95 : 1); g.fillRect(cx - hw * 0.5 + 2, cy - h + 15, 9, 3);
+  } else if (style.kind === 'speakeasy') {
+    // discreet: a narrow recessed DOOR with a 4px brass-dark grilled PEEPHOLE (the recognition detail)
+    g.fillStyle(PAL.sootDeep, 1); g.fillRect(doorX - 4, doorY - 2, 8, 16); // recessed dark doorway
+    g.lineStyle(1, style.trim, 0.7); g.strokeRect(doorX - 5, doorY - 3, 10, 17); // subtle deco doorframe
+    g.fillStyle(PAL.brassDark, 1); g.fillCircle(doorX, doorY + 3, 2.2); // peephole housing
+    g.fillStyle(lit ? PAL.lamp : PAL.sootDeep, 1); g.fillCircle(doorX, doorY + 3, 1); // peephole glow when lit
+    if (lit) { g.fillStyle(PAL.glassGlow, 0.3); g.fillRect(cx + 4, cy + hh - 3, hw * 0.5, 2.5); } // basement grate leak
+    g.fillStyle(PAL.slate, 1); g.fillRect(cx - hw * 0.5, cy - h + 16, 12, 5); // contradicting legit sign
+  } else if (style.kind === 'casino') {
+    // tall deco BLADE SIGN off the corner + a bulb-lined marquee canopy + chevron inlays
+    const bx = cx + hw - 6, byTop = cy - h - 12;
+    g.fillStyle(style.trim, 1); g.fillRect(bx - 3, byTop, 6, h * 0.7); // brass blade frame
+    g.fillStyle(PAL.sootDeep, 1); g.fillRect(bx - 1.5, byTop + 2, 3, h * 0.7 - 4); // letter channel
+    g.fillStyle(lit ? PAL.lamp : PAL.slate, 1); for (let i = 0; i < 4; i++) g.fillRect(bx - 1, byTop + 4 + i * 5, 2, 2.5); // stacked letters
+    g.fillStyle(style.trim, 1); g.fillTriangle(bx - 4, byTop, bx + 4, byTop, bx, byTop - 5); // ziggurat finial
+    // bulb-lined marquee canopy over the entrance
+    const my = doorY - 5;
+    g.fillStyle(PAL.brassDark, 1); g.fillRect(cx - 14, my, 28, 4);
+    for (let i = 0; i < 7; i++) { g.fillStyle(lit ? PAL.lamp : PAL.slate, 1); g.fillCircle(cx - 12 + i * 4, my + 5.5, 1.4); }
+    if (lit) { g.fillStyle(PAL.glassGlow, 0.3); g.fillEllipse(cx, cy + hh + 5, 34, 9); } // big street spill
+    g.lineStyle(1, style.trim, 0.6); // deco chevron inlays
+    for (let i = 0; i < 2; i++) { const yy = cy - h + 18 + i * 10; g.beginPath(); g.moveTo(cx + 6, yy + 4); g.lineTo(cx + 12, yy); g.lineTo(cx + 18, yy + 4); g.strokePath(); }
+  } else if (style.kind === 'hq') {
+    // the proudest seat: a central pilaster SPINE + flanking torchère lamps + a faction CREST
+    const crest = faction === 'player' ? PAL.brass : faction === 'rival' ? PAL.blood : style.trim;
+    g.fillStyle(style.trim, 0.85); g.fillRect(cx + hw * 0.5, cy - h + 6, 5, h - 18); // pilaster spine
+    g.fillStyle(PAL.brass, 1); // stepped brass crown cornice cap
+    g.fillRect(cx - 8, cy - h - 3, 16, 3);
+    g.fillRect(cx - 5, cy - h - 6, 10, 3);
+    for (const sx of [cx - 9, cx + 9]) { // two flanking torchère lamps
+      g.fillStyle(PAL.brassDark, 1); g.fillRect(sx - 1, doorY - 8, 2, 8);
+      g.fillStyle(lit ? PAL.lamp : PAL.slate, lit ? 0.95 : 1); g.fillCircle(sx, doorY - 9, 2.4);
+    }
+    g.fillStyle(PAL.brass, 1); g.fillRect(doorX - 6, doorY - 3, 12, 17); // grand brass door surround
+    g.fillStyle(PAL.sootDeep, 1); g.fillRect(doorX - 4, doorY - 1, 8, 15);
+    g.fillStyle(crest, 1); g.fillTriangle(doorX, doorY - 9, doorX - 4, doorY - 4, doorX + 4, doorY - 4); // faction crest plate
+  }
 }

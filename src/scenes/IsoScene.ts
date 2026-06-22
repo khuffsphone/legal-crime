@@ -179,6 +179,7 @@ interface UnitView {
   selRing: Phaser.GameObjects.Ellipse;
   cashTag?: Phaser.GameObjects.Text;
   dangerRing?: Phaser.GameObjects.Ellipse;
+  satchelTier?: 1 | 2 | 3; // RTS-26: last-rendered collector satchel tier (swap texture only on change)
 }
 
 interface BizMarker { coin: Phaser.GameObjects.Image; glow?: Phaser.GameObjects.Image; roofX: number; roofY: number; }
@@ -196,7 +197,7 @@ export class IsoScene extends Phaser.Scene {
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
   // RTS-26: the drawn building per business + its current style key + tile, so a vice upgrade can
   // MORPH it (speakeasy → casino) by redrawing on the event (cached between events, never per-frame).
-  private bizBuildings = new Map<string, { gfx: Phaser.GameObjects.Graphics; styleKey: string; gx: number; gy: number; depth: number }>();
+  private bizBuildings = new Map<string, { gfx: Phaser.GameObjects.Graphics; styleKey: string; gx: number; gy: number; depth: number; shut: boolean; boards?: Phaser.GameObjects.Graphics }>();
   private routeGfx?: Phaser.GameObjects.Graphics; // RTS-22 the drawn collection route
   private ctxMenu?: Phaser.GameObjects.Container; // RTS-22 right-click EXTORT/ATTACK menu
   private ctxRect?: { x: number; y: number; w: number; h: number };
@@ -259,6 +260,7 @@ export class IsoScene extends Phaser.Scene {
   private marketTitle?: Phaser.GameObjects.Text;
   private marketBody?: Phaser.GameObjects.Text;
   private ctxBizId?: string; // the business currently shown in the context card (for [U])
+  private artRich = richArt(); // RTS-26: cached rich/lean flag (don't re-parse the URL per frame)
   // RTS-25 — crisp text + per-frame rasterisation budget. textRes renders each Text's canvas at the
   // device pixel ratio (no blurry browser upscaling). setT() change-gates setText so we only re-
   // rasterise a label when its string actually changed (the per-frame text churn was the bottleneck).
@@ -430,8 +432,8 @@ export class IsoScene extends Phaser.Scene {
         const styleKey = upgraded ? 'casino'
           : biz.kind === 'front' ? 'storefront' : biz.kind === 'speakeasy' || biz.kind === 'numbers' ? 'speakeasy' : 'warehouse';
         const bdepth = depthValue(t.gx, t.gy) * 10 + 5;
-        const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], bdepth);
-        this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth });
+        const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], bdepth, { lit: !isShutDown(biz) });
+        this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth, shut: isShutDown(biz) });
         const glow = this.add
           .image(roof.roofX, roof.roofY - 6, TEX.glow)
           .setDepth(depthValue(t.gx, t.gy) * 10 + 6)
@@ -459,7 +461,11 @@ export class IsoScene extends Phaser.Scene {
       const hq = hqTileOf(this.layout, fid);
       if (!hq) continue;
       const c = gridToScreen(hq.gx, hq.gy);
-      const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.hq, depthValue(hq.gx, hq.gy) * 10 + 5);
+      const hqFaction: 'player' | 'rival' = fid === 'player' ? 'player' : 'rival';
+      const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.hq, depthValue(hq.gx, hq.gy) * 10 + 5, { faction: hqFaction });
+      // RTS-26: the boss's signature ride parked at the seat — a hero Cadillac whose coachline +
+      // wheel hubs carry the faction accent (baked in, not a body-wide tint per the accent law).
+      if (richArt()) this.add.image(c.x - 34, c.y + 20, fid === 'player' ? TEX.carPlayer : TEX.carRival).setOrigin(0.5, 0.7).setDepth(depthValue(hq.gx, hq.gy) * 10 + 4);
       const flagCol = fid === 'player' ? PAL.brass : PAL.blood;
       this.add.rectangle(roof.roofX, roof.roofY - 10, 3, 20, PAL.ink).setDepth(depthValue(hq.gx, hq.gy) * 10 + 7);
       this.add.triangle(roof.roofX + 9, roof.roofY - 16, 0, 0, 16, 4, 0, 8, flagCol).setDepth(depthValue(hq.gx, hq.gy) * 10 + 7);
@@ -488,7 +494,8 @@ export class IsoScene extends Phaser.Scene {
         if (occupied.has(`${gx},${gy}`)) continue;
         const c = gridToScreen(gx, gy);
         const d = depthValue(gx, gy) * 10 + 4;
-        this.add.image(c.x, c.y - 18, TEX.glow).setTint(hexNum(SPEC.brass)).setScale(0.5).setAlpha(0.18).setDepth(d - 1);
+        // a soft warm POOL of lamplight on the pavement (cheap atmosphere; helps read night paths)
+        this.add.image(c.x + 6, c.y + 2, TEX.glow).setTint(hexNum(SPEC.windowLit)).setScale(0.7, 0.4).setAlpha(0.16).setDepth(d - 2);
         this.add.image(c.x, c.y, TEX.lamppost).setOrigin(0.5, 0.95).setDepth(d);
         lamps++;
       }
@@ -525,7 +532,7 @@ export class IsoScene extends Phaser.Scene {
     const shadow = this.add.ellipse(0, 0, 22, 11, PAL.soot, 0.5);
     const factionRing = this.add.ellipse(0, 0, 26, 13).setStrokeStyle(2, ringColor, 0.9);
     const selRing = this.add.ellipse(0, 0, 38, 20).setStrokeStyle(3, PAL.brass, 1).setVisible(false);
-    const sprite = this.add.image(0, 0, figureKeyFor(unit.role, faction)).setOrigin(0.5, 0.92);
+    const sprite = this.add.image(0, 0, figureKeyFor(unit.role, faction, 1)).setOrigin(0.5, 0.93);
     const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing };
     if (unit.role === 'collector') {
       view.dangerRing = this.add.ellipse(0, 0, 40, 22).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
@@ -585,7 +592,13 @@ export class IsoScene extends Phaser.Scene {
       if (v.cashTag && v.dangerRing) {
         const carry = collectorCarryView(v.unit);
         // The satchel grows in 3 tiers with the take; the tag scales with it (state = brass).
-        const tier = carry.vulnerable ? satchelTier(carry.carrying) : 1;
+        const tier = (carry.vulnerable ? satchelTier(carry.carrying) : 1) as 1 | 2 | 3;
+        // RTS-26: swap to the matching baked satchel-tier figure ONLY when the tier changes (cached,
+        // state-driven — never a per-frame re-rasterise).
+        if (this.artRich && v.satchelTier !== tier) {
+          v.sprite.setTexture(figureKeyFor(v.unit.role, v.faction, tier));
+          v.satchelTier = tier;
+        }
         v.cashTag.setVisible(carry.vulnerable).setPosition(s.x, s.y - 40).setDepth(depth + 1)
           .setScale(0.88 + tier * 0.12);
         const safe = !!v.unit.protectedRun;
@@ -641,7 +654,31 @@ export class IsoScene extends Phaser.Scene {
       else if (earner === 'player') { fill = hexNum(SPEC.brass); alpha = 0.26; stroke = hexNum(SPEC.brass); sAlpha = 0.8; }
       else if (earner && earner.startsWith('rival')) { fill = hexNum(SPEC.rival); alpha = 0.26; stroke = hexNum(SPEC.rival); sAlpha = 0.8; }
       plate.setFillStyle(fill, alpha).setStrokeStyle(1.5, stroke, sAlpha);
+      // RTS-26: the building boards up / relights on the SHUT transition (event-driven redraw, not
+      // per-frame — windows go dark + X-boards over the door when raided, warm again when reopened).
+      const rec = this.bizBuildings.get(b.id);
+      if (rec && rec.shut !== shut) this.relightBuilding(b.id, shut);
     }
+  }
+
+  /** RTS-26 — redraw one racket's building lit/shut on the state transition (raided ↔ reopened).
+   * Mirrors the morph: destroy + re-bake the one Graphics ONCE, then static; adds X-boards when shut. */
+  private relightBuilding(bizId: string, shut: boolean): void {
+    const rec = this.bizBuildings.get(bizId);
+    if (!rec) return;
+    rec.gfx.destroy();
+    rec.boards?.destroy();
+    const c = gridToScreen(rec.gx, rec.gy);
+    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[rec.styleKey], rec.depth, { lit: !shut });
+    let boards: Phaser.GameObjects.Graphics | undefined;
+    if (shut) {
+      boards = this.add.graphics().setDepth(rec.depth + 1);
+      boards.fillStyle(hexNum('#3a2c20'), 1); // timber X-boards over the door
+      boards.fillRect(c.x - 8, c.y + 6, 16, 3);
+      boards.fillRect(c.x - 8, c.y + 12, 16, 3);
+      this.cameras.main.flash(150, 225, 29, 29, false); // one-shot danger flash on closure (≤1.1s)
+    }
+    this.bizBuildings.set(bizId, { ...rec, gfx: roof.gfx, shut, boards });
   }
 
   /** RTS-22: draw the active player collection route as a faint brass polyline through its stops. */
@@ -1074,11 +1111,19 @@ export class IsoScene extends Phaser.Scene {
     if (!upgraded) return;
     rec.gfx.destroy();
     const c = gridToScreen(rec.gx, rec.gy);
-    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.casino, rec.depth);
+    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.casino, rec.depth, { lit: !rec.shut });
     this.bizBuildings.set(bizId, { ...rec, gfx: roof.gfx, styleKey: 'casino' });
     // lift the coin/glow markers to the taller roof
     const m = this.bizMarkers.get(bizId);
     if (m) { m.roofY = roof.roofY; m.coin.setY(roof.roofY - 6); if (m.glow) m.glow.setY(roof.roofY - 6); }
+    // RTS-26 "racket transformed" beat (§2.5): a one-shot scale-pop on the new casino Graphics
+    // (a TRANSFORM tween — the art was baked once, not redrawn per frame) + a brass OPEN wax-stamp.
+    roof.gfx.setScale(1, 0.82); roof.gfx.setData('baseY', c.y);
+    this.tweens.add({ targets: roof.gfx, scaleY: 1, duration: 600, ease: 'Back.Out' });
+    const stamp = this.mkText(c.x, roof.roofY + 10, 'OPEN', { fontFamily: NOIR_DISPLAY, fontSize: '18px', color: NOIR_PALETTE.brass, fontStyle: 'bold' })
+      .setOrigin(0.5).setDepth(rec.depth + 40).setScale(2.4).setAlpha(0);
+    this.tweens.add({ targets: stamp, scale: 1, alpha: 1, duration: 300, ease: 'Back.Out',
+      onComplete: () => this.tweens.add({ targets: stamp, alpha: 0, delay: 700, duration: 400, onComplete: () => stamp.destroy() }) });
     this.cameras.main.flash(180, 184, 134, 43, false); // a brass flash beat (event, ≤1.1s)
   }
 
