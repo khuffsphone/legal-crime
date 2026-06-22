@@ -145,6 +145,7 @@ import type { MusicPhase } from './audioMap';
 import {
   nextTimeScale, scaledDt, skipWeekDt,
 } from './playability';
+import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
 import {
   SPEC,
   MOTION,
@@ -1041,9 +1042,18 @@ export class IsoScene extends Phaser.Scene {
     this.setStatus(`muscle on the way to lean on ${inspectBusiness(this.state, businessId)?.name ?? 'the block'} — ${prog.remaining} visit${prog.remaining === 1 ? '' : 's'} to fold it`);
   }
 
-  /** An idle player button-man (no path, not a collector) free to be sent on a job. */
+  /** An idle player button-man (no path, not a collector, not already tasked) free to be sent on a
+   * job. RTS-29.1: faction is resolved from the VIEW layer (sim muscle units carry no factionId/role —
+   * that was the dead-dispatch blocker); the pure pickIdleMuscle helper makes the seam testable. */
   private idlePlayerThug(): MovableUnit | undefined {
-    return this.state.units.find((u) => u.factionId === 'player' && u.role !== 'collector' && u.path.length === 0 && !this.extortIntents.has(u.id));
+    const candidates: MuscleCandidate[] = this.units.map((v) => ({
+      id: v.unit.id,
+      faction: v.faction,
+      isCollector: v.unit.role === 'collector',
+      idle: v.unit.path.length === 0,
+    }));
+    const pick = pickIdleMuscle(candidates, new Set(this.extortIntents.keys()));
+    return pick ? this.state.units.find((u) => u.id === pick.id) : undefined;
   }
 
   /** RTS-29 — a thug that has arrived at its target front LEANS on it (records a visit); on conversion

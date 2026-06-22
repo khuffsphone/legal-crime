@@ -2394,3 +2394,43 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
 - Gate: typecheck ✅  build ✅  test ✅ (637; +11 reshape). PURE sim Phaser-free; tick/applyCommand
   untouched; four channels + 50/70/85 kept; procedural/vector.
 - Commit: rts29: Core-loop reshape slice 1 — peaceful builder — green
+
+## RTS-29.1 (Hotfix — idle-thug faction resolution; dispatch was dead) — GREEN  (2026-06-22)
+- Summary: Surgical fix for the RTS-29 UAT BLOCKER Cowork state-probed: pressing [E] to lean on a [%]
+  front always returned "no free muscle" even at a fresh start with two idle thugs, so NOTHING
+  converted — the entire earn loop (convert → coin-stamp → Wire slip → per-business collector →
+  control spend) was dead. NO new scope / war / tuning. /src/sim untouched; tick/applyCommand
+  untouched. 637 → 641 green (+4 dispatch-seam tests).
+- ROOT CAUSE (confirmed): sim MUSCLE units (spawnUnit) are shaped { id, pos, path, speed } — they
+  carry NO factionId and NO role. Faction lives on the scene's UnitView.faction. But
+  idlePlayerThug() matched `u.factionId === 'player' && u.role !== 'collector'` against state.units,
+  which is true for ZERO of the two idle thugs → it never found muscle → never dispatched.
+- FIX: idlePlayerThug() now resolves faction/role from the VIEW layer — it projects this.units
+  (UnitView.faction + unit.role) into candidates and calls a new PURE helper pickIdleMuscle (faction
+  from the view, isCollector from the sim role which collectors DO carry, idle from an empty path,
+  minus already-tasked ids), then maps the chosen id back to the sim unit. The dispatch decision is
+  now testable without Phaser.
+- AUDIT (every scene read of unit factionId/role checked for the same wrong-layer mistake):
+  • idlePlayerThug() (line 1046) — ✗ WRONG-LAYER (muscle has no factionId) → FIXED. This was the
+    ONLY occurrence.
+  • playerCarrier() (642) `role==='collector' && factionId==='player'` — ✓ CORRECT: collectors are
+    spawned via spawnCollector/ensureBusinessCollector which DO set factionId + role='collector'.
+  • drawRoutePill collector count (2186) `role==='collector' && factionId==='player' && routeId` —
+    ✓ CORRECT (collectors carry all three).
+  • attachView (655/657) `figureKeyFor(unit.role,…)` + `if (unit.role==='collector')` — ✓ CORRECT
+    (role is undefined for muscle → thug silhouette / no cashTag; present for collectors).
+  • collector satchel-tier swap (732) `figureKeyFor(v.unit.role, v.faction)` — ✓ view-layer faction.
+  • context-card role/faction (2262) `view.unit.role / view.faction` — ✓ already view-layer.
+  • revealFog `v.faction !== 'player'`, syncBusinessCollectors `businessEarner(b)`, ensureBusinessCollector
+    `u.routeId===routeId`, processExtortArrivals by unit id — ✓ none read muscle factionId.
+  Conclusion: collectors/enforcers carry factionId+role so those reads are fine; only the
+  muscle-dispatch read was wrong-layer.
+- NEW SEAM TEST (the real gap — the 11 pure-sim reshape tests never exercised the scene dispatch
+  path): NEW src/scenes/dispatch.ts (pure pickIdleMuscle) + tests/dispatch.test.ts (+4): the
+  regression (two idle player thugs with NO sim factionId ARE selectable), never picks a collector or
+  rival, skips a busy/already-tasked thug, and returns undefined for an honest "no free muscle".
+- Files: NEW src/scenes/dispatch.ts + tests/dispatch.test.ts; src/scenes/IsoScene.ts (idlePlayerThug
+  rewritten to the view layer + import). No sim changes.
+- Gate: typecheck ✅  build ✅  test ✅ (641; +4 dispatch). [E] now dispatches an idle thug to a [%]
+  front → the visit → convert → collector → control-spend loop runs.
+- Commit: rts29.1: fix idle-thug faction resolution (dispatch was dead) — green
