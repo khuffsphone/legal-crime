@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createInitialState } from '../src/sim/state';
-import { createFog, isRevealed, revealAround, revealedCount, tileKey } from '../src/sim/fog';
+import { createFog, isRevealed, revealAround, revealedCount, tileKey, revealAll, revealAllRequested } from '../src/sim/fog';
 import { extortResistance, extortProgress, recordExtortVisit } from '../src/sim/extortion';
 import { advanceStrategy, rivalsDormant } from '../src/sim/strategy';
 import { ensureBusinessCollector, businessRouteId, collectorsVulnerable } from '../src/sim/routes';
@@ -39,6 +39,30 @@ describe('fog of war — reveal radius + incremental delta', () => {
     expect(isRevealed(fog, 0, 0)).toBe(true);
     expect(fog.has(tileKey(0, 0))).toBe(true);
     for (const k of fog) { const [gx, gy] = k.split(',').map(Number); expect(gx).toBeGreaterThanOrEqual(0); expect(gy).toBeGreaterThanOrEqual(0); }
+  });
+});
+
+// ── RTS-30a.1 DEBUG REVEAL-ALL (?reveal=1) ──────────────────────────────────────────────────────
+describe('reveal-all debug flag — make the sparse map inspectable', () => {
+  it('revealAllRequested parses ?reveal=1 (default OFF; absent/empty/other ⇒ false)', () => {
+    expect(revealAllRequested('?reveal=1')).toBe(true);
+    expect(revealAllRequested('?market=on&reveal=1')).toBe(true);
+    expect(revealAllRequested('')).toBe(false);
+    expect(revealAllRequested('?reveal=0')).toBe(false);
+    expect(revealAllRequested('?reveal=yes')).toBe(false);
+    expect(revealAllRequested('?other=1')).toBe(false);
+  });
+
+  it('revealAll uncovers every in-bounds tile of the map', () => {
+    const fog = createFog();
+    expect(revealedCount(fog)).toBe(0);
+    const n = revealAll(fog, 96, 96);
+    expect(n).toBe(96 * 96);
+    expect(revealedCount(fog)).toBe(96 * 96);
+    expect(isRevealed(fog, 0, 0)).toBe(true);
+    expect(isRevealed(fog, 95, 95)).toBe(true);
+    expect(isRevealed(fog, 48, 70)).toBe(true);
+    expect(isRevealed(fog, 96, 96)).toBe(false); // off-map stays dark
   });
 });
 

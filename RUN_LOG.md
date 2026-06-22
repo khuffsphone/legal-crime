@@ -2505,3 +2505,39 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   3-stop camera zooms/pans with a non-drifting HUD; extortion needs no control and control is now the
   district-status board.
 - Commit: rts30a: World & camera foundation - sparse map, districts, control decoupled - green
+
+## RTS-30a.1 (Reveal-all flag + scout hint for map UAT) — GREEN  (2026-06-22)
+- Summary: A tiny enabling/polish pass so the RTS-30a sparse-map showpiece is viewable. The new 96²
+  city is hidden behind fog at a fresh start, so it couldn't be inspected/playtested. NO new systems,
+  no turf war, no UI redesign, no economy/content/balance change. /src/sim stays PURE & Phaser-free;
+  tick/applyCommand untouched. 645 → 647 green (+2 pure fog-flag tests).
+- 1) ⭐ REVEAL-ALL DEBUG FLAG (?reveal=1, default OFF) — lifts the fog over the WHOLE map so the full
+  sparse city is inspectable: wide avenues, parks/plazas/fountains, every district with its
+  boundaries + nameplates + ownership washes. NEW pure helpers in src/sim/fog.ts:
+  `revealAllRequested(search)` (parses the flag; empty/malformed/absent ⇒ false) and
+  `revealAll(fog, cols, rows)` (adds every in-bounds tile). The scene parses the flag once into a
+  `debugRevealAll` field (mirrors the existing `marketEnabled` pattern) and, in seedFogAroundPlayer,
+  reveals the whole map instead of the HQ pocket when set. Normal play (no flag) keeps the fog
+  unchanged; the per-frame revealFog only ADDS, so reveal-all persists.
+- 2) SCOUTING HINT FOR FLY-TO-UNSEEN — clicking a CITY-roster row for an unscouted district used to
+  fly the camera onto plain black fog (a dead-end). flyToDistrict now computes `scouted` (the
+  district's plaza/centroid tile isRevealed, or reveal-all on) and calls a new `showScoutCue`:
+  • a faint WORLD outline of the district's region (an iso diamond of its bounds) drawn above the fog
+    soot so the target isn't just black, fading out;
+  • a FIXED, always-readable HUD cartouche naming the district — "▣ {NAME}", plus "— not yet scouted —"
+    when under fog — at screen-centre (the fly centres on the district). This is needed because the
+    world nameplate is an illegible speck at FAR zoom AND is zoom-gated off below 0.5× (fly-to lands at
+    0.35×), so without it the player couldn't even tell WHICH district they flew to (covers fix 3).
+  The status line also reflects the scouting state. Purely visual — the district stays unscouted until
+  a unit actually walks there; no sim/fog mutation from the cue.
+- Two-camera correctness: the cue's world outline is registered via worldFx (uiCam ignores it); the
+  HUD cartouche is registered via a NEW symmetric `hudFx` helper (main camera ignores it) so it can't
+  double-render in world space — both created after the setupUiCamera snapshot.
+- TESTS: +2 pure (tests/reshape.test.ts): revealAllRequested parses ?reveal=1 / rejects
+  absent/0/other; revealAll uncovers every in-bounds tile (96² → 9216, off-map stays dark). 645 + 2 = 647.
+- Files: src/sim/fog.ts (+revealAllRequested, +revealAll), src/sim/index.ts (exports),
+  src/scenes/IsoScene.ts (debugRevealAll field, reveal-all in seedFogAroundPlayer, showScoutCue +
+  hudFx + flyToDistrict scouting cue, stale 64²→96² comment), tests/reshape.test.ts (+2).
+- Gate: typecheck ✅  build ✅  test ✅ (647). ?reveal=1 shows the full sparse city; fly-to-unseen now
+  lands with a named, outlined target instead of a black dead-end.
+- Commit: rts30a.1: reveal-all flag + scout hint for map UAT — green

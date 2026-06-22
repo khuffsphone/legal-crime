@@ -111,10 +111,13 @@ import {
   tileKindAt,
   WORLD_SIZE,
   type WorldLayout,
+  type WorldDistrict,
   recordExtortVisit,
   extortProgress,
   createFog,
   revealAround,
+  revealAll,
+  revealAllRequested,
   isRevealed,
   STROLL_SPEED,
   RIVAL_DORMANT_WEEKS,
@@ -208,6 +211,7 @@ export class IsoScene extends Phaser.Scene {
   private world!: WorldLayout; // RTS-30a the sparse generated world (extends MapLayout)
   private groundGfx?: Phaser.GameObjects.Graphics; // culled per-frame ground/streets/parks + fog
   private uiCam?: Phaser.Cameras.Scene2D.Camera; // RTS-30a fixed HUD camera (never zooms)
+  private scoutCue?: { card: Phaser.GameObjects.Text; outline: Phaser.GameObjects.Graphics }; // RTS-30a.1 fly-to cue
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
@@ -292,6 +296,9 @@ export class IsoScene extends Phaser.Scene {
   // RTS-29: the Market is OFF by default now (its dock tab is freed for the CONTROL readout); opt back
   // in only with ?market=on. The market code stays dormant behind the flag (not ripped out).
   private marketEnabled = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('market') : null) === 'on';
+  // RTS-30a.1: ?reveal=1 lifts the fog over the whole map so the sparse city is inspectable (debug-only;
+  // normal play keeps the fog). Parsed by the pure revealAllRequested helper.
+  private debugRevealAll = typeof window !== 'undefined' && revealAllRequested(window.location?.search ?? '');
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
   private actionTitle?: Phaser.GameObjects.Text; // RTS-28 the separated ACTION BOARD
   private actionBody?: Phaser.GameObjects.Text;
@@ -366,7 +373,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
     this.state.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
     this.applyDebugScenario();
-    // RTS-30a: the SPARSE LARGER world — buildings placed apart with setbacks across a 64² map,
+    // RTS-30a: the SPARSE LARGER world — buildings placed apart with setbacks across a 96² map,
     // partitioned into districts. WorldLayout extends MapLayout, so collectors/routes consume it
     // unchanged. The ground/streets/parks are CULLED to the viewport (drawGround), not 4096 Images.
     this.world = generateWorld(this.state, { size: WORLD_SIZE });
@@ -587,6 +594,9 @@ export class IsoScene extends Phaser.Scene {
   /** RTS-30a: reveal the opening pocket around the player's HQ + starting units. The veil is RENDERED
    * culled in drawGround (per-visible-tile), so this only updates the revealed set. */
   private seedFogAroundPlayer(): void {
+    // RTS-30a.1 ?reveal=1 (debug): lift the fog over the WHOLE map so the full sparse city — avenues,
+    // parks/plazas, every district + its boundaries/nameplates/washes — is inspectable + playtestable.
+    if (this.debugRevealAll) { revealAll(this.fog, WORLD_SIZE, WORLD_SIZE); return; }
     const hq = hqTileOf(this.layout, 'player');
     if (hq) revealAround(this.fog, hq.gx, hq.gy, FOG_REVEAL_RADIUS + 2, WORLD_SIZE, WORLD_SIZE);
     for (const v of this.units) { const t = unitTile(v.unit); revealAround(this.fog, t.gx, t.gy, FOG_REVEAL_RADIUS, WORLD_SIZE, WORLD_SIZE); }
@@ -645,6 +655,13 @@ export class IsoScene extends Phaser.Scene {
   private worldFx(...objs: (Phaser.GameObjects.GameObject | undefined)[]): void {
     if (!this.uiCam) return;
     for (const o of objs) if (o) this.uiCam.ignore(o);
+  }
+
+  /** RTS-30a.1 — mirror of worldFx for runtime-created HUD objects (scrollFactor 0): the MAIN camera
+   * must ignore them, or they'd double-render in world space (the create-time snapshot only covers
+   * objects that existed at setupUiCamera). */
+  private hudFx(...objs: (Phaser.GameObjects.GameObject | undefined)[]): void {
+    for (const o of objs) if (o) this.cameras.main.ignore(o);
   }
 
   private updateUnits(dt: number): void {
@@ -1655,14 +1672,49 @@ export class IsoScene extends Phaser.Scene {
     this.zoomAnchor = { sx: p.x, sy: p.y, wx: wp.x, wy: wp.y };
   }
 
-  /** RTS-30a — fly the camera to a district (clicked in the roster) at FAR zoom. */
+  /** RTS-30a — fly the camera to a district (clicked in the roster) at FAR zoom. RTS-30a.1: when the
+   * target is unscouted (still under fog), show a cue so it isn't a black dead-end. */
   private flyToDistrict(districtId: string): void {
     const d = this.world.districts.find((x) => x.id === districtId);
     if (!d) return;
     const c = gridToScreen(d.centroid.gx, d.centroid.gy);
     this.targetZoom = ZOOM_STOPS[2];
     this.cameras.main.pan(c.x, c.y, 420, 'Sine.easeInOut');
-    this.setStatus(`flying to ${d.name}`);
+    const scouted = this.debugRevealAll || isRevealed(this.fog, d.plaza.gx, d.plaza.gy) || isRevealed(this.fog, d.centroid.gx, d.centroid.gy);
+    this.showScoutCue(d, scouted);
+    this.setStatus(scouted ? `flying to ${d.name}` : `flying to ${d.name} — not yet scouted`);
+  }
+
+  /** RTS-30a.1 — the fly-to cue: a faint WORLD outline of the district drawn through the fog (so the
+   * target isn't just black) + a FIXED, always-readable HUD cartouche naming it (the world nameplate
+   * is an illegible speck at FAR zoom, and is zoom-gated off below 0.5×). Both fade out. Purely
+   * visual — no sim/fog change; the district stays unscouted until a unit actually walks there. */
+  private showScoutCue(d: WorldDistrict, scouted: boolean): void {
+    this.scoutCue?.card.destroy();
+    this.scoutCue?.outline.destroy();
+    // (A) faint district-region outline (iso diamond of its bounds), above the fog soot.
+    const outline = this.add.graphics().setDepth(60);
+    const corners = [
+      gridToScreen(d.minX, d.minY), gridToScreen(d.maxX + 1, d.minY),
+      gridToScreen(d.maxX + 1, d.maxY + 1), gridToScreen(d.minX, d.maxY + 1),
+    ];
+    outline.lineStyle(2, hexNum(SPEC.brass), scouted ? 0.5 : 0.34);
+    outline.beginPath();
+    outline.moveTo(corners[0].x, corners[0].y);
+    for (let i = 1; i < corners.length; i++) outline.lineTo(corners[i].x, corners[i].y);
+    outline.closePath();
+    outline.strokePath();
+    this.worldFx(outline);
+    this.tweens.add({ targets: outline, alpha: 0, delay: 1700, duration: 1200, onComplete: () => outline.destroy() });
+    // (B) fixed HUD cartouche — reads WHICH district + the scouting state, at any zoom.
+    const txt = scouted ? `▣ ${d.name.toUpperCase()}` : `▣ ${d.name.toUpperCase()}\n— not yet scouted —`;
+    const card = this.mkText(this.scale.width / 2, 122, txt, {
+      fontFamily: NOIR_DISPLAY, fontSize: '16px', color: scouted ? NOIR_PALETTE.brass : NOIR_PALETTE.bone,
+      fontStyle: 'bold', align: 'center', backgroundColor: '#14110fdd', padding: { x: 12, y: 6 },
+    }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(100050);
+    this.hudFx(card);
+    this.tweens.add({ targets: card, alpha: 0, delay: 1900, duration: 900, onComplete: () => card.destroy() });
+    this.scoutCue = { card, outline };
   }
 
   private setupCameraControls(): void {

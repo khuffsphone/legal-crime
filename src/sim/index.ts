@@ -254,6 +254,8 @@ export {
   isRevealed,
   revealAround,
   revealedCount,
+  revealAllRequested,
+  revealAll,
   type FogState,
 } from './fog';
 export {

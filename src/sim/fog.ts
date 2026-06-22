@@ -46,3 +46,21 @@ export function revealAround(
 export function revealedCount(fog: FogState): number {
   return fog.size;
 }
+
+/** DEBUG (?reveal=1): parse the reveal-all flag from a query string. Pure + testable; default off so
+ * normal play keeps the fog. Empty / malformed / absent ⇒ false. */
+export function revealAllRequested(search: string): boolean {
+  if (!search) return false;
+  try {
+    return new URLSearchParams(search).get('reveal') === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** DEBUG (?reveal=1): lift the fog over the WHOLE map so the full sparse city is inspectable. Mutates
+ * `fog`; returns the count of tiles now revealed. */
+export function revealAll(fog: FogState, cols: number, rows: number): number {
+  for (let gx = 0; gx < cols; gx++) for (let gy = 0; gy < rows; gy++) fog.add(`${gx},${gy}`);
+  return fog.size;
+}
