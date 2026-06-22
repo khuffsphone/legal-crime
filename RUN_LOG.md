@@ -2291,3 +2291,45 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   grease/federal/combat cue maps, VO take-rotation, volume helpers). Four channels + 50/70/85 kept;
   no Gangsters conflations; behaviour/tests un-regressed.
 - Commit: rts27: Audio Wiring — green
+
+## RTS-28 (Playability & Pacing) — GREEN  (2026-06-22)
+- Summary: A playability pass on the playtest verdict ("barely playable past 5 min + clear bugs"). Seven
+  fixes; NO core-loop/economy redesign (that's RTS-29). tick/applyCommand untouched; /src/sim Phaser-
+  free; the per-week economy math is identical — only real-time spacing + UX/render change. 618 → 626
+  green (+8 pure playability helpers).
+- ⭐ #1 PACING (the unblock): the scene now runs a TIGHTER real-time week (SCENE_WEEK 55s, was the sim's
+  120s default) with the rival-pulse cadence scaled to match (~5.5 pulses/week, unchanged), so a week
+  isn't mostly dead waiting. Added a FAST-FORWARD control — [Space] (and an on-screen ▶/▶▶/▶▶▶ button)
+  cycles 1×/2×/4× by scaling the dt fed to the sim — and a SKIP-WEEK control — [>] (and a button) jumps
+  straight to the next settlement (exactly one week). Always visible, bottom-centre. Pure helpers
+  (nextTimeScale / scaledDt / skipWeekDt) drive it; the HUD countdown uses the same scene week.
+- #2 [T] COLLECTOR SPAM: capped at ONE route collector. Repeated [T] REFRESHES the route (to cover
+  newly-extorted shops) but never STACKS — the existing collector's sprite view is cleaned before
+  recreating (createCollectionRoute already retires the old sim unit), and a collector carrying cash is
+  left to bank first. Pure canAddRouteCollector cap (MAX_ROUTE_COLLECTORS = 1).
+- #3 BUILDING CLICK OFFSET: businessAtScreen now hit-tests the drawn building COLUMN (height-aware,
+  frontmost) FIRST and only falls back to the raw base tile — so a click on a tall building's body
+  resolves to THAT building, not the tile one row up-left (the iso offset). A left-click now SELECTS the
+  building under the cursor (focusBizId): its card sticks in the context panel and [E]/[U] target it.
+- #4 ACTION-VERB LEGIBILITY: the [1]–[6] build + offence verbs moved OUT of THE CITY/ledger text into
+  their own labelled, solid-backed "⚔ ACTIONS" board (bottom-right), each a READY/CONDITIONAL/LOCKED
+  chip — scannable at a glance, no longer haphazard red text mixed into the standings.
+- #5 MARKET PANEL COLLISION: THE MARKET ([M]) now cleanly REPLACES the right dock — opening it hides
+  The Wire + The City + the Action board (and their frame) and draws from the top of the dock, so it
+  never overlaps their text; closing restores them.
+- #6 CAMERA CENTERING: the default resting view now CENTERS the whole play area (centroid of every
+  business + HQ) instead of resting up-and-left on the home corner; [Z] frame-city already centres.
+- #7 MARKET/EVENTS TOGGLE (cheap): ?market=off (default on) de-emphasises the Market + Events noise —
+  the [M] tab is disabled and the weekly content runs civic-influence only (skips the market drift +
+  event rolls), pending the RTS-29 re-shape. Default on = behaviour unchanged.
+- NOT CHANGED: no sim/economy/balance redesign; tick/applyCommand & the four channels + 50/70/85 ladder
+  untouched; the collector MODEL (the full rework) is deferred to RTS-29 — [T] is only capped here; the
+  Market/Events FATE is deferred to RTS-29 — only a turn-down flag here. No per-frame audio/alloc added;
+  the rts25 frame loop is intact (FPS held — verify [P]).
+- Files: NEW src/scenes/playability.ts (pure: time scales, scaledDt, skipWeekDt, flagEnabled,
+  collector cap) + tests/playability.test.ts (8); src/scenes/IsoScene.ts (scene week + fast-forward/
+  skip controls; [T] cap + destroyUnitView; column-first businessAtScreen + click-select building;
+  the ACTION board; market-replaces-dock; centred default camera; ?market=off). No sim changes.
+- Gate: typecheck ✅  build ✅  test ✅ (626; +8 playability: fast-forward cycle, scaledDt, skip-week
+  math, feature-flag parse, collector cap). Behaviour/economy un-regressed.
+- Commit: rts28: Playability & Pacing — green

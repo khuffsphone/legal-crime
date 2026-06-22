@@ -59,7 +59,6 @@ import {
   resolveStrategicPulse,
   offenseReadout,
   hudPhase,
-  offensePreview,
   victoryProximity,
   winPaths,
   viceLadder,
@@ -69,6 +68,7 @@ import {
   sellGood,
   tradePreview,
   advanceWeeklyContent,
+  advanceCivics,
   type ViceLadder as ViceLadderView,
   type TradeSide,
   federalTierLabel,
@@ -107,6 +107,7 @@ import {
   businessActions,
   resolveAttack,
   createCollectionRoute,
+  routeCollectorOf,
   advanceRoutes,
   routeStatus,
   routeStops,
@@ -136,6 +137,9 @@ import { AudioManager } from './audio';
 import { cycleVolume } from './audioMap';
 import type { MusicPhase } from './audioMap';
 import {
+  nextTimeScale, scaledDt, skipWeekDt, flagEnabled, canAddRouteCollector,
+} from './playability';
+import {
   SPEC,
   MOTION,
   hexNum,
@@ -154,6 +158,12 @@ const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2.6;
 const ZOOM_STEP = 0.12; // per wheel notch (fraction of current zoom)
 const CLICK_SLOP = 6;
+
+// RTS-28 PACING: the scene runs a tighter real-time week than the sim's 120s default so a week isn't
+// mostly dead waiting (the economy PER week is identical — only the real-time spacing tightens). The
+// rival-pulse cadence scales with it (~5.5 pulses/week, same as before). Fast-forward multiplies dt.
+const SCENE_WEEK_SECONDS = 55;
+const SCENE_PULSE_SECONDS = 10;
 
 
 // Subtle per-district colour identity (a tint multiplied over the cobbles).
@@ -271,6 +281,15 @@ export class IsoScene extends Phaser.Scene {
   private tipsFired = new Set<string>(); // consigliere tips: first-occurrence gating
   private audioPanelOpen = false;
   private audioPanel?: Phaser.GameObjects.Text;
+  // RTS-28 playability
+  private timeScale = 1;            // fast-forward multiplier (1× / 2× / 4×)
+  private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
+  private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
+  private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
+  private marketEnabled = flagEnabled(typeof window !== 'undefined' ? window.location.search : '', 'market');
+  private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
+  private actionTitle?: Phaser.GameObjects.Text; // RTS-28 the separated ACTION BOARD
+  private actionBody?: Phaser.GameObjects.Text;
   // RTS-25 — crisp text + per-frame rasterisation budget. textRes renders each Text's canvas at the
   // device pixel ratio (no blurry browser upscaling). setT() change-gates setText so we only re-
   // rasterise a label when its string actually changed (the per-frame text churn was the bottleneck).
@@ -344,9 +363,11 @@ export class IsoScene extends Phaser.Scene {
     // RTS-22: frame the player's home neighbourhood (where the extort-first opening happens), zoomed
     // out enough to read the block. The camera is fully driveable (WASD / drag / wheel / F-follow).
     this.routeGfx = this.add.graphics().setDepth(7);
-    const home = this.homeFocusPoint();
-    cam.centerOn(home.x, home.y);
-    this.targetZoom = 0.62;
+    // RTS-28: the default resting view CENTERS the whole play area (was resting up-and-left on the
+    // home corner), so the board sits balanced in frame from the first paint.
+    const center = this.cityCenterPoint();
+    cam.centerOn(center.x, center.y);
+    this.targetZoom = 0.58;
     cam.setZoom(this.targetZoom);
 
     this.setupCameraControls();
@@ -576,11 +597,20 @@ export class IsoScene extends Phaser.Scene {
     const gun = this.state.units.find((u) => u.id === 'rival-gun');
     if (collector && gun) issueMove(gun, unitTile(collector), this.navGrid);
 
-    const obs = observeWorld(this.state, dt);
+    // RTS-28 PACING: feed the sim a tighter real-time week + the fast-forward multiplier; a pending
+    // SKIP-WEEK jumps straight to the next settlement (exactly one). Economy math is untouched.
+    let stepDt = scaledDt(dt, this.timeScale);
+    if (this.skipWeekPending) { stepDt = skipWeekDt(this.state.weekElapsed ?? 0, SCENE_WEEK_SECONDS); this.skipWeekPending = false; }
+    const obs = observeWorld(this.state, stepDt, SCENE_WEEK_SECONDS, SCENE_PULSE_SECONDS);
     this.state = obs.state;
     // RTS-24: on each settled week, run the content beat — civic INFLUENCE accrual (Mayor path),
     // market drift back toward balance, and the light event roll. WRAPS settlement; tick untouched.
-    if (obs.result.weeksFired > 0) advanceWeeklyContent(this.state, obs.result.weeksFired);
+    // RTS-28 ?market=off de-emphasises the Market + Events noise: still accrue civic influence
+    // (the Mayor win path), but skip the market drift + event rolls. Default on = unchanged.
+    if (obs.result.weeksFired > 0) {
+      if (this.marketEnabled) advanceWeeklyContent(this.state, obs.result.weeksFired);
+      else for (let i = 0; i < obs.result.weeksFired; i++) advanceCivics(this.state);
+    }
     // RTS-22: advance any automated collection routes (gather → bank → loop). No-op without a route.
     advanceRoutes(this.state, this.layout, this.navGrid);
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
@@ -853,9 +883,10 @@ export class IsoScene extends Phaser.Scene {
    * click on the visible roof (drawn above the tile) maps to the base tile, not the tile up-left of
    * it. Tries the exact base tile first, then any building whose drawn column contains the point. */
   private businessAtScreen(worldX: number, worldY: number): string | undefined {
-    const direct = businessAtTile(this.layout, screenToTile(worldX, worldY));
-    if (direct) return direct;
-    const BUILD_H = 52; // approximate drawn building height above the base tile
+    // RTS-28: hit-test the drawn building COLUMN first (the visible body, height-aware) so a click on
+    // a tall building's body resolves to THAT building — not the tile one row up-left that
+    // screenToTile would pick. Only fall back to the raw base tile when no body contains the point.
+    const BUILD_H = 70; // covers the tallest drawn building (HQ ~66)
     let best: { id: string; y: number } | undefined;
     for (const b of allBusinesses(this.state)) {
       const t = businessTileOf(this.layout, b.id);
@@ -863,10 +894,11 @@ export class IsoScene extends Phaser.Scene {
       const c = gridToScreen(t.gx, t.gy);
       if (worldX >= c.x - ISO_TILE_HALF_WIDTH * 0.7 && worldX <= c.x + ISO_TILE_HALF_WIDTH * 0.7 &&
           worldY <= c.y + ISO_TILE_HALF_HEIGHT && worldY >= c.y - BUILD_H) {
-        if (!best || c.y > best.y) best = { id: b.id, y: c.y }; // frontmost wins
+        if (!best || c.y > best.y) best = { id: b.id, y: c.y }; // frontmost (lowest on screen) wins
       }
     }
-    return best?.id;
+    if (best) return best.id;
+    return businessAtTile(this.layout, screenToTile(worldX, worldY)) ?? undefined;
   }
 
   private closeBizMenu(): void { this.ctxMenu?.destroy(); this.ctxMenu = undefined; this.ctxRect = undefined; this.ctxRows = []; }
@@ -948,18 +980,47 @@ export class IsoScene extends Phaser.Scene {
   /** [T] — set up (or refresh) the automated collection route over your protected businesses. */
   private commandRoute(): void {
     if (routeStops(this.state, this.layout, 'player').length === 0) { this.setStatus('extort some storefronts first — then [T] sets a collection route'); return; }
+    // RTS-28: cap at ONE route collector. Repeated [T] REFRESHES the route (to cover newly-extorted
+    // shops) but never STACKS — clean the existing route-collector's sprite view before recreating so
+    // we don't accumulate orphaned collectors (createCollectionRoute retires the old sim unit).
+    const routeViews = this.units.filter((v) => v.unit.routeId !== undefined && v.faction === 'player');
+    if (!canAddRouteCollector(routeViews.length)) {
+      if (routeCollectorOf(this.state, 'player')?.carrying) { this.setStatus('a collector is already on the route, carrying cash — let it bank first'); return; }
+      for (const v of routeViews) this.destroyUnitView(v);
+    }
     const setup = createCollectionRoute(this.state, this.layout, 'player', this.navGrid);
     if (!setup) { this.setStatus('no route — extort storefronts and make sure your HQ is reachable'); return; }
     this.attachView(setup.unit, 'player');
     this.setStatus(`collection route set — ${setup.route.stops.length} stops, banking automatically (guard it!)`);
   }
 
+  /** RTS-28 — fully remove a unit's view (sprites + rings + tags) and drop it from the view list. */
+  private destroyUnitView(v: UnitView): void {
+    for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing]) o?.destroy();
+    this.units = this.units.filter((x) => x !== v);
+  }
+
   private commandSelect(p: Phaser.Input.Pointer, shift: boolean): void {
     const point = screenToGrid(p.worldX, p.worldY);
     const hit = pickUnit(this.units.map((v) => v.unit), point);
-    if (!hit) { if (!shift) this.selection = clearSelection(); }
-    else if (shift) this.selection = toggleSelection(this.selection, hit.id);
-    else this.selection = selectOnly(hit.id);
+    if (hit) {
+      this.focusBizId = undefined;
+      this.selection = shift ? toggleSelection(this.selection, hit.id) : selectOnly(hit.id);
+      this.setStatus();
+      return;
+    }
+    // RTS-28: no unit under the cursor → try a BUILDING (height-aware hit-test). A click selects the
+    // building under the cursor (its card sticks in the context panel; [E]/[U] target it).
+    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    if (bizId) {
+      this.focusBizId = bizId;
+      if (!shift) this.selection = clearSelection();
+      const insp = inspectBusiness(this.state, bizId);
+      this.setStatus(insp ? `selected ${insp.name} — right-click → EXTORT/ATTACK · [U] upgrade` : undefined);
+      return;
+    }
+    this.focusBizId = undefined;
+    if (!shift) this.selection = clearSelection();
     this.setStatus();
   }
 
@@ -1165,10 +1226,20 @@ export class IsoScene extends Phaser.Scene {
 
   /** [M] open/close THE MARKET right-dock tab. */
   private toggleMarket(): void {
+    if (!this.marketEnabled) { this.setStatus('the Market is turned off (?market=on to enable)'); return; }
     this.marketOpen = !this.marketOpen;
     this.marketTitle?.setVisible(this.marketOpen);
     this.marketBody?.setVisible(this.marketOpen);
-    if (this.marketOpen) this.setStatus('THE MARKET — [N] pick a good · [Y] buy · [J] sell');
+    // RTS-28: the Market REPLACES the right dock — hide The Wire + The City + Actions while it's open
+    // so nothing overlaps; the per-frame refreshers also respect marketOpen and restore on close.
+    const dockVisible = !this.marketOpen;
+    this.feedTitle?.setVisible(dockVisible && this.feedVisible);
+    for (const l of this.feedLines) l.setVisible(dockVisible && this.feedVisible);
+    this.strategyTitle?.setVisible(dockVisible);
+    this.strategyPanel?.setVisible(dockVisible);
+    this.actionTitle?.setVisible(dockVisible);
+    this.actionBody?.setVisible(dockVisible);
+    if (this.marketOpen) this.setStatus('THE MARKET — [N] pick a good · [Y] buy · [J] sell · [M] close');
   }
 
   /** [Y]/[J] buy or sell the selected good (only while the market tab is open). */
@@ -1406,11 +1477,12 @@ export class IsoScene extends Phaser.Scene {
 
   // ── camera ───────────────────────────────────────────────────────────────────────────────
 
-  /** The screen-space point to frame the player's home block on (the centroid of district-0). */
-  private homeFocusPoint(): { x: number; y: number } {
-    const tiles = this.state.districts[0].businesses
-      .map((b) => businessTileOf(this.layout, b.id))
-      .filter((t): t is { gx: number; gy: number } => !!t);
+  /** RTS-28 — the screen-space centroid of ALL the play content (every business + HQ), so the default
+   * resting view CENTERS the board instead of resting up-and-left on the home corner. */
+  private cityCenterPoint(): { x: number; y: number } {
+    const tiles: { gx: number; gy: number }[] = [];
+    for (const b of allBusinesses(this.state)) { const t = businessTileOf(this.layout, b.id); if (t) tiles.push(t); }
+    for (const fid of ['player', 'rival-a', 'rival-b']) { const t = hqTileOf(this.layout, fid); if (t) tiles.push(t); }
     if (tiles.length === 0) return gridToScreen((COLS - 1) / 2, (ROWS - 1) / 2);
     const gx = tiles.reduce((a, t) => a + t.gx, 0) / tiles.length;
     const gy = tiles.reduce((a, t) => a + t.gy, 0) / tiles.length;
@@ -1486,6 +1558,9 @@ export class IsoScene extends Phaser.Scene {
     // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
     this.input.keyboard?.on('keydown-O', () => this.toggleAudioPanel());
     this.input.keyboard?.on('keydown-ZERO', () => { this.audio?.toggleMute(); this.refreshAudioPanel(); });
+    // RTS-28 — pacing: [Space] cycle fast-forward, [>] (period) skip to the next week.
+    this.input.keyboard?.on('keydown-SPACE', () => this.cycleFastForward());
+    this.input.keyboard?.on('keydown-PERIOD', () => this.skipWeek());
     // RTS-24 — vice upgrade ([U] on the hovered racket) + THE MARKET ([M] toggle, [N] next good,
     // [Y] buy, [J] sell — buy/sell act only while the market tab is open).
     this.input.keyboard?.on('keydown-U', () => this.commandViceUpgrade());
@@ -1506,6 +1581,7 @@ export class IsoScene extends Phaser.Scene {
     this.refreshCrew();
     this.refreshStrategy();
     this.refreshNight();
+    this.refreshFastForward();
     this.samplePerf(delta);
 
     const cam = this.cameras.main;
@@ -1604,9 +1680,23 @@ export class IsoScene extends Phaser.Scene {
     this.strategyPanel = this.mkText(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
     this.pressureBanner = this.mkText(this.scale.width / 2, 84, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
+    // RTS-28 §4 — the ACTION BOARD: the [1]–[6] verbs in their OWN scannable, framed panel (bottom-
+    // right), separated from THE CITY standings/ledger. Solid plate so the chips read at a glance.
+    this.actionTitle = this.mkText(0, 0, '⚔ ACTIONS  [1-6]', { fontFamily: NOIR_DISPLAY, fontSize: '14px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807ee' }).setOrigin(1, 1).setScrollFactor(0).setDepth(100001).setPadding(8, 4, 8, 4);
+    this.actionBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left', backgroundColor: '#0a0807e6' }).setOrigin(1, 1).setScrollFactor(0).setDepth(100001).setPadding(8, 6, 8, 6);
+
+    // RTS-28 §1 — the fast-forward + skip-week controls (always visible, clickable). Bottom-centre.
+    this.ffButton = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807ee' })
+      .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100002).setPadding(10, 5, 10, 5).setInteractive({ useHandCursor: true });
+    this.ffButton.on('pointerdown', () => this.cycleFastForward());
+    this.skipButton = this.mkText(0, 0, '⏭ SKIP WEEK  [>]', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.bone, fontStyle: 'bold', backgroundColor: '#0a0807ee' })
+      .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100002).setPadding(10, 5, 10, 5).setInteractive({ useHandCursor: true });
+    this.skipButton.on('pointerdown', () => this.skipWeek());
+
     // RTS-25 perf overlay ([P]) — top-centre, off by default. Real FPS + frame ms + rasterisations/s.
     this.perfText = this.mkText(this.scale.width / 2, 6, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: '#7CFC8A', backgroundColor: '#000000cc' })
       .setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002).setPadding(6, 3, 6, 3).setVisible(false);
+    this.refreshFastForward(); // initial label + placement
   }
 
   /** RTS-25 — sample FPS / frame-time / text-rasterisations once per second for the [P] overlay. */
@@ -1667,27 +1757,12 @@ export class IsoScene extends Phaser.Scene {
       lines.push(`${star} ${w.label} ${w.pct}%`);
       lines.push(`   ${w.read.length > 38 ? w.read.slice(0, 37) + '…' : w.read}`);
     }
-    // RTS-20/21 build board: the verbs that grow the outfit out of ESTABLISH (expand → HOLD → RAID,
-    // recruit → muscle → ASSASSINATE), with a "when can I afford it" ETA when short on cash.
-    for (const b of buildReadout(this.state)) {
-      const mark = b.affordable ? '✓' : '✗';
-      const eta = b.affordable ? '' : IsoScene.etaTag(b.affordEtaWeeks);
-      lines.push(`${mark} [${b.hotkey}] ${b.label} $${b.cost}${eta} — ${b.effect}`);
-    }
-    // §3C OFFENSE CHIPS — verb · cost · heat · ETA · READY/CONDITIONAL/LOCKED + effect/retaliation.
-    for (const o of offenseReadout(this.state)) {
-      const st = verbChipState(o.available, o.reason); // READY / CONDITIONAL / LOCKED
-      const mark = st === 'READY' ? '●' : st === 'CONDITIONAL' ? '◐' : '○';
-      const heat = o.heat > 0 ? ` +${o.heat}🔥` : '';
-      const tail = o.available ? '' : ` (${o.reason})`;
-      const eta = !o.available && o.affordEtaWeeks !== 0 ? IsoScene.etaTag(o.affordEtaWeeks) : '';
-      const pv = offensePreview(o.key);
-      lines.push(`${mark} ${st} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}${eta}`);
-      lines.push(`      ↳ ${pv.effect}; rival: ${pv.retaliation}`);
-    }
     this.setT(this.strategyPanel, lines.join('\n')).setPosition(right, 276);
     this.setC(this.strategyPanel, standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
       : standing.trajectory === 'behind' || standing.trajectory === 'crushed' ? SPEC.danger : NOIR_PALETTE.bone);
+
+    // RTS-28 §4 — the ACTION BOARD (its OWN bottom-right panel, separated from the ledger above).
+    this.refreshActionBoard();
 
     // recolour district nameplates by holder + RTS-25 zoom-gate: hide the small map labels when the
     // camera is pulled back far enough that they'd be an illegible speck (the §-legibility rule).
@@ -1707,6 +1782,35 @@ export class IsoScene extends Phaser.Scene {
     } else {
       this.pressureBanner.setVisible(false);
     }
+  }
+
+  /** RTS-28 §4 — the ACTION BOARD: the [1]–[6] build + offence verbs in their own scannable, framed
+   * bottom-right panel (kept off THE CITY ledger), each a READY/CONDITIONAL/LOCKED chip. */
+  private refreshActionBoard(): void {
+    if (!this.actionTitle || !this.actionBody) return;
+    const lines: string[] = [];
+    // build verbs (grow the outfit out of ESTABLISH)
+    for (const b of buildReadout(this.state)) {
+      const chip = b.affordable ? 'READY' : 'COND';
+      const mark = b.affordable ? '●' : '◐';
+      const eta = b.affordable ? '' : IsoScene.etaTag(b.affordEtaWeeks);
+      lines.push(`${mark} [${b.hotkey}] ${b.label.padEnd(9)} $${b.cost}${eta}  ${chip}`);
+    }
+    // §3C offence chips — READY / CONDITIONAL / LOCKED + cost · heat
+    for (const o of offenseReadout(this.state)) {
+      const st = verbChipState(o.available, o.reason);
+      const mark = st === 'READY' ? '●' : st === 'CONDITIONAL' ? '◐' : '○';
+      const heat = o.heat > 0 ? ` +${o.heat}🔥` : '';
+      const tail = o.available ? '' : `  (${o.reason})`;
+      lines.push(`${mark} [${o.hotkey}] ${o.label.padEnd(9)} $${o.cost}${heat}  ${st}${tail}`);
+    }
+    const margin = 18;
+    const bottom = this.scale.height - 12;
+    const x = this.scale.width - margin;
+    this.setT(this.actionBody, lines.join('\n')).setPosition(x, bottom);
+    const titleY = bottom - this.actionBody.height - 2;
+    this.actionTitle.setPosition(x, titleY).setVisible(!this.marketOpen);
+    this.actionBody.setVisible(!this.marketOpen);
   }
 
   /** A turf-war beat (RTS-16): a district changed hands — called out over its nameplate. */
@@ -1778,7 +1882,7 @@ export class IsoScene extends Phaser.Scene {
     // Mutiny telegraph: a disloyal member may walk at the next settlement — name it + countdown.
     if (this.mutinyBanner) {
       if (mostUrgent && this.crewVisible) {
-        const countdown = realtimeHudView(this.state).weekCountdownLabel;
+        const countdown = realtimeHudView(this.state, SCENE_WEEK_SECONDS).weekCountdownLabel;
         this.setT(this.mutinyBanner, `⚠ ${mostUrgent.name.toUpperCase()} READY TO BETRAY — ACT NOW  (settles in ${countdown})`)
           .setPosition(this.scale.width / 2, 130).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 300)));
       } else {
@@ -1790,7 +1894,7 @@ export class IsoScene extends Phaser.Scene {
   private refreshHud(): void {
     if (!this.hudGfx) return;
     const g = this.hudGfx;
-    const hud = realtimeHudView(this.state);
+    const hud = realtimeHudView(this.state, SCENE_WEEK_SECONDS);
     const p = hud.player;
     const danger = anyCollectorInDanger(this.state);
     const net = playerWeeklyNet(this.state);
@@ -1860,8 +1964,8 @@ export class IsoScene extends Phaser.Scene {
     // ── THE MARKET tab (right dock, when open) ──
     this.drawMarket(g);
 
-    // ── THE WIRE frame (behind the feed, under the top bar) ──
-    if (this.feedVisible) {
+    // ── THE WIRE frame (behind the feed, under the top bar) — hidden while the Market replaces the dock ──
+    if (this.feedVisible && !this.marketOpen) {
       const fw = 306, fx = W - fw - 6, fy = 60;
       this.decoFrame(g, fx, fy, fw, 184, PAL.brass, 0.5);
       if (now < this.wireFlashUntil) { g.lineStyle(2, hexNum(SPEC.danger), 0.4 + 0.4 * Math.abs(Math.sin(now / 120))); g.strokeRect(fx + 1, fy + 1, fw - 2, 182); }
@@ -1985,7 +2089,9 @@ export class IsoScene extends Phaser.Scene {
     // Prefer a business under the cursor (only over the world, not the HUD panels).
     const ptr = this.input.activePointer;
     const overWorld = ptr.y > 60 && ptr.x < this.scale.width - 320 && ptr.y < this.scale.height - 96;
-    const bizId = overWorld ? this.businessAtScreen(ptr.worldX, ptr.worldY) : undefined;
+    // RTS-28: hovered building takes priority; otherwise the STICKY left-clicked building (focusBizId).
+    const hovered = overWorld ? this.businessAtScreen(ptr.worldX, ptr.worldY) : undefined;
+    const bizId = hovered ?? (this.focusBizId && allBusinesses(this.state).some((bb) => bb.id === this.focusBizId) ? this.focusBizId : undefined);
     if (bizId) {
       const b = inspectBusiness(this.state, bizId);
       const raw = allBusinesses(this.state).find((x2) => x2.id === bizId);
@@ -2054,7 +2160,9 @@ export class IsoScene extends Phaser.Scene {
     const right = this.scale.width - 18;
     const rows = marketRows(this.state);
     if (this.marketSel >= rows.length) this.marketSel = 0;
-    const top = 60 + (this.feedVisible ? 190 : 0);
+    // RTS-28: THE MARKET cleanly REPLACES the right dock (The Wire + The City + Actions are hidden
+    // while it's open — see toggleMarket / the refresh gates), so it never overlaps their text.
+    const top = 64;
     this.marketTitle.setPosition(right, top);
     const lines: string[] = [];
     for (let i = 0; i < rows.length; i++) {
@@ -2153,6 +2261,31 @@ export class IsoScene extends Phaser.Scene {
     const lines = ['♪ AUDIO  [O] close · [0] mute' + (s.muted ? '  (MUTED)' : '')];
     IsoScene.AUDIO_BUSES.forEach((b, i) => lines.push(`[${i + 1}] ${b.toUpperCase().padEnd(9)} ${bar(s[b] as number)} ${Math.round((s[b] as number) * 100)}%`));
     this.setT(this.audioPanel, lines.join('\n')).setColor(s.muted ? SPEC.danger : NOIR_PALETTE.bone);
+  }
+
+  // ── RTS-28 fast-forward / skip-week ─────────────────────────────────────────────────────────
+
+  /** [Space] / the on-screen button — cycle the real-time speed 1× → 2× → 4×. */
+  private cycleFastForward(): void {
+    this.timeScale = nextTimeScale(this.timeScale);
+    this.refreshFastForward();
+    this.setStatus(`speed ${this.timeScale}× — [Space] cycle · [>] skip week`);
+  }
+
+  /** [>] / the on-screen button — jump straight to the next week settlement (exactly one). */
+  private skipWeek(): void {
+    this.skipWeekPending = true;
+    this.setStatus('skipping to the next week…');
+  }
+
+  /** Position + label the FF/skip controls (bottom-centre, always visible). */
+  private refreshFastForward(): void {
+    if (!this.ffButton || !this.skipButton) return;
+    const cy = this.scale.height - 12, cx = this.scale.width / 2;
+    const glyph = this.timeScale === 1 ? '▶' : this.timeScale === 2 ? '▶▶' : '▶▶▶';
+    this.setT(this.ffButton, `${glyph} ${this.timeScale}×  [Space]`).setColor(this.timeScale > 1 ? SPEC.cashGreen : NOIR_PALETTE.brass)
+      .setPosition(cx - this.ffButton.width / 2 - 6, cy);
+    this.skipButton.setPosition(cx + this.skipButton.width / 2 + 6, cy);
   }
 
   /** A centred banner when the match phase changes (a clear visual beat for audio/VO to hook). */
