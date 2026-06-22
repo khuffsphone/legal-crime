@@ -294,3 +294,31 @@ export const MARKET_PRICE_MIN = 5; // a good never goes worthless
 
 // Light events feeding THE WIRE (wrapped, weekly). A handful, legible, tied to existing systems.
 export const EVENT_WEEKLY_CHANCE = 0.35; // per-week chance an event fires (when enabled)
+
+// ── RTS-29 — Core-loop reshape (slice 1: the peaceful builder) ───────────────────────────────────
+
+// SPACE = THE CLOCK: a slow period stroll so travel is visible ambient time (was MOVE_SPEED 2.5).
+// Applied per-unit at spawn in the scene; MOVE_SPEED itself is unchanged so movement tests stand.
+export const STROLL_SPEED = 1.15; // tiles/second
+
+// DELAYED RIVALS: weeks of zero rival TERRITORIAL contact (the calm runway). Opt-in via
+// state.rivalWakeWeek (absent ⇒ 0 ⇒ no dormancy, so prior states/tests are unchanged).
+export const RIVAL_DORMANT_WEEKS = 3;
+
+// EXTORT AS REPEATED VISITS: muscle visits to convert a front (rich blocks resist more). Cost is
+// TIME + a thug occupied, not cash.
+export const EXTORT_VISITS_BASE = 3;
+export const EXTORT_VISITS_PER_WEALTH = 1; // +visits per wealth tier above 1
+
+// CONTROL currency — caps how much you can actively HOLD; raised by CITY HALL political favor (NOT a
+// parallel economy) + a slow time-drift floor; SPENT on the holdings you maintain (returns when
+// released). The chain extort→launder→bribe→favor→cap→expand is the pacing metronome.
+export const CONTROL_START = 3; // starting cap (room for the first rackets)
+export const CONTROL_PER_FAVOR = 5; // +1 cap per $5/wk greased into City Hall (politicians)
+export const CONTROL_DRIFT_PER_WEEK = 0.05; // slow cap floor so a stuck player isn't hard-locked
+export const CONTROL_CAP_MAX = 30;
+export const CONTROL_COST_BUSINESS = 1; // control spent per extorted front held
+export const CONTROL_COST_DISTRICT = 2; // control spent per held district
+
+// FOG-OF-WAR: tiles revealed in this radius around the HQ + each player unit (slow brass dissolve).
+export const FOG_REVEAL_RADIUS = 3.2; // tiles

@@ -161,6 +161,9 @@ export {
   createCollectionRoute,
   advanceRoutes,
   routeStatus,
+  ensureBusinessCollector,
+  businessRouteId,
+  collectorsVulnerable,
   type RouteSetup,
   type RouteStatus,
 } from './routes';
@@ -195,6 +198,7 @@ export {
   familyIsFallen,
   resolveStrategicPulse,
   advanceStrategy,
+  rivalsDormant,
   type TelegraphedPush,
   type StrategicEvent,
 } from './strategy';
@@ -244,6 +248,30 @@ export {
   type BuildKey,
   type BuildOption,
 } from './pacing';
+// RTS-29 — core-loop reshape (peaceful builder): control currency, fog, extort-as-visits.
+export {
+  controlCap,
+  controlSpent,
+  controlAvailable,
+  canHold,
+  controlReadout,
+  type ControlReadout,
+} from './control';
+export {
+  createFog,
+  tileKey,
+  isRevealed,
+  revealAround,
+  revealedCount,
+  type FogState,
+} from './fog';
+export {
+  extortResistance,
+  extortProgress,
+  recordExtortVisit,
+  type ExtortProgress,
+  type ExtortVisitResult,
+} from './extortion';
 export {
   dominationProgress,
   goStraightProgress,

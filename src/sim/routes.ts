@@ -12,8 +12,57 @@ import { uncollectedOf } from './collection';
 import { findBusiness } from './commands';
 import { businessEarner } from './economy';
 import { earningBusinesses } from './interdiction';
+import { rivalsDormant } from './strategy';
+import { STROLL_SPEED } from './constants';
 import type { NavGrid } from './pathfinding';
 import type { CollectionRoute, GameState } from './types';
+
+// ── RTS-29 — the FIXED per-business collector model (the sea-of-collectors heartbeat) ─────────────
+
+/** The fixed route id for a single business's collector (one collector per business). */
+export function businessRouteId(businessId: string): string {
+  return `route-biz-${businessId}`;
+}
+
+/**
+ * RTS-29 — ensure a SINGLE fixed HQ↔business collector exists for `businessId` if `familyId` earns
+ * from it. One collector per business; MANY extorted businesses → MANY collectors walking their fixed
+ * tracks each week (the rewarding visible heartbeat). The collector walks at the slow stroll speed →
+ * collects → returns → banks → loops (travel time is the throttle). Returns the setup if it created
+ * one, else null (already exists / not earned / no tiles). Pure (mutates state).
+ */
+export function ensureBusinessCollector(
+  state: GameState, layout: MapLayout, familyId: string, businessId: string, grid?: NavGrid,
+): RouteSetup | null {
+  const routeId = businessRouteId(businessId);
+  if (state.units.some((u) => u.routeId === routeId)) return null; // already has its collector
+  const found = findBusiness(state, businessId);
+  if (!found || businessEarner(found.business) !== familyId) return null;
+  const hq = hqTileOf(layout, familyId);
+  const tile = businessTileOf(layout, businessId);
+  if (!hq || !tile) return null;
+
+  const route: CollectionRoute = { id: routeId, familyId, stops: [businessId] };
+  state.routes = [...(state.routes ?? []).filter((r) => r.id !== routeId), route];
+  const col = spawnCollector(`collector-${businessId}`, hq.gx, hq.gy, familyId, 0, STROLL_SPEED);
+  col.routeId = routeId;
+  col.routeIndex = 0;
+  col.routePhase = 'toStop';
+  issueMove(col, tile, grid ?? navGridForLayout(layout));
+  state.units.push(col);
+  return { route, unit: col };
+}
+
+/**
+ * RTS-30 HOOK (RETAINED but DORMANT in this slice): whether a collector's cash run can be hit/robbed.
+ * Keyed to rival dormancy — FALSE while rivals are dormant (the safe early game), so nothing
+ * intercepts and the red threat-ring never shows. The interception/threat code path
+ * (resolveInterceptions / threatenedCollectors) is KEPT intact; this gate is where RTS-30 switches it
+ * on as a rival-invasion consequence (the re-timed signature pillar — NOT removed). Pure read.
+ */
+export function collectorsVulnerable(state: GameState): boolean {
+  return !rivalsDormant(state);
+}
 
 /** The businesses a family would auto-collect on a route — every business it currently earns from
  * that has a tile in the layout, in district order. Pure read. */

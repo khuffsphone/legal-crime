@@ -15,7 +15,6 @@ import {
   ISO_TILE_HALF_HEIGHT,
   makeGrid,
   spawnUnit,
-  spawnEnforcer,
   issueMove,
   unitTile,
   unitScreenPos,
@@ -36,7 +35,6 @@ import {
   processCollectorArrivals,
   dispatchThreat,
   pendingCollection,
-  extortAtTile,
   applyCommand,
   affordableOperation,
   strongholdDistrict,
@@ -106,11 +104,19 @@ import {
   isShutDown,
   businessActions,
   resolveAttack,
-  createCollectionRoute,
-  routeCollectorOf,
   advanceRoutes,
-  routeStatus,
-  routeStops,
+  ensureBusinessCollector,
+  controlReadout,
+  canHold,
+  recordExtortVisit,
+  extortProgress,
+  createFog,
+  revealAround,
+  isRevealed,
+  STROLL_SPEED,
+  RIVAL_DORMANT_WEEKS,
+  FOG_REVEAL_RADIUS,
+  type FogState,
   type GameState,
   type MapLayout,
   type Selection,
@@ -137,7 +143,7 @@ import { AudioManager } from './audio';
 import { cycleVolume } from './audioMap';
 import type { MusicPhase } from './audioMap';
 import {
-  nextTimeScale, scaledDt, skipWeekDt, flagEnabled, canAddRouteCollector,
+  nextTimeScale, scaledDt, skipWeekDt,
 } from './playability';
 import {
   SPEC,
@@ -286,10 +292,19 @@ export class IsoScene extends Phaser.Scene {
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
   private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
   private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
-  private marketEnabled = flagEnabled(typeof window !== 'undefined' ? window.location.search : '', 'market');
+  // RTS-29: the Market is OFF by default now (its dock tab is freed for the CONTROL readout); opt back
+  // in only with ?market=on. The market code stays dormant behind the flag (not ripped out).
+  private marketEnabled = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('market') : null) === 'on';
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
   private actionTitle?: Phaser.GameObjects.Text; // RTS-28 the separated ACTION BOARD
   private actionBody?: Phaser.GameObjects.Text;
+  // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
+  private fog: FogState = createFog();
+  private fogGfx?: Phaser.GameObjects.Graphics;
+  private fogDirty = true;          // redraw the veil only when newly-revealed tiles change
+  private controlTitle?: Phaser.GameObjects.Text;
+  private controlBody?: Phaser.GameObjects.Text;
+  private extortIntents = new Map<string, string>(); // unitId → businessId a thug is walking to lean on
   // RTS-25 — crisp text + per-frame rasterisation budget. textRes renders each Text's canvas at the
   // device pixel ratio (no blurry browser upscaling). setT() change-gates setText so we only re-
   // rasterise a label when its string actually changed (the per-frame text churn was the bottleneck).
@@ -352,12 +367,18 @@ export class IsoScene extends Phaser.Scene {
     // RTS-12/16: a fair opening (loyal crew + one protected run) on the BIG contested city —
     // a 9-district turf war against two active rival families.
     this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
+    // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
+    this.state.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
     this.applyDebugScenario();
     this.layout = buildMapLayout(this.state, COLS, ROWS);
     this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
 
     this.drawCity();
     this.drawPeriodDressing();
+    // RTS-29: a soot fog veil over the whole board, lifted in a brass-lit radius around the HQ + units
+    // (drawn once here, redrawn ONLY when new tiles reveal — never per frame).
+    this.fogGfx = this.add.graphics().setDepth(99950);
+    this.seedFogAroundPlayer();
     this.spawnUnits();
 
     // RTS-22: frame the player's home neighbourhood (where the extort-first opening happens), zoomed
@@ -365,9 +386,12 @@ export class IsoScene extends Phaser.Scene {
     this.routeGfx = this.add.graphics().setDepth(7);
     // RTS-28: the default resting view CENTERS the whole play area (was resting up-and-left on the
     // home corner), so the board sits balanced in frame from the first paint.
-    const center = this.cityCenterPoint();
+    // RTS-29: open framed on the player's revealed POCKET (the HQ + starting block), since the rest of
+    // the board is under fog — centering the whole city would just frame soot. ([Z] still frames all.)
+    const hq = hqTileOf(this.layout, 'player');
+    const center = hq ? gridToScreen(hq.gx + 1, hq.gy + 1) : this.cityCenterPoint();
     cam.centerOn(center.x, center.y);
-    this.targetZoom = 0.58;
+    this.targetZoom = 0.85; // closer in — a tighter, more intimate opening read of the pocket
     cam.setZoom(this.targetZoom);
 
     this.setupCameraControls();
@@ -556,12 +580,60 @@ export class IsoScene extends Phaser.Scene {
     }
   }
 
+  // ── RTS-29 fog of war ─────────────────────────────────────────────────────────────────────────
+
+  /** Reveal the opening pocket around the player's HQ + starting units, then draw the veil once. */
+  private seedFogAroundPlayer(): void {
+    const hq = hqTileOf(this.layout, 'player');
+    if (hq) revealAround(this.fog, hq.gx, hq.gy, FOG_REVEAL_RADIUS + 1, COLS, ROWS);
+    revealAround(this.fog, 3, 2, FOG_REVEAL_RADIUS, COLS, ROWS);
+    revealAround(this.fog, 4, 2, FOG_REVEAL_RADIUS, COLS, ROWS);
+    this.fogDirty = true;
+    this.redrawFog();
+  }
+
+  /** Reveal around the HQ + every player unit each frame; mark the veil dirty only when NEW tiles
+   * uncover (so the veil is redrawn incrementally, never per frame). Cheap O(units·radius²). */
+  private revealFog(): void {
+    const hq = hqTileOf(this.layout, 'player');
+    if (hq && revealAround(this.fog, hq.gx, hq.gy, FOG_REVEAL_RADIUS, COLS, ROWS).length) this.fogDirty = true;
+    for (const v of this.units) {
+      if (v.faction !== 'player') continue;
+      const t = unitTile(v.unit);
+      if (revealAround(this.fog, t.gx, t.gy, FOG_REVEAL_RADIUS, COLS, ROWS).length) this.fogDirty = true;
+    }
+    if (this.fogDirty) this.redrawFog();
+  }
+
+  /** Redraw the soot veil over every still-shrouded tile + a soft brass-lit rim on the frontier.
+   * Called only when the revealed set changed (fogDirty). */
+  private redrawFog(): void {
+    if (!this.fogGfx) return;
+    this.fogDirty = false;
+    const g = this.fogGfx;
+    g.clear();
+    for (let gx = 0; gx < COLS; gx++) {
+      for (let gy = 0; gy < ROWS; gy++) {
+        if (isRevealed(this.fog, gx, gy)) continue;
+        const c = gridToScreen(gx, gy);
+        const pts = tileCorners(gx, gy).map((p) => ({ x: p.x, y: p.y }));
+        // soot fill; a touch lighter on the frontier (a revealed neighbour) for the brass-lit rim read
+        const frontier = isRevealed(this.fog, gx - 1, gy) || isRevealed(this.fog, gx + 1, gy)
+          || isRevealed(this.fog, gx, gy - 1) || isRevealed(this.fog, gx, gy + 1);
+        g.fillStyle(0x0e0c0b, frontier ? 0.82 : 0.96);
+        g.fillPoints(pts, true);
+        if (frontier) { g.lineStyle(1.5, hexNum(SPEC.brass), 0.18); g.strokePoints(pts, true); }
+        void c;
+      }
+    }
+  }
+
   private spawnUnits(): void {
-    // Your two starting button men, near the home front (the player drives the first move now).
-    this.addUnit(spawnUnit('muscle-1', 3, 2), 'player');
-    this.addUnit(spawnUnit('muscle-2', 4, 2), 'player');
-    // A rival enforcer prowls — the threat your collector must dodge once cash is on the street.
-    this.addUnit(spawnEnforcer('rival-gun', 14, 1, 'rival-a', 2.2), 'rival');
+    // RTS-29: your two starting button men at the SLOW stroll speed (travel is visible ambient time).
+    // NO rival enforcer is spawned — rivals are dormant/off-screen across the fog this slice (the
+    // interception path is retained but never triggered while rivals sleep — see RTS-30).
+    this.addUnit(spawnUnit('muscle-1', 3, 2, STROLL_SPEED), 'player');
+    this.addUnit(spawnUnit('muscle-2', 4, 2, STROLL_SPEED), 'player');
   }
 
   /** The nearest player collector currently carrying a take, if any (the rival's prey). */
@@ -611,8 +683,12 @@ export class IsoScene extends Phaser.Scene {
       if (this.marketEnabled) advanceWeeklyContent(this.state, obs.result.weeksFired);
       else for (let i = 0; i < obs.result.weeksFired; i++) advanceCivics(this.state);
     }
-    // RTS-22: advance any automated collection routes (gather → bank → loop). No-op without a route.
+    // RTS-22/29: advance the fixed per-business collectors (gather → bank → loop). No-op without one.
     advanceRoutes(this.state, this.layout, this.navGrid);
+    // RTS-29: a thug that has walked to a front leans on it (a muscle VISIT); ensure a collector
+    // exists for every business we earn from (the sea-of-collectors). Cheap; acts only on change.
+    this.processExtortArrivals();
+    if (obs.result.weeksFired > 0) this.syncBusinessCollectors();
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
@@ -679,16 +755,21 @@ export class IsoScene extends Phaser.Scene {
       }
     }
 
-    // Protection coins spin slowly (idle ≥1.3s) over player-extorted fronts, with a soft glow.
+    // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
+    // (earning) — and HIDDEN under the fog (so shrouded blocks/rivals stay unseen).
     const spinAngle = ((now % MOTION.coinSpin) / MOTION.coinSpin) * 360;
     for (const [bid, m] of this.bizMarkers) {
+      const t = businessTileOf(this.layout, bid);
+      if (t && !isRevealed(this.fog, t.gx, t.gy)) { m.coin.setVisible(false); if (m.glow) m.glow.setVisible(false); continue; }
       const insp = inspectBusiness(this.state, bid);
-      const on = !!insp?.payingProtection;
+      const earning = !!insp?.payingProtection;
+      const extortable = !earning && !!extortProgress(this.state, bid)?.extortable; // only for revealed fronts
+      const on = earning || extortable;
       m.coin.setVisible(on);
-      if (m.glow) m.glow.setVisible(on);
+      if (m.glow) m.glow.setVisible(earning);
       if (on) {
-        m.coin.setAngle(spinAngle).setY(m.roofY - 6 + Math.sin(now / 700) * 2);
-        if (m.glow) m.glow.setAlpha(0.25 + 0.1 * Math.sin(now / 700));
+        m.coin.setAngle(spinAngle).setY(m.roofY - 6 + Math.sin(now / 700) * 2).setAlpha(earning ? 1 : 0.45);
+        if (m.glow && earning) m.glow.setAlpha(0.25 + 0.1 * Math.sin(now / 700));
       }
     }
 
@@ -943,20 +1024,64 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** EXTORT a specific building: send a selected thug toward it and attempt the shakedown. */
+  /** RTS-29 — extort = REPEATED VISITS. Send a thug to the front; he walks there (slow) and leans on
+   * it (a visit), dropping its resistance a notch. Empty it → it converts to [$] + a collector spawns.
+   * Cost = time + a thug occupied, NOT cash. Gated by the CONTROL cap (you can't take new turf at cap). */
   private commandExtortBusiness(businessId: string): void {
-    const g = businessActions(this.state, businessId, 'player')?.extort;
-    if (!g?.ok) { this.setStatus(`can't extort: ${g?.reason ?? 'no'}`); return; }
+    const prog = extortProgress(this.state, businessId);
+    if (!prog || !prog.extortable) { this.setStatus('that block already pays — pick an un-shaken [%] front'); return; }
+    if (!canHold(this.state, 'player')) { this.setStatus('NO CONTROL LEFT — grease CITY HALL [G] to raise the cap first'); return; }
+    const thug = this.idlePlayerThug();
+    if (!thug) { this.setStatus('no free muscle — wait for a thug to finish, or recruit [6]'); return; }
     const tile = businessTileOf(this.layout, businessId);
-    if (tile) this.sendSelectedTo(tile);
-    applyCommand(this.state, { type: 'extort', familyId: 'player', businessId });
-    this.state = harvestIncidents(this.state);
-    const insp = inspectBusiness(this.state, businessId);
-    if (tile) {
+    if (!tile) return;
+    issueMove(thug, tile, this.navGrid);
+    this.extortIntents.set(thug.id, businessId);
+    this.focusBizId = businessId;
+    this.setStatus(`muscle on the way to lean on ${inspectBusiness(this.state, businessId)?.name ?? 'the block'} — ${prog.remaining} visit${prog.remaining === 1 ? '' : 's'} to fold it`);
+  }
+
+  /** An idle player button-man (no path, not a collector) free to be sent on a job. */
+  private idlePlayerThug(): MovableUnit | undefined {
+    return this.state.units.find((u) => u.factionId === 'player' && u.role !== 'collector' && u.path.length === 0 && !this.extortIntents.has(u.id));
+  }
+
+  /** RTS-29 — a thug that has arrived at its target front LEANS on it (records a visit); on conversion
+   * the front becomes [$] and its fixed collector spawns (coin-stamp + Wire slip). Event-driven. */
+  private processExtortArrivals(): void {
+    if (this.extortIntents.size === 0) return;
+    for (const [unitId, bizId] of [...this.extortIntents]) {
+      const u = this.state.units.find((x) => x.id === unitId);
+      const tile = businessTileOf(this.layout, bizId);
+      if (!u || !tile) { this.extortIntents.delete(unitId); continue; }
+      if (u.path.length > 0) continue; // still walking
+      const ut = unitTile(u);
+      if (Math.abs(ut.gx - tile.gx) > 1 || Math.abs(ut.gy - tile.gy) > 1) { this.extortIntents.delete(unitId); continue; }
+      this.extortIntents.delete(unitId);
+      const res = recordExtortVisit(this.state, 'player', bizId);
+      this.state = harvestIncidents(this.state);
       const c = gridToScreen(tile.gx, tile.gy);
-      if (insp?.payingProtection) { this.seedBackPay(businessId); this.leanBeat(c.x, c.y); this.signalBeat('extort'); }
-      else this.floatText(c.x, c.y - 30, 'RESISTED — try again', SPEC.danger);
+      if (res.converted) {
+        this.seedBackPay(bizId); this.leanBeat(c.x, c.y); this.signalBeat('extort');
+        const setup = ensureBusinessCollector(this.state, this.layout, 'player', bizId, this.navGrid);
+        if (setup) this.attachView(setup.unit, 'player');
+        this.setStatus(`${inspectBusiness(this.state, bizId)?.name ?? 'the block'} folded — it pays protection now (a collector is on the way)`);
+      } else if (res.ok) {
+        this.floatText(c.x, c.y - 30, `LEANED ON — ${res.remaining} more`, SPEC.brass);
+        this.setStatus(`leaned on the block — ${res.remaining} more visit${res.remaining === 1 ? '' : 's'} to fold it`);
+      }
     }
-    this.setStatus(insp?.payingProtection ? `${insp.name} now pays protection — set a route with [T]` : 'they held out — right-click → EXTORT again');
+  }
+
+  /** RTS-29 — make sure every business the player EARNS from has its one fixed collector (the
+   * sea-of-collectors). Called on settlement + after a conversion; ensureBusinessCollector no-ops a
+   * business that already has its collector, so this never stacks. */
+  private syncBusinessCollectors(): void {
+    for (const b of allBusinesses(this.state)) {
+      if (businessEarner(b) !== 'player') continue;
+      const setup = ensureBusinessCollector(this.state, this.layout, 'player', b.id, this.navGrid);
+      if (setup) this.attachView(setup.unit, 'player');
+    }
   }
 
   /** ATTACK a specific building: temporarily shut it down (interdict a rival's racket). */
@@ -978,28 +1103,6 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** [T] — set up (or refresh) the automated collection route over your protected businesses. */
-  private commandRoute(): void {
-    if (routeStops(this.state, this.layout, 'player').length === 0) { this.setStatus('extort some storefronts first — then [T] sets a collection route'); return; }
-    // RTS-28: cap at ONE route collector. Repeated [T] REFRESHES the route (to cover newly-extorted
-    // shops) but never STACKS — clean the existing route-collector's sprite view before recreating so
-    // we don't accumulate orphaned collectors (createCollectionRoute retires the old sim unit).
-    const routeViews = this.units.filter((v) => v.unit.routeId !== undefined && v.faction === 'player');
-    if (!canAddRouteCollector(routeViews.length)) {
-      if (routeCollectorOf(this.state, 'player')?.carrying) { this.setStatus('a collector is already on the route, carrying cash — let it bank first'); return; }
-      for (const v of routeViews) this.destroyUnitView(v);
-    }
-    const setup = createCollectionRoute(this.state, this.layout, 'player', this.navGrid);
-    if (!setup) { this.setStatus('no route — extort storefronts and make sure your HQ is reachable'); return; }
-    this.attachView(setup.unit, 'player');
-    this.setStatus(`collection route set — ${setup.route.stops.length} stops, banking automatically (guard it!)`);
-  }
-
-  /** RTS-28 — fully remove a unit's view (sprites + rings + tags) and drop it from the view list. */
-  private destroyUnitView(v: UnitView): void {
-    for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing]) o?.destroy();
-    this.units = this.units.filter((x) => x !== v);
-  }
-
   private commandSelect(p: Phaser.Input.Pointer, shift: boolean): void {
     const point = screenToGrid(p.worldX, p.worldY);
     const hit = pickUnit(this.units.map((v) => v.unit), point);
@@ -1042,24 +1145,17 @@ export class IsoScene extends Phaser.Scene {
 
   // ── guided onboarding actions (RTS-11) ───────────────────────────────────────────────────
 
-  /** [E] — lean on the suggested front. Shows a clear success / "resisted" beat either way. */
+  /** [E] — RTS-29: send muscle to lean on the selected [%] front (or the onboarding target). Extort is
+   * now REPEATED VISITS — a thug walks there and leans; repeat to fold it into a [$] earner. */
   private commandExtort(): void {
-    const obj = firstObjective(this.state);
-    if (obj.step !== 'extort' || !obj.targetBusinessId) { this.setStatus('no shakedown target — expand your turf first'); return; }
-    const tile = businessTileOf(this.layout, obj.targetBusinessId);
-    if (!tile) return;
-    extortAtTile(this.state, this.layout, 'player', tile);
-    this.state = harvestIncidents(this.state); // log the attempt into The Wire
-    const c = gridToScreen(tile.gx, tile.gy);
-    const insp = inspectBusiness(this.state, obj.targetBusinessId);
-    if (insp?.payingProtection) {
-      this.seedBackPay(obj.targetBusinessId);
-      this.leanBeat(c.x, c.y);
-      this.setStatus(`${insp.name} pays protection — collect the take with [C]`);
-    } else {
-      this.floatText(c.x, c.y - 30, 'RESISTED — try again', SPEC.danger);
-      this.setStatus('they held out — extortion is a roll, press [E] again');
+    // prefer the front the player has clicked/focused; else the onboarding suggestion.
+    let bizId = this.focusBizId && extortProgress(this.state, this.focusBizId)?.extortable ? this.focusBizId : undefined;
+    if (!bizId) {
+      const obj = firstObjective(this.state);
+      if (obj.step === 'extort' && obj.targetBusinessId && extortProgress(this.state, obj.targetBusinessId)?.extortable) bizId = obj.targetBusinessId;
     }
+    if (!bizId) { this.setStatus('click an un-shaken [%] front, then [E] to send muscle'); return; }
+    this.commandExtortBusiness(bizId);
   }
 
   /** The Lean (RTS-15): a brick-dust shudder, a thumping "NOW PAYING" stamp, and a coin burst. */
@@ -1144,6 +1240,10 @@ export class IsoScene extends Phaser.Scene {
   private commandExpand(): void {
     const targetId = expandTargetDistrictId(this.state);
     if (!targetId) { this.setStatus('nowhere to expand — get a foothold first'); return; }
+    // RTS-29: holding a new district costs CONTROL — at the cap, EXPAND greys until you raise it.
+    if (!districtsHeld(this.state, 'player').some((x) => x.id === targetId) && !canHold(this.state, 'player', 2)) {
+      this.setStatus('NO CONTROL LEFT — grease CITY HALL [G] to raise the cap before expanding'); return;
+    }
     if (this.state.player.cash < EXPAND_COST) { this.setStatus(`can't afford to expand (need $${EXPAND_COST})`); return; }
     const d = this.state.districts.find((x) => x.id === targetId)!;
     const before = controlOf(d, 'player');
@@ -1537,7 +1637,8 @@ export class IsoScene extends Phaser.Scene {
     });
     this.input.keyboard?.on('keydown-F', () => this.centerOnSelection());
     this.input.keyboard?.on('keydown-Z', () => this.frameCity());
-    this.input.keyboard?.on('keydown-T', () => this.commandRoute());
+    // RTS-29: collectors are AUTOMATIC now (one per extorted front) — no player routing. [T] just informs.
+    this.input.keyboard?.on('keydown-T', () => this.setStatus('collectors are automatic — one spawns per front you extort ([E]); no routing needed'));
     this.input.keyboard?.on('keydown-E', () => this.commandExtort());
     this.input.keyboard?.on('keydown-C', () => this.commandCollect());
     this.input.keyboard?.on('keydown-R', () => this.commandReinvest());
@@ -1575,6 +1676,7 @@ export class IsoScene extends Phaser.Scene {
   update(_t: number, delta: number): void {
     const dt = delta / 1000;
     this.updateUnits(dt);
+    this.revealFog(); // RTS-29: peel back the fog around the HQ + moving units (incremental redraw)
     this.refreshHud();
     this.refreshObjective();
     this.refreshFeed();
@@ -1647,6 +1749,11 @@ export class IsoScene extends Phaser.Scene {
 
     // ROUTE pill — prominent collection-route status (stops · banking $X · rob-risk).
     this.routePill = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+
+    // RTS-29 — the CONTROL readout (the freed Market dock tab): a brass-bezel meter under the route
+    // pill. "CONTROL ███░░ 7/10", named + capped, with a plain-English tooltip.
+    this.controlTitle = this.mkText(0, 0, 'CONTROL  [the turf you can hold]', { fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+    this.controlBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
 
     // CONTEXT card — the selected thug's card + its valid verbs.
     this.ctxCardTitle = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
@@ -1958,6 +2065,9 @@ export class IsoScene extends Phaser.Scene {
     // ── ROUTE PILL (prominent, under the channels) ──
     this.drawRoutePill(g, p);
 
+    // ── CONTROL readout (RTS-29, the freed Market tab) ──
+    this.drawControl(g);
+
     // ── CONTEXT CARD (selected thug) ──
     this.drawContextCard(g);
 
@@ -2058,27 +2168,36 @@ export class IsoScene extends Phaser.Scene {
     });
   }
 
-  /** RTS-23 — the prominent ROUTE pill: stops · banking $X · rob-risk. */
+  /** RTS-29 — the COLLECTORS pill: how many fixed per-business collectors are on the rounds + the cash
+   * in transit (the sea-of-collectors heartbeat). One collector per extorted front; no player routing. */
   private drawRoutePill(g: Phaser.GameObjects.Graphics, p: { uncollected: number }): void {
     if (!this.routePill) return;
     const r = this.channelPanelRect; const x = r.x, y = r.y + r.h + 8, w = r.w;
-    const rs = routeStatus(this.state, 'player');
-    const hot = dispatchThreat(this.state, this.layout, 'player').hot;
-    let text: string, col: string, accent: number = PAL.brass;
-    if (rs.active) {
-      const ph = rs.phase === 'toBank' ? `BANKING $${rs.carrying}` : 'on the rounds';
-      const risk = hot ? '⚠ ROB-RISK — GUARD IT' : 'route clear';
-      text = `◆ ROUTE · ${rs.stops} stops · ${ph} · ${risk}`;
-      col = hot ? SPEC.danger : NOIR_PALETTE.brass; if (hot) accent = hexNum(SPEC.danger);
-    } else if (p.uncollected > 0) {
-      text = `◆ Uncollected $${p.uncollected} — [C] collect · [T] auto-route it`; col = NOIR_PALETTE.brass;
+    const cols = this.state.units.filter((u) => u.role === 'collector' && u.factionId === 'player' && u.routeId !== undefined);
+    const carrying = cols.reduce((a, u) => a + (u.carrying ?? 0), 0);
+    let text: string, col: string;
+    if (cols.length > 0) {
+      text = `◆ ${cols.length} COLLECTOR${cols.length === 1 ? '' : 'S'} on the rounds${carrying > 0 ? ` · banking $${carrying}` : ''}`;
+      col = NOIR_PALETTE.brass;
     } else {
-      text = '◆ No route — extort fronts, then [T] sets an auto-collector'; col = NOIR_PALETTE.fog;
+      text = '◆ No collectors yet — lean on a [%] front ([E]) to start earning'; col = NOIR_PALETTE.fog;
     }
-    this.decoFrame(g, x, y, w, 26, accent, 0.8);
+    this.decoFrame(g, x, y, w, 26, PAL.brass, 0.8);
     this.setTC(this.routePill, text, col).setPosition(x + 8, y + 6);
-    if (rs.active && hot) g.lineStyle(2, hexNum(SPEC.danger), 0.4 + 0.4 * Math.abs(Math.sin(this.time.now / 130))).strokeRect(x + 1, y + 1, w - 2, 24);
-    this.hudRegions.push({ x, y, w, h: 26, explain: 'Your automated collection route. The collector banks takings itself — but it can still be robbed; guard the route when ⚠ ROB-RISK shows.' });
+    this.hudRegions.push({ x, y, w, h: 26, explain: 'One collector per extorted front walks a fixed HQ↔shop track each week, banking the take. Collectors are SAFE while rivals are dormant; they become robbable once the war begins (RTS-30).' });
+    void p;
+  }
+
+  /** RTS-29 — the CONTROL meter (the freed Market dock tab): "CONTROL ███░░ 7/10", named + capped. */
+  private drawControl(g: Phaser.GameObjects.Graphics): void {
+    if (!this.controlTitle || !this.controlBody) return;
+    const r = this.channelPanelRect; const x = r.x, y = r.y + r.h + 8 + 32, w = r.w;
+    const cr = controlReadout(this.state, 'player');
+    const atCap = cr.available <= 0;
+    this.decoFrame(g, x, y, w, 44, atCap ? hexNum(SPEC.danger) : PAL.brass, 0.82);
+    this.controlTitle.setPosition(x + 8, y + 5).setVisible(true);
+    this.setTC(this.controlBody, cr.label, atCap ? SPEC.danger : SPEC.brass).setPosition(x + 8, y + 22).setVisible(true);
+    this.hudRegions.push({ x, y, w, h: 44, explain: cr.read });
   }
 
   /** RTS-23 — the CONTEXT card (bottom-left): a HOVERED business's card (state · yield · heat + its

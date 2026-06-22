@@ -210,9 +210,18 @@ export function resolveStrategicPulse(state: GameState): StrategicEvent {
   return { pushes, captures: pushes.filter((p) => p.captured), fallen, hqStrikes };
 }
 
+/** RTS-29 — whether rival TERRITORIAL aggression is dormant (the peaceful builder runway). True while
+ * the current week is before `state.rivalWakeWeek`. Absent/0 ⇒ never dormant, so prior behaviour and
+ * tests are byte-identical. Pure read. */
+export function rivalsDormant(state: GameState): boolean {
+  return state.tick < (state.rivalWakeWeek ?? 0);
+}
+
 /** Advance the strategic clock by `dt`; fire a pulse for each STRATEGY_PULSE_SECONDS crossed.
  * Returns the number of pulses fired and the merged events. A no-op on a map without adjacency
- * (the legacy 5-district world), so it only animates the big contested city. Mutates state. */
+ * (the legacy 5-district world), so it only animates the big contested city. Mutates state.
+ * RTS-29: while rivals are DORMANT (state.rivalWakeWeek not yet reached) it consumes the clock but
+ * fires NO pulses — guaranteeing zero rival contact in the early game. */
 export function advanceStrategy(
   state: GameState,
   dt: number,
@@ -220,6 +229,7 @@ export function advanceStrategy(
 ): { pulses: number; events: StrategicEvent } {
   const merged: StrategicEvent = { pushes: [], captures: [], fallen: [], hqStrikes: [] };
   if (!(dt > 0) || !(pulseSeconds > 0)) return { pulses: 0, events: merged };
+  if (rivalsDormant(state)) { state.strategyElapsed = 0; return { pulses: 0, events: merged }; }
   state.strategyElapsed += dt;
   let pulses = 0;
   while (state.strategyElapsed >= pulseSeconds) {

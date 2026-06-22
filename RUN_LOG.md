@@ -2333,3 +2333,64 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
 - Gate: typecheck ✅  build ✅  test ✅ (626; +8 playability: fast-forward cycle, scaledDt, skip-week
   math, feature-flag parse, collector cap). Behaviour/economy un-regressed.
 - Commit: rts28: Playability & Pacing — green
+
+## RTS-29 (Core-loop reshape — slice 1: the peaceful builder) — GREEN  (2026-06-22)
+- Summary: The front-half FOUNDATION of the reshape (REV B spec): a calm, fog-shrouded BUILDER where
+  rivals stay dormant and collection is SAFE — built so RTS-30 can switch on war + the re-timed
+  collector interception cleanly. NO war content, NO collector interception/theft this slice. Law
+  held: /src/sim PURE & Phaser-free; tick/applyCommand WRAP-not-modified (every new system settles
+  around the existing tick via additive, default-safe fields + the real-time wrapper). 626 → 637
+  green (+11 reshape helpers); NO existing test changed (the dormancy gate is OPT-IN via
+  state.rivalWakeWeek, absent ⇒ prior behaviour byte-identical).
+- FIXED PER-BUSINESS COLLECTORS + the SEA read (src/sim/routes.ts ensureBusinessCollector): one fixed
+  HQ↔business collector auto-spawns per extorted front (route id route-biz-<id>); many fronts → many
+  collectors walking their tracks at the slow stroll speed (the rewarding heartbeat). advanceRoutes
+  cycles each (collect→bank→loop); travel time is the throttle. The scene seeds them on extort
+  conversion + a per-settlement sync sweep (never stacks — ensure no-ops an existing one). Badges:
+  DIM [%] coin on an extortable front, FULL [$] + glow on an earner, both hidden under fog.
+  ⭐ INTERCEPTION RE-TIMED, RETAINED-BUT-DORMANT: collectorsVulnerable(state) === !rivalsDormant —
+  FALSE in this slice, so resolveInterceptions/threatenedCollectors find no hostile units (none are
+  spawned) and the red threat-ring never shows. The whole threat/robbery path is KEPT intact; RTS-30
+  flips it on as a rival-invasion consequence (NOT deleted — a re-timing of the signature pillar).
+- EXTORT AS REPEATED VISITS (src/sim/extortion.ts): a front RESISTS N muscle visits (3 base, +1 per
+  wealth tier). [E] / right-click EXTORT now sends a thug who WALKS there (slow) and leans on it
+  (recordExtortVisit drops resistance a notch); empty it → it converts to [$] (coin-stamp + Wire slip)
+  and its collector spawns. Cost = TIME + a thug occupied, NOT cash. (The old one-roll extortAtTile
+  stays in the sim for its tests; the scene drives the new visit model.)
+- CONTROL CURRENCY (src/sim/control.ts): caps how much turf you can HOLD. CAP = a starting reach +
+  CITY HALL political favour (floor(politicians$/5)) + a slow time-drift floor, clamped — NOT a
+  parallel economy. SPENT = the holdings you maintain (each extorted front + each held district);
+  returns when released. At the cap EXTORT/EXPAND grey "NO CONTROL LEFT — grease CITY HALL". HUD: a
+  brass-bezel meter "CONTROL ███░░ spent/cap" in the freed Market dock tab, with a plain tooltip. The
+  chain extort→launder→bribe→favour→cap→expand is the pacing metronome.
+- FOG OF WAR (src/sim/fog.ts, pure reveal): the board starts shrouded under a soot veil; a brass-lit
+  radius lifts around the HQ + each player unit as they move (incremental — the veil is redrawn ONLY
+  when new tiles uncover, never per frame). Rivals/their HQs sit beyond the fog, unseen. The opening
+  view frames the player's revealed pocket (centering the whole city would just frame soot).
+- DELAYED RIVALS (src/sim/strategy.ts rivalsDormant + the advanceStrategy gate): no rival TERRITORIAL
+  pulses fire while state.tick < state.rivalWakeWeek (set to RIVAL_DORMANT_WEEKS=3 in the scene); no
+  rival enforcer is spawned; rival HQs hide under the fog → zero #9E1B1B on screen, a guaranteed
+  peaceful runway. (resolveRivalAI in tick is left untouched per the law — rivals may build their own
+  economy off-screen across the fog, but they make no contact.)
+- SPACE = THE CLOCK: player units spawn at STROLL_SPEED (1.15 t/s, vs MOVE_SPEED 2.5) so travel is
+  visible ambient time. MOVE_SPEED itself is unchanged (per-unit speed at spawn) so movement tests
+  stand. (Building re-spacing kept light this slice — the slow speed carries the "period weight".)
+- MARKET OFF by default: the rts28 flag flips — the Market is off unless ?market=on; its dock tab is
+  freed for the CONTROL readout; the market code stays dormant behind the flag (not ripped out). The
+  weekly content runs civics-only when off (no market drift / events).
+- TESTS CHANGED: none updated — all 626 prior stand (the opt-in dormancy flag + additive fields kept
+  them byte-identical). ADDED tests/reshape.test.ts (+11): control cap/spent/available/gate/readout;
+  fog reveal + incremental delta + bounds; extort-as-visits convert + resist + wealth; rival dormancy
+  gate (advanceStrategy fires 0 while dormant, resumes after); fixed per-business collector spawn +
+  no-dup + the dormant vulnerability hook.
+- PERFORMANCE: fog reveal is cached/incremental (redraw only on a reveal delta); the collector sync +
+  extort-arrival handlers are event-driven (settlement / arrival), not per-frame; the badge loop
+  short-circuits shrouded businesses. The rts25 update() loop is otherwise intact → FPS held (verify
+  [P]). No per-frame allocation added on the steady path.
+- Files: NEW src/sim/control.ts, src/sim/fog.ts, src/sim/extortion.ts + tests/reshape.test.ts (11);
+  edited src/sim/{constants,types,strategy,routes,index}.ts (additive); src/scenes/IsoScene.ts (slow
+  spawn + no rival; rivalWakeWeek; fog layer + reveal; per-business collectors + sync; extort-visits +
+  control gate; CONTROL + COLLECTORS readouts; [%]/[$] badges; market off; [T] deprecated).
+- Gate: typecheck ✅  build ✅  test ✅ (637; +11 reshape). PURE sim Phaser-free; tick/applyCommand
+  untouched; four channels + 50/70/85 kept; procedural/vector.
+- Commit: rts29: Core-loop reshape slice 1 — peaceful builder — green

@@ -108,6 +108,9 @@ export interface Business {
   viceBranch?: string;
   /** RTS-24 — how many vice rungs this operation has climbed (0..VICE_RUNG_MAX). Absent ⇒ 0. */
   viceRung?: number;
+  /** RTS-29 — muscle visits paid toward converting a front (extort-as-repeated-visits). Absent ⇒ 0.
+   * At `extortResistance` visits the front converts to extorted. Additive, default-safe. */
+  extortVisits?: number;
 }
 
 export interface District {
@@ -213,6 +216,10 @@ export interface GameState {
   routes?: CollectionRoute[];
   /** RTS-24 — THE MARKET (trade mini-game). Additive; absent ⇒ no market yet. */
   market?: MarketState;
+  /** RTS-29 — the week before which rival TERRITORIAL aggression is dormant (the peaceful runway).
+   * advanceStrategy fires no pulses while state.tick < this. Absent/0 ⇒ no dormancy (prior states +
+   * tests behave exactly as before). Additive, default-safe. */
+  rivalWakeWeek?: number;
   /** Real-time seconds the player's crew must regroup before the next offensive action (RTS-19).
    * Set by every offence (raid/sabotage/hit/lockout) and bled down in the real-time wrapper; the
    * offence gates refuse while it is > 0, so heavy hits cannot be chained into an instant board
