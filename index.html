@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Legal Crime</title>
+    <!-- RTS-25 readability: load the noir type up-front (Oswald display + JetBrains Mono for numbers)
+         so the HUD never falls back to a thin system font. preconnect keeps the fetch off the critical
+         path; main.ts gates first paint on document.fonts.ready (with an offline timeout fallback). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Barlow+Semi+Condensed:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
       html, body { margin: 0; padding: 0; background: #111; }
       #game { width: 100vw; height: 100vh; }

@@ -2068,3 +2068,62 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   applyCommand untouched; new systems WRAP settlement; four channels + 50/70/85 kept; no Gangsters
   conflations. §5 Trade/Market (deferred from RTS-23) now SHIPPED.
 - Commit: rts24: Content & Engagement — win conditions, vice upgrades, the Market, events — green
+
+## RTS-25 (Readability & Performance) — GREEN  (2026-06-22)
+- Summary: A polish pass on two recurring playtest complaints — (1) on-screen TEXT hard to read,
+  (2) gameplay felt SLUGGISH. NO new features/systems/content; behaviour-preserving. tick/applyCommand
+  untouched; /src/sim stays pure & Phaser-free; all 602 tests still green. The fixes are render-side
+  (scene + boot + index.html); the sim is unchanged.
+- DIAGNOSIS (perf measured BEFORE changing): a Node micro-benchmark of the pure /src/sim readout work
+  the scene rebuilds every frame (realtimeHudView, cityStanding, winPaths, buildReadout, offenseReadout,
+  victoryProximity, marketRows, crewReadout, …) costs **0.035 ms/frame** (~28,000 fps of headroom). So
+  the update/CPU side was NEVER the bottleneck — sluggishness is RENDER-bound. The cost was Phaser
+  TEXT rasterisation: ~40 `setText` + ~30 `setColor` calls ran EVERY frame across the HUD, and each one
+  re-renders the label's canvas + re-uploads the GPU texture (setColor re-rasterises too, via
+  updateText). That's **~70 text-rasterisations/frame ≈ ~4,200/sec @60fps**, almost all redundant
+  because the strings/colours don't change frame-to-frame.
+- PERF FIX (the bottleneck): change-gated text — new private setT/setTC/setC helpers only call
+  setText/setColor when the string/colour actually CHANGED. Routed all ~28 per-frame HUD text sites
+  (top bar, channels, heat caption, route pill, context card, The Wire title+lines, crew rows,
+  strategy panel, district nameplates, carry tags, phase chip) through them. Result: **~4,200
+  rasterisations/sec → ≈0 on an idle frame** (only the once-a-second week countdown + real state
+  changes re-rasterise). Loop structure, animation timing and pulses are untouched (transforms —
+  setPosition/setAlpha/setScale — stay per-frame and are cheap), so nothing got choppier.
+  • Instrumentation: a live perf overlay toggled with **[P]** — `FPS · frame ms · text-raster /s · DPR`
+    — built on this.game.loop.actualFps + a per-second rasterisation counter, so the before/after is
+    visible in-app. (Headless FPS can't be sampled here; the rasterisation/sec count is the hard,
+    counted proxy and the 0.035 ms readout bench proves the CPU side was already idle.)
+  • Throwaway bench kept at scripts/bench-frame.ts (run: npx vite-node scripts/bench-frame.ts).
+- TEXT READABILITY (fix the RENDERING, not just layout — this recurred 3 playtests):
+  • CRISPNESS: every Text is now created through a single mkText() factory that sets per-Text
+    `resolution = devicePixelRatio` (caps at 2) so glyphs rasterise at HiDPI instead of being a blurry
+    1× upscale; game config gains `render.roundPixels:true` + `antialias:true` to kill sub-pixel shimmer.
+  • FONTS: the HUD was rendering in thin **Courier New**. Now loads real noir type (index.html: Oswald
+    display + JetBrains Mono for numbers/body, preconnect + display=swap) and main.ts gates first paint
+    on `document.fonts.ready` (1.5 s offline fallback) so Phaser never measures against a fallback and
+    fails to reflow. NOIR_FONT → `"JetBrains Mono", "Courier New", monospace` (keeps CANON's mono feel,
+    far more legible small); new NOIR_DISPLAY → Oswald condensed for titles/totals. Offline → falls back
+    to Courier New (no worse than before).
+  • SIZE (to the spec minimums — body ≥11 / labels ≥13 / numbers ≥16 / top-bar totals ≥24): the
+    empire-at-a-glance TOTALS 17→**24px** in the display face; section titles (THE WIRE / YOUR CREW /
+    THE CITY / THE FOUR CHANNELS / THE MARKET / objective) → 15–18px display; channel rows 11→12,
+    context/market body 11→12, top labels 10→13, heat caption 10→11, ladder ticks 8→11, HQ/biz tags
+    10→13. Nothing in the dense list panels was pushed past its panel width (kept at 12–13 to avoid
+    overflow that can't be eyeballed here).
+  • CONTRAST: mkText() gives every label a subtle dark drop-shadow backing so text stays legible over
+    the soot/iso playfield + textured plates; the world-floating MAP LABELS (district nameplates, HQ
+    tags) get a solid semi-opaque ink plate (`#14110fcc`) behind them.
+  • MIN-ZOOM LEGIBILITY (§-rule): district nameplates are zoom-gated — hidden below cam.zoom 0.5 so
+    they don't smear into an unreadable speck when the whole city is framed; crisp and plated when
+    zoomed in.
+- NOT CHANGED: no sim/economy/content/logic; tick & applyCommand & the four channels + 50/70/85 ladder
+  untouched; the real-time clock→tick cadence left as-is (diagnosis showed pace wasn't the issue — the
+  stutter was dropped frames from text rasterisation, not a slow tick); no panel relayout beyond size;
+  canvas-level DPR scaling under Scale.RESIZE was considered but the lower-risk per-Text resolution +
+  roundPixels path was chosen (reversible, behaviour-preserving).
+- Files: index.html (web fonts + preconnect), src/main.ts (font-gated boot + render flags),
+  src/scenes/theme.ts (NOIR_FONT/NOIR_DISPLAY), src/scenes/IsoScene.ts (mkText/setT/setTC/setC,
+  size/font bumps, map-label plates + zoom-gate, [P] perf overlay). NEW scripts/bench-frame.ts.
+- Gate: typecheck ✅  build ✅  test ✅ (602 — unchanged; no new pure /src/sim helpers, so no new
+  tests, per the brief). No behaviour/test regressions.
+- Commit: rts25: Readability & Performance — green

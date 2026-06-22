@@ -14,9 +14,24 @@ const config: Phaser.Types.Core.GameConfig = {
     width: '100%',
     height: '100%',
   },
+  render: {
+    antialias: true,
+    // RTS-25: snap sprites/text to whole pixels — kills the sub-pixel shimmer that blurs HUD text.
+    // (Per-Text `resolution` = devicePixelRatio is set in IsoScene so text rasterises crisp on HiDPI.)
+    roundPixels: true,
+  },
   // RTS branch: the isometric world is the default view; the strategic card scene
   // (BootScene) stays registered and reachable ([B] from the map, [M] back).
   scene: [IsoScene, BootScene],
 };
 
-new Phaser.Game(config);
+// RTS-25: don't paint the HUD until the noir web fonts are ready, or Phaser measures/rasterises text
+// against the fallback and never reflows. Cap the wait so an offline / blocked boot still starts.
+function start(): void {
+  new Phaser.Game(config);
+}
+const doc = typeof document !== 'undefined' ? document : undefined;
+const fontsReady: Promise<unknown> = doc?.fonts
+  ? Promise.race([doc.fonts.ready, new Promise((res) => setTimeout(res, 1500))])
+  : Promise.resolve();
+void fontsReady.then(start);

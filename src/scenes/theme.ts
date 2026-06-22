@@ -13,8 +13,15 @@ export const NOIR_PALETTE = {
   bone: '#e8e2d4',
 } as const;
 
-/** Typewriter/serif-mono feel. */
-export const NOIR_FONT = 'Courier New, monospace';
+// RTS-25 readability: keep CANON's typewriter/mono feel but render it in JetBrains Mono — a far more
+// legible monospace at small HUD sizes than the thin default Courier New (which recurred as
+// "hard to read" three playtests running). Falls back to Courier New if the web font hasn't loaded,
+// so an offline boot is no worse than before. Numbers/body use this.
+export const NOIR_FONT = '"JetBrains Mono", "Courier New", monospace';
+
+/** RTS-25 display face — a condensed noir sans for titles, totals and big banners (the "empire at a
+ * glance" type). Oswald reads sharp and bold at small sizes; Barlow/Arial Narrow as fallbacks. */
+export const NOIR_DISPLAY = '"Oswald", "Barlow Semi Condensed", "Arial Narrow", sans-serif';
 
 /** Noir display name for a bribery channel. */
 export function bribeChannelLabel(channel: BribeChannel): string {

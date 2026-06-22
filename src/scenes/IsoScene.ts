@@ -122,7 +122,7 @@ import {
   type ShockKind,
   type BribeChannel,
 } from '../sim';
-import { NOIR_PALETTE, NOIR_FONT, heatLabel, shockFlavor, bribeChannelLabel } from './theme';
+import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, heatLabel, shockFlavor, bribeChannelLabel } from './theme';
 import {
   buildCityTextures,
   figureKeyForRole,
@@ -255,9 +255,52 @@ export class IsoScene extends Phaser.Scene {
   private marketTitle?: Phaser.GameObjects.Text;
   private marketBody?: Phaser.GameObjects.Text;
   private ctxBizId?: string; // the business currently shown in the context card (for [U])
+  // RTS-25 — crisp text + per-frame rasterisation budget. textRes renders each Text's canvas at the
+  // device pixel ratio (no blurry browser upscaling). setT() change-gates setText so we only re-
+  // rasterise a label when its string actually changed (the per-frame text churn was the bottleneck).
+  private textRes = Math.min((typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1, 2);
+  private rasterCount = 0;       // setText rasterisations this second (the cost we cut)
+  private rasterPerSec = 0;      // last full second's count (shown in the [P] overlay)
+  private perfAccumMs = 0;       // 1s window for the raster/fps sample
+  private perfVisible = false;
+  private perfText?: Phaser.GameObjects.Text;
 
   constructor() {
     super('IsoScene');
+  }
+
+  /** RTS-25 — every Text in the scene is born here: rasterised at the device pixel ratio (crisp on
+   * HiDPI, not a blurry browser upscale) and given a subtle dark backing so it stays legible over the
+   * soot/iso playfield and the textured HUD plates. Drop-in for this.add.text. */
+  private mkText(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle = {}): Phaser.GameObjects.Text {
+    const t = new Phaser.GameObjects.Text(this, x, y, text, { resolution: this.textRes, ...style });
+    this.add.existing(t);
+    t.setShadow(0, 1, '#0a0807', 3, false, true); // contrast backing (the readability fix)
+    return t;
+  }
+
+  /** RTS-25 — change-gated setText: only re-rasterise (the expensive Phaser canvas re-render + GPU
+   * upload) when the string actually changed. Behaviour-identical to setText; the win is on the ~40
+   * HUD labels that were re-rasterising every frame even when nothing moved. Returns the object so
+   * existing .setColor()/.setPosition() chains keep working. */
+  private setT<T extends Phaser.GameObjects.Text>(o: T, s: string): T {
+    if (o.text !== s) { o.setText(s); this.rasterCount++; }
+    return o;
+  }
+
+  /** RTS-25 — change-gated text + colour. setColor ALSO re-rasterises in Phaser (it routes through
+   * updateText), so gating the colour matters as much as the string. Trailing .setPosition()/
+   * .setVisible()/.setAlpha() are cheap transforms and stay chained as-is. */
+  private setTC<T extends Phaser.GameObjects.Text>(o: T, s: string, color: string): T {
+    if (o.text !== s) { o.setText(s); this.rasterCount++; }
+    if (o.style.color !== color) { o.setColor(color); this.rasterCount++; }
+    return o;
+  }
+
+  /** RTS-25 — change-gated colour only (e.g. the per-frame district nameplate recolour). */
+  private setC<T extends Phaser.GameObjects.Text>(o: T, color: string): T {
+    if (o.style.color !== color) { o.setColor(color); this.rasterCount++; }
+    return o;
   }
 
   create(): void {
@@ -300,8 +343,8 @@ export class IsoScene extends Phaser.Scene {
     // A blood ring over the prowling enforcer when the route is hot (RTS-13 timing telegraph).
     this.routeWarn = this.add.ellipse(0, 0, 44, 24).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
     // A persistent top-centre objective banner.
-    this.objTitle = this.add.text(this.scale.width / 2, 12, '', { fontFamily: NOIR_FONT, fontSize: '16px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
-    this.objDetail = this.add.text(this.scale.width / 2, 34, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, align: 'center', wordWrap: { width: 560 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
+    this.objTitle = this.mkText(this.scale.width / 2, 12, '', { fontFamily: NOIR_DISPLAY, fontSize: '18px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
+    this.objDetail = this.mkText(this.scale.width / 2, 34, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, align: 'center', wordWrap: { width: 560 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
   }
 
   private refreshObjective(): void {
@@ -338,8 +381,8 @@ export class IsoScene extends Phaser.Scene {
         }
       }
     }
-    this.objTitle.setText(`▶  ${o.title}`).setPosition(cx, 62).setColor(o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass);
-    this.objDetail.setText(detail).setPosition(cx, 82);
+    this.setTC(this.objTitle, `▶  ${o.title}`, o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass).setPosition(cx, 62);
+    this.setT(this.objDetail, detail).setPosition(cx, 82);
   }
 
   // ── the city ─────────────────────────────────────────────────────────────────────────────
@@ -393,8 +436,10 @@ export class IsoScene extends Phaser.Scene {
       const first = d.businesses[0] && businessTileOf(this.layout, d.businesses[0].id);
       if (first) {
         const c = gridToScreen(first.gx, first.gy);
-        this.districtLabels.set(d.id, this.add
-          .text(c.x, c.y - 2, d.name.toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.fog, fontStyle: 'bold' })
+        // RTS-25: a solid ink backing plate so the district name stays legible over the cobbles
+        // (was bare fog text on a textured ground). Zoom-gated in refreshStrategy so it doesn't
+        // smear into an unreadable speck when the whole city is framed.
+        this.districtLabels.set(d.id, this.mkText(c.x, c.y - 2, d.name.toUpperCase(), { fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.bone, fontStyle: 'bold', backgroundColor: '#14110fcc', padding: { x: 5, y: 2 } })
           .setOrigin(0.5, 0.5).setDepth(depthValue(first.gx, first.gy) * 10 + 8));
       }
     }
@@ -408,10 +453,10 @@ export class IsoScene extends Phaser.Scene {
       const flagCol = fid === 'player' ? PAL.brass : PAL.blood;
       this.add.rectangle(roof.roofX, roof.roofY - 10, 3, 20, PAL.ink).setDepth(depthValue(hq.gx, hq.gy) * 10 + 7);
       this.add.triangle(roof.roofX + 9, roof.roofY - 16, 0, 0, 16, 4, 0, 8, flagCol).setDepth(depthValue(hq.gx, hq.gy) * 10 + 7);
-      this.add
-        .text(roof.roofX, roof.roofY - 24, fid === 'player' ? 'YOUR HQ' : 'RIVAL', {
-          fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.bone,
-        })
+      this.mkText(roof.roofX, roof.roofY - 24, fid === 'player' ? 'YOUR HQ' : 'RIVAL', {
+        fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.bone, fontStyle: 'bold',
+        backgroundColor: '#14110fcc', padding: { x: 4, y: 1 },
+      })
         .setOrigin(0.5, 1)
         .setDepth(depthValue(hq.gx, hq.gy) * 10 + 7);
     }
@@ -506,21 +551,21 @@ export class IsoScene extends Phaser.Scene {
         v.cashTag.setVisible(carry.vulnerable).setPosition(s.x, s.y - 40).setDepth(depth + 1)
           .setScale(0.88 + tier * 0.12);
         const safe = !!v.unit.protectedRun;
-        if (carry.vulnerable) v.cashTag.setText(safe ? `$${carry.carrying} ✓ SAFE` : `$${carry.carrying}`);
+        if (carry.vulnerable) this.setT(v.cashTag, safe ? `$${carry.carrying} ✓ SAFE` : `$${carry.carrying}`);
         const threat = carry.vulnerable ? threats.get(v.unit.id) : undefined;
         if (safe && carry.vulnerable) {
           // Tutorial run: a steady brass ring reads as "guaranteed home" even as the rival hunts.
           v.dangerRing.setStrokeStyle(3, hexNum(SPEC.brass), 0.9).setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
-          v.cashTag.setColor(SPEC.brass);
+          this.setC(v.cashTag, SPEC.brass);
         } else if (threat) {
           // Two-stage danger ring: amber when threatened, danger-red MOTION at ambush range.
           const col = hexNum(dangerStageColor(threat.level));
           v.dangerRing.setStrokeStyle(3, col, threat.level === 'ambush' ? 0.6 + 0.4 * pulse : 0.85)
             .setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(true);
-          v.cashTag.setColor(threat.level === 'ambush' ? SPEC.danger : SPEC.brass);
+          this.setC(v.cashTag, threat.level === 'ambush' ? SPEC.danger : SPEC.brass);
         } else {
           v.dangerRing.setVisible(false);
-          v.cashTag.setColor(SPEC.brass);
+          this.setC(v.cashTag, SPEC.brass);
         }
         // Cash trail: a carrying collector drops faint greenback breadcrumbs (~2s fade).
         if (carry.vulnerable && moving) this.dropGreenback(s.x, s.y, depth - 3);
@@ -749,14 +794,14 @@ export class IsoScene extends Phaser.Scene {
     const W = 196, rowH = 28, headH = 30, H = headH + rows.length * rowH + 6;
     const x = Math.min(sx, this.scale.width - W - 6), y = Math.min(sy, this.scale.height - H - 6);
     const bg = this.add.rectangle(0, 0, W, H, PAL.ink, 0.97).setOrigin(0, 0).setStrokeStyle(2, PAL.brass, 0.9);
-    const head = this.add.text(8, 6, `${title} · ${sub}`, { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0);
+    const head = this.mkText(8, 6, `${title} · ${sub}`, { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0);
     const objs: Phaser.GameObjects.GameObject[] = [bg, head];
     this.ctxRows = [];
     rows.forEach((r, i) => {
       const ry = headH + i * rowH;
       const rowBg = this.add.rectangle(3, ry, W - 6, rowH - 2, PAL.charcoal, r.enabled ? 0.55 : 0.2).setOrigin(0, 0);
-      const lbl = this.add.text(10, ry + 5, r.label, { fontFamily: NOIR_FONT, fontSize: '13px', color: r.color, fontStyle: 'bold' }).setOrigin(0, 0);
-      const hint = this.add.text(W - 8, ry + 8, r.enabled ? '▸' : r.hint, { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setOrigin(1, 0);
+      const lbl = this.mkText(10, ry + 5, r.label, { fontFamily: NOIR_FONT, fontSize: '13px', color: r.color, fontStyle: 'bold' }).setOrigin(0, 0);
+      const hint = this.mkText(W - 8, ry + 8, r.enabled ? '▸' : r.hint, { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setOrigin(1, 0);
       objs.push(rowBg, lbl, hint);
       if (r.enabled) this.ctxRows.push({ y0: y + ry, y1: y + ry + rowH - 2, act: r.act });
     });
@@ -868,7 +913,7 @@ export class IsoScene extends Phaser.Scene {
       this.tweens.add({ targets: coin, x: x + Phaser.Math.Between(-30, 30), y: y - Phaser.Math.Between(18, 40), alpha: 0, angle: Phaser.Math.Between(-180, 180), duration: 700, ease: 'Cubic.Out', onComplete: () => coin.destroy() });
     }
     // "NOW PAYING" stamp — thumps on big then settles.
-    const stamp = this.add.text(x, y - 34, 'NOW PAYING', { fontFamily: NOIR_FONT, fontSize: '17px', color: SPEC.brass, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002).setScale(2.2).setAlpha(0);
+    const stamp = this.mkText(x, y - 34, 'NOW PAYING', { fontFamily: NOIR_FONT, fontSize: '17px', color: SPEC.brass, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002).setScale(2.2).setAlpha(0);
     this.tweens.add({ targets: stamp, scale: 1, alpha: 1, duration: MOTION.leanBeat * 0.35, ease: 'Back.Out' });
     this.tweens.add({ targets: stamp, alpha: 0, y: y - 54, delay: 900, duration: 500, onComplete: () => stamp.destroy() });
   }
@@ -1113,10 +1158,10 @@ export class IsoScene extends Phaser.Scene {
       : kind === 'win-mayor' ? 'MR. MAYOR'
       : kind === 'win-dominance' ? 'THE CITY IS YOURS'
       : 'YOU TOOK THE CITY';
-    this.add.text(w / 2, h / 2 - 30, headline, {
+    this.mkText(w / 2, h / 2 - 30, headline, {
       fontFamily: NOIR_FONT, fontSize: '34px', color: won ? SPEC.brass : SPEC.danger, fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
-    this.add.text(w / 2, h / 2 + 16, last?.message ?? '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.bone }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
+    this.mkText(w / 2, h / 2 + 16, last?.message ?? '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.bone }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
   }
 
   /** Give a freshly-shaken front a little back-pay so the collect step is immediately playable. */
@@ -1128,7 +1173,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private floatText(x: number, y: number, text: string, color: string): void {
-    const t = this.add.text(x, y, text, { fontFamily: NOIR_FONT, fontSize: '15px', color, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002);
+    const t = this.mkText(x, y, text, { fontFamily: NOIR_FONT, fontSize: '15px', color, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002);
     this.tweens.add({ targets: t, y: y - 36, alpha: 0, duration: 1500, onComplete: () => t.destroy() });
   }
 
@@ -1136,7 +1181,7 @@ export class IsoScene extends Phaser.Scene {
 
   private setupHoverTooltip(): void {
     this.tooltipBg = this.add.graphics().setScrollFactor(0).setDepth(100050).setVisible(false);
-    this.tooltipText = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100051).setVisible(false);
+    this.tooltipText = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100051).setVisible(false);
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (p.isDown) { this.hideTooltip(); return; }
@@ -1294,6 +1339,8 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-N', () => { if (this.marketOpen) this.marketSel = (this.marketSel + 1) % 4; });
     this.input.keyboard?.on('keydown-Y', () => this.commandTrade('buy'));
     this.input.keyboard?.on('keydown-J', () => this.commandTrade('sell'));
+    // RTS-25 — perf overlay: live FPS · frame ms · text rasterisations/sec (the cost this pass cut).
+    this.input.keyboard?.on('keydown-P', () => { this.perfVisible = !this.perfVisible; this.perfText?.setVisible(this.perfVisible); });
   }
 
   update(_t: number, delta: number): void {
@@ -1305,6 +1352,7 @@ export class IsoScene extends Phaser.Scene {
     this.refreshCrew();
     this.refreshStrategy();
     this.refreshNight();
+    this.samplePerf(delta);
 
     const cam = this.cameras.main;
     // RTS-22/23: ease the zoom toward its target, keeping the cursor's world point pinned.
@@ -1354,51 +1402,73 @@ export class IsoScene extends Phaser.Scene {
       { key: 'heat', label: 'HEAT vs FED LADDER' }, { key: 'crew', label: 'CREW' }, { key: 'week', label: 'WEEK' },
     ];
     for (const cd of cellDefs) {
-      const label = this.add.text(0, 0, cd.label, { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
-      const value = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '17px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
+      // RTS-25: labels ≥13px; the empire-at-a-glance TOTALS jump to 24px in the condensed display
+      // face (was a thin 17px mono — the #1 "hard to read" offender).
+      const label = this.mkText(0, 0, cd.label, { fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
+      const value = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '24px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
       this.topCells.push({ label, value, x: 0, w: 0, key: cd.key });
     }
-    this.heatCaption = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
-    this.phaseChip = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(100001);
+    this.heatCaption = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
+    this.phaseChip = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(100001);
 
     // FOUR CHANNELS — labeled dials (level + what it buys + bump cost). [G] cycles a bump.
-    this.channelTitle = this.add.text(0, 0, 'THE FOUR CHANNELS  [G] grease', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
-    for (let i = 0; i < 4; i++) this.channelRows.push(this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone, lineSpacing: 1 }).setScrollFactor(0).setDepth(100000));
+    this.channelTitle = this.mkText(0, 0, 'THE FOUR CHANNELS  [G] grease', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
+    for (let i = 0; i < 4; i++) this.channelRows.push(this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100000));
 
     // ROUTE pill — prominent collection-route status (stops · banking $X · rob-risk).
-    this.routePill = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+    this.routePill = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
 
     // CONTEXT card — the selected thug's card + its valid verbs.
-    this.ctxCardTitle = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
-    this.ctxCardBody = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100001);
+    this.ctxCardTitle = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+    this.ctxCardBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3 }).setScrollFactor(0).setDepth(100001);
 
-    this.statusText = this.add.text(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
-    this.warningBanner = this.add.text(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.blood, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000).setVisible(false);
+    this.statusText = this.mkText(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
+    this.warningBanner = this.mkText(12, 0, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.blood, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000).setVisible(false);
 
-    this.feedTitle = this.add.text(0, 12, 'THE WIRE  [L]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000).setOrigin(1, 0);
+    this.feedTitle = this.mkText(0, 12, 'THE WIRE  [L]', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000).setOrigin(1, 0);
     for (let i = 0; i < 9; i++) {
-      this.feedLines.push(this.add.text(0, 32 + i * 16, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000).setOrigin(1, 0));
+      this.feedLines.push(this.mkText(0, 32 + i * 16, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000).setOrigin(1, 0));
     }
     this.nightVeil = this.add.rectangle(0, 0, 6000, 4000, 0x0a1020, 0).setOrigin(0, 0).setScrollFactor(0).setDepth(99980);
     this.klaxon = this.add.graphics().setScrollFactor(0).setDepth(99985);
 
     // RTS-14/15 crew roster (bottom-left; per-member animated rows; toggle with [K]).
-    this.crewTitle = this.add.text(12, 0, 'YOUR CREW  [K]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0).setScrollFactor(0).setDepth(100000);
+    this.crewTitle = this.mkText(12, 0, 'YOUR CREW  [K]', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0).setScrollFactor(0).setDepth(100000);
     for (let i = 0; i < 8; i++) {
       this.crewWrong.push(this.add.rectangle(8, 0, 320, 16).setOrigin(0, 0.5).setStrokeStyle(2, hexNum(SPEC.danger), 1).setScrollFactor(0).setDepth(99999).setVisible(false));
-      this.crewRows.push(this.add.text(14, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(100000));
+      this.crewRows.push(this.mkText(14, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(100000));
     }
     // Mutiny telegraph banner (top-centre, under the objective) — legible, earned, with a countdown.
-    this.mutinyBanner = this.add.text(this.scale.width / 2, 60, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+    this.mutinyBanner = this.mkText(this.scale.width / 2, 60, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
     // RTS-24 THE MARKET tab (right dock, toggled with [M]) — rows of goods that narrate themselves.
-    this.marketTitle = this.add.text(0, 0, 'THE MARKET  [M]', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
-    this.marketBody = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+    this.marketTitle = this.mkText(0, 0, 'THE MARKET  [M]', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+    this.marketBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
     // RTS-16 turf-war standings (right side, under THE WIRE) + rival-pressure telegraph banner.
-    this.strategyTitle = this.add.text(0, 196, 'THE CITY', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
-    this.strategyPanel = this.add.text(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
-    this.pressureBanner = this.add.text(this.scale.width / 2, 84, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+    this.strategyTitle = this.mkText(0, 196, 'THE CITY', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
+    this.strategyPanel = this.mkText(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
+    this.pressureBanner = this.mkText(this.scale.width / 2, 84, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+
+    // RTS-25 perf overlay ([P]) — top-centre, off by default. Real FPS + frame ms + rasterisations/s.
+    this.perfText = this.mkText(this.scale.width / 2, 6, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: '#7CFC8A', backgroundColor: '#000000cc' })
+      .setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002).setPadding(6, 3, 6, 3).setVisible(false);
+  }
+
+  /** RTS-25 — sample FPS / frame-time / text-rasterisations once per second for the [P] overlay. */
+  private samplePerf(deltaMs: number): void {
+    this.perfAccumMs += deltaMs;
+    if (this.perfAccumMs >= 1000) {
+      this.rasterPerSec = this.rasterCount;
+      this.rasterCount = 0;
+      this.perfAccumMs = 0;
+    }
+    if (this.perfVisible && this.perfText) {
+      const fps = Math.round(this.game.loop.actualFps);
+      const ms = (deltaMs).toFixed(1);
+      this.setT(this.perfText, `FPS ${fps} · frame ${ms}ms · text-raster ${this.rasterPerSec}/s · DPR ${this.textRes}`)
+        .setPosition(this.scale.width / 2, 6);
+    }
   }
 
   /** Turf-war readout (RTS-16): trajectory + standings + rival-pressure telegraph, and recolour
@@ -1461,21 +1531,24 @@ export class IsoScene extends Phaser.Scene {
       lines.push(`${mark} ${st} [${o.hotkey}] ${o.label} $${o.cost}${heat}${tail}${eta}`);
       lines.push(`      ↳ ${pv.effect}; rival: ${pv.retaliation}`);
     }
-    this.strategyPanel.setText(lines.join('\n')).setPosition(right, 276);
-    this.strategyPanel.setColor(standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
+    this.setT(this.strategyPanel, lines.join('\n')).setPosition(right, 276);
+    this.setC(this.strategyPanel, standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
       : standing.trajectory === 'behind' || standing.trajectory === 'crushed' ? SPEC.danger : NOIR_PALETTE.bone);
 
-    // recolour district nameplates by holder
+    // recolour district nameplates by holder + RTS-25 zoom-gate: hide the small map labels when the
+    // camera is pulled back far enough that they'd be an illegible speck (the §-legibility rule).
+    const labelsLegible = this.cameras.main.zoom >= 0.5;
     for (const [id, label] of this.districtLabels) {
       const d = this.state.districts.find((x) => x.id === id);
       const holder = d ? districtHolder(d) : null;
-      label.setColor(holder === 'player' ? SPEC.brass : holder && holder.startsWith('rival') ? SPEC.rival : NOIR_PALETTE.fog);
+      this.setC(label, holder === 'player' ? SPEC.brass : holder && holder.startsWith('rival') ? SPEC.rival : NOIR_PALETTE.fog);
+      label.setVisible(labelsLegible);
     }
 
     // rival-pressure telegraph: the most urgent push onto your turf (like the run-2 threat).
     const onPlayer = telegraphedPushes(this.state).find((t) => t.onPlayer);
     if (onPlayer) {
-      this.pressureBanner.setText(`⚔ ${onPlayer.familyName.toUpperCase()} IS PUSHING INTO ${onPlayer.districtName.toUpperCase()} — DEFEND OR GREASE CITY HALL`)
+      this.setT(this.pressureBanner, `⚔ ${onPlayer.familyName.toUpperCase()} IS PUSHING INTO ${onPlayer.districtName.toUpperCase()} — DEFEND OR GREASE CITY HALL`)
         .setPosition(this.scale.width / 2, 106).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(this.time.now / 300)));
     } else {
       this.pressureBanner.setVisible(false);
@@ -1487,7 +1560,7 @@ export class IsoScene extends Phaser.Scene {
     const label = this.districtLabels.get(districtId);
     if (!label) return;
     const txt = lostByPlayer ? 'BLOCK LOST!' : 'BLOCK TAKEN';
-    const t = this.add.text(label.x, label.y - 14, txt, { fontFamily: NOIR_FONT, fontSize: '15px', color: lostByPlayer ? SPEC.danger : SPEC.rival, fontStyle: 'bold' })
+    const t = this.mkText(label.x, label.y - 14, txt, { fontFamily: NOIR_FONT, fontSize: '15px', color: lostByPlayer ? SPEC.danger : SPEC.rival, fontStyle: 'bold' })
       .setOrigin(0.5, 1).setDepth(100002);
     this.tweens.add({ targets: t, y: t.y - 30, alpha: 0, duration: 1800, onComplete: () => t.destroy() });
     if (lostByPlayer) this.cameras.main.shake(160, 0.004);
@@ -1535,8 +1608,8 @@ export class IsoScene extends Phaser.Scene {
       else if (r.status === 'wavering') dx = Math.sin(phase(i)) * 2;
       else { scale = 1 + 0.05 * Math.sin(phase(i)); mostUrgent = mostUrgent ?? { name: r.name }; }
 
-      row.setText(`${IsoScene.crewGlyph(r.status)} ${r.name}${tr} — ${r.status} (${r.loyalty})`)
-        .setColor(color).setPosition(14 + dx, y + dy).setScale(scale).setVisible(true);
+      this.setTC(row, `${IsoScene.crewGlyph(r.status)} ${r.name}${tr} — ${r.status} (${r.loyalty})`, color)
+        .setPosition(14 + dx, y + dy).setScale(scale).setVisible(true);
 
       const flashing = (this.crewFlashUntil.get(r.id) ?? 0) > now;
       wrong.setPosition(8 + dx, y + dy).setVisible(flashing)
@@ -1547,7 +1620,7 @@ export class IsoScene extends Phaser.Scene {
     if (this.mutinyBanner) {
       if (mostUrgent && this.crewVisible) {
         const countdown = realtimeHudView(this.state).weekCountdownLabel;
-        this.mutinyBanner.setText(`⚠ ${mostUrgent.name.toUpperCase()} READY TO BETRAY — ACT NOW  (settles in ${countdown})`)
+        this.setT(this.mutinyBanner, `⚠ ${mostUrgent.name.toUpperCase()} READY TO BETRAY — ACT NOW  (settles in ${countdown})`)
           .setPosition(this.scale.width / 2, 130).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 300)));
       } else {
         this.mutinyBanner.setVisible(false);
@@ -1599,7 +1672,7 @@ export class IsoScene extends Phaser.Scene {
         cell.value.setVisible(false);
         this.drawHeatMeter(g, cx, barY, def.w, p.heat, p.federalExposure, p.federalTier);
       } else {
-        cell.value.setText(def.v).setColor(def.c).setPosition(cx, barY + 22).setVisible(true);
+        this.setTC(cell.value, def.v, def.c).setPosition(cx, barY + 22).setVisible(true);
       }
       this.hudRegions.push({ x: cx - 6, y: barY, w: def.w, h: barH, explain: this.cellExplain(cell.key, p, net) });
       cx += def.w + spreadGap;
@@ -1609,7 +1682,7 @@ export class IsoScene extends Phaser.Scene {
     const phase = hudPhase(this.state);
     if (this.phaseChip) {
       const pc = phase.phase === 'DECAPITATE' ? SPEC.danger : phase.phase === 'ESTABLISH' ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
-      this.phaseChip.setText(`◆ ${phase.phase}`).setColor(pc).setPosition(barX + barW - 14, barY + barH / 2);
+      this.setTC(this.phaseChip, `◆ ${phase.phase}`, pc).setPosition(barX + barW - 14, barY + barH / 2);
       const chipW = this.phaseChip.width + 12;
       this.hudRegions.push({ x: barX + barW - 14 - chipW, y: barY, w: chipW, h: barH, explain: `PHASE: ${phase.phase} — ${phase.read}  (ESTABLISH → FIRST BLOOD → CONTEST → DECAPITATE)` });
     }
@@ -1640,7 +1713,7 @@ export class IsoScene extends Phaser.Scene {
     const warn = p.federalTier > 0 ? this.fedLine(p.federalTier) : danger ? 'A COLLECTOR IS UNDER THREAT — get it to HQ' : null;
     if (this.warningBanner) {
       this.warningBanner.setVisible(!!warn);
-      if (warn) this.warningBanner.setText(`⚠ ${warn}`).setPosition(12, this.scale.height - 26).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280)));
+      if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.scale.height - 26).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280)));
     }
     this.detectHudBeats(p, phase.phase);
     this.lastHeat = p.federalExposure; // for the next frame's heat-direction arrow
@@ -1664,7 +1737,7 @@ export class IsoScene extends Phaser.Scene {
     const dir = exposure > this.lastHeat + 0.5 ? '▲ rising' : exposure < this.lastHeat - 0.5 ? '▼ cooling' : '◆ steady';
     const name = federalTierLabel(tier);
     const cap = `${name} · exp ${exposure}/100 ${dir} · raid at 85`;
-    if (this.heatCaption) this.heatCaption.setText(cap).setColor(tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 3);
+    if (this.heatCaption) this.setTC(this.heatCaption, cap, tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 3);
     // the threshold labels engraved under their ticks
     this.drawLadderLabels(g, x, my + mh + 14, mw);
   }
@@ -1675,8 +1748,8 @@ export class IsoScene extends Phaser.Scene {
   private drawLadderLabels(_g: Phaser.GameObjects.Graphics, x: number, y: number, mw: number): void {
     FEDERAL_LADDER.forEach((t, i) => {
       let lbl = this.ladderLabelPool[i];
-      if (!lbl) { lbl = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '8px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000); this.ladderLabelPool[i] = lbl; }
-      lbl.setText(t.label).setPosition(x + (mw * t.at) / 100, y).setVisible(true);
+      if (!lbl) { lbl = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '11px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000); this.ladderLabelPool[i] = lbl; }
+      this.setT(lbl, t.label).setPosition(x + (mw * t.at) / 100, y).setVisible(true);
     });
   }
 
@@ -1716,7 +1789,7 @@ export class IsoScene extends Phaser.Scene {
       for (let s = 0; s < BRIBE_PIPS; s++) { g.fillStyle(s < bracket.pips ? accent : PAL.charcoal, s < bracket.pips ? 0.95 : 0.7).fillRect(dotsX + s * 7, y + 3, 5, 10); }
       const next = bracket.nextName ? ` →${bracket.nextName}@$${bracket.nextAt}` : ' (IRON GRIP)';
       const col = d.ch === 'feds' && lvl > 0 ? '#7da890' : lvl > 0 ? NOIR_PALETTE.bone : NOIR_PALETTE.fog;
-      row.setText(`${d.name} · ${bracket.name} $${lvl}/wk · ${d.buys}${next}`).setColor(col).setPosition(dotsX + 42, y);
+      this.setTC(row, `${d.name} · ${bracket.name} $${lvl}/wk · ${d.buys}${next}`, col).setPosition(dotsX + 42, y);
       const fedExtra = d.ch === 'feds' ? ' Greasing The Bureau lowers your federal EXPOSURE directly.' : '';
       this.hudRegions.push({ x: r.x, y: y - 2, w: r.w, h: 21, explain: `${d.name} — ${bracket.name} ($${lvl}/wk): buys ${d.buys}. [G] greases the next channel +$10/wk.${fedExtra}` });
     });
@@ -1740,7 +1813,7 @@ export class IsoScene extends Phaser.Scene {
       text = '◆ No route — extort fronts, then [T] sets an auto-collector'; col = NOIR_PALETTE.fog;
     }
     this.decoFrame(g, x, y, w, 26, accent, 0.8);
-    this.routePill.setText(text).setColor(col).setPosition(x + 8, y + 6);
+    this.setTC(this.routePill, text, col).setPosition(x + 8, y + 6);
     if (rs.active && hot) g.lineStyle(2, hexNum(SPEC.danger), 0.4 + 0.4 * Math.abs(Math.sin(this.time.now / 130))).strokeRect(x + 1, y + 1, w - 2, 24);
     this.hudRegions.push({ x, y, w, h: 26, explain: 'Your automated collection route. The collector banks takings itself — but it can still be robbed; guard the route when ⚠ ROB-RISK shows.' });
   }
@@ -1770,7 +1843,7 @@ export class IsoScene extends Phaser.Scene {
         const state = shut ? 'SHUT DOWN' : b.payingProtection ? 'YOURS — paying' : b.earnerName ? `${b.earnerName}'s` : 'un-shaken';
         const stateCol = shut ? SPEC.danger : b.payingProtection ? SPEC.brass : b.earnerName ? SPEC.rival : NOIR_PALETTE.fog;
         const branchTag = ladder && ladder.branch ? ` · ${ladder.label}${ladder.current > 0 ? ` ${'I'.repeat(ladder.current)}` : ''}` : '';
-        this.ctxCardTitle.setText(`▣ ${b.name} (${b.kind})${branchTag} · ${state}`).setColor(stateCol).setPosition(x + 8, y + 6).setVisible(true);
+        this.setTC(this.ctxCardTitle, `▣ ${b.name} (${b.kind})${branchTag} · ${state}`, stateCol).setPosition(x + 8, y + 6).setVisible(true);
         // §3C action-verb chips: verb · effect/cost · READY/CONDITIONAL/LOCKED + plain reason.
         const exSt = verbChipState(acts.extort.ok, acts.extort.reason);
         const atSt = verbChipState(acts.attack.ok, acts.attack.reason);
@@ -1778,7 +1851,7 @@ export class IsoScene extends Phaser.Scene {
         const at = acts.attack.ok ? `[READY] ATTACK → shut ${ATTACK_SHUTDOWN_WEEKS}wk, +${ATTACK_HEAT}🔥` : `[${atSt}] ATTACK — ${acts.attack.reason}`;
         const body = [`yield $${b.income}/wk · heat ${raw.heatPerTick}/wk · uncollected $${b.uncollected}`, ex, at];
         if (viceLine) body.push(viceLine);
-        this.ctxCardBody.setText(body.join('\n')).setColor(NOIR_PALETTE.bone).setPosition(x + 8, y + 24).setVisible(true);
+        this.setTC(this.ctxCardBody, body.join('\n'), NOIR_PALETTE.bone).setPosition(x + 8, y + 24).setVisible(true);
         this.hudRegions.push({ x, y, w, h, explain: `${b.name}: ${state}. Yield $${b.income}/wk. Right-click → EXTORT or ATTACK.${viceLine ? ' [U] upgrades its vice branch.' : ''}` });
         return;
       }
@@ -1793,14 +1866,14 @@ export class IsoScene extends Phaser.Scene {
     this.decoFrame(g, x, y, w, h);
     const member = crewReadout(this.state.player).find((m) => m.id === id);
     const role = view.unit.role === 'collector' ? 'collector' : view.faction === 'player' ? 'button man' : 'rival';
-    this.ctxCardTitle.setText(`▣ ${member?.name ?? insp.kind.toUpperCase()} · ${role}`).setColor(NOIR_PALETTE.brass).setPosition(x + 8, y + 6).setVisible(true);
+    this.setTC(this.ctxCardTitle, `▣ ${member?.name ?? insp.kind.toUpperCase()} · ${role}`, NOIR_PALETTE.brass).setPosition(x + 8, y + 6).setVisible(true);
     const more = this.selection.ids.length > 1 ? `  (+${this.selection.ids.length - 1} more selected)` : '';
     const traits = member && member.traitLabels.length ? ' · ' + member.traitLabels.join(', ') : '';
     const body = member
       ? [`skill ${member.skill} · loyalty ${member.loyalty} (${member.status})${traits}`,
          'RIGHT-CLICK a shop → EXTORT / ATTACK · right-click street → move' + more]
       : [`${insp.vulnerable ? `carrying $${insp.carrying}` : 'on the move'}`, 'guard your collectors — a rival enforcer robs them' + more];
-    this.ctxCardBody.setText(body.join('\n')).setColor(NOIR_PALETTE.bone).setPosition(x + 8, y + 26).setVisible(true);
+    this.setTC(this.ctxCardBody, body.join('\n'), NOIR_PALETTE.bone).setPosition(x + 8, y + 26).setVisible(true);
   }
 
   /** RTS-24 §3B — the next vice-rung as a one-line chip ([U] · name · cost · +yield · ±heat ·
@@ -1842,7 +1915,7 @@ export class IsoScene extends Phaser.Scene {
       lines.push('[N] next good · trades move the market');
     }
     const body = lines.join('\n');
-    this.marketBody.setText(body).setPosition(right, top + 20);
+    this.setT(this.marketBody, body).setPosition(right, top + 20);
     const h = this.marketBody.height + 30;
     const w = 312;
     this.decoFrame(g, right - w + 4, top - 4, w, h, PAL.brass, 0.94); // opaque: a real overlay tab
@@ -1883,7 +1956,7 @@ export class IsoScene extends Phaser.Scene {
       'DECAPITATE': 'DECAPITATE — FINISH A RIVAL FAMILY',
     };
     const label = labels[phase] ?? phase;
-    const t = this.add.text(this.scale.width / 2, 120, label, { fontFamily: NOIR_FONT, fontSize: '22px', color: phase === 'DECAPITATE' ? SPEC.danger : SPEC.brass, fontStyle: 'bold' })
+    const t = this.mkText(this.scale.width / 2, 120, label, { fontFamily: NOIR_FONT, fontSize: '22px', color: phase === 'DECAPITATE' ? SPEC.danger : SPEC.brass, fontStyle: 'bold' })
       .setOrigin(0.5).setScrollFactor(0).setDepth(100002).setScale(0.6).setAlpha(0);
     this.tweens.add({ targets: t, scale: 1, alpha: 1, duration: 320, ease: 'Back.Out' });
     this.tweens.add({ targets: t, alpha: 0, y: 100, delay: 1600, duration: 600, onComplete: () => t.destroy() });
@@ -1943,7 +2016,7 @@ export class IsoScene extends Phaser.Scene {
     // §4: unread "NEEDS YOU" count — danger/warning incidents past what the player last focused.
     const unread = this.state.incidents.filter((r) => r.seq > this.lastSeenWireSeq && incidentNeedsYou(r.severity)).length;
     const title = unread > 0 ? `THE WIRE  [L] · ${unread} NEEDS YOU` : (flashing ? 'THE WIRE  [L]  ◂ NEW' : 'THE WIRE  [L]');
-    this.feedTitle?.setPosition(right, 66).setColor(unread > 0 || flashing ? SPEC.danger : NOIR_PALETTE.brass).setText(title);
+    if (this.feedTitle) this.setTC(this.feedTitle, title, unread > 0 || flashing ? SPEC.danger : NOIR_PALETTE.brass).setPosition(right, 66);
     const recent: IncidentRecord[] = recentIncidents(this.state, this.feedLines.length);
     const g = this.hudGfx; // dots drawn after refreshHud's clear, persist through the frame
     for (let i = 0; i < this.feedLines.length; i++) {
@@ -1951,7 +2024,7 @@ export class IsoScene extends Phaser.Scene {
       const rec = recent[i];
       const ly = 86 + i * 15;
       line.setPosition(right, ly);
-      if (!rec) { line.setText(''); continue; }
+      if (!rec) { this.setT(line, ''); continue; }
       // §4 category dot (money/threat/law/turf/crew) + a NEEDS-YOU tab marker on the left.
       const cat = alertCategory(rec.type);
       if (g) {
@@ -1959,7 +2032,7 @@ export class IsoScene extends Phaser.Scene {
         if (rec.seq > this.lastSeenWireSeq && incidentNeedsYou(rec.severity)) g.fillStyle(PAL.brass, 0.95).fillRect(dotX - 10, ly + 1, 3, 11); // "needs you" tab (brass = you)
       }
       const sum = rec.summary.length > 44 ? rec.summary.slice(0, 43) + '…' : rec.summary;
-      line.setText(`[w${rec.week}] ${sum}`).setColor(IsoScene.feedColor(rec.severity));
+      this.setTC(line, `[w${rec.week}] ${sum}`, IsoScene.feedColor(rec.severity));
     }
   }
 
@@ -1976,8 +2049,8 @@ export class IsoScene extends Phaser.Scene {
     const w = 600, h = 372;
     const cx = this.scale.width / 2, cy = this.scale.height / 2;
     const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
-    const title = this.add.text(0, -h / 2 + 16, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
-    const body = this.add.text(0, -h / 2 + 50, [
+    const title = this.mkText(0, -h / 2 + 16, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
+    const body = this.mkText(0, -h / 2 + 50, [
       'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
       '',
       'CAMERA — move around and read the city',
@@ -1998,7 +2071,7 @@ export class IsoScene extends Phaser.Scene {
       '',
       '  [K] crew · [L] the wire · [H] help · [B] card view',
     ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
-    const hint = this.add.text(0, h / 2 - 22, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
+    const hint = this.mkText(0, h / 2 - 22, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
     this.legend = this.add.container(cx, cy, [bg, title, body, hint]).setScrollFactor(0).setDepth(100100);
   }
 
