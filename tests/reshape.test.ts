@@ -1,18 +1,16 @@
-// RTS-29 — the peaceful-builder reshape: control currency, fog reveal, extort-as-repeated-visits,
-// fixed per-business collectors, and the rival-dormancy gate. Pure & seeded; /src/sim Phaser-free.
+// RTS-29 — the peaceful-builder reshape: fog reveal, extort-as-repeated-visits, fixed per-business
+// collectors, and the rival-dormancy gate. Pure & seeded; /src/sim Phaser-free.
+// RTS-30a NOTE: the CONTROL-CURRENCY tests were REMOVED here — that spend-to-extort meter is RETIRED
+// (control is now district STATUS, covered by tests/world.test.ts); extortion is no longer gated by it.
 
 import { describe, it, expect } from 'vitest';
 import { createInitialState } from '../src/sim/state';
-import {
-  controlCap, controlSpent, controlAvailable, canHold, controlReadout,
-} from '../src/sim/control';
 import { createFog, isRevealed, revealAround, revealedCount, tileKey } from '../src/sim/fog';
 import { extortResistance, extortProgress, recordExtortVisit } from '../src/sim/extortion';
 import { advanceStrategy, rivalsDormant } from '../src/sim/strategy';
 import { ensureBusinessCollector, businessRouteId, collectorsVulnerable } from '../src/sim/routes';
 import { buildMapLayout, navGridForLayout } from '../src/sim/mapEconomy';
 import { businessEarner } from '../src/sim/economy';
-import { CONTROL_START } from '../src/sim/constants';
 import type { GameState } from '../src/sim/types';
 
 function big(seed = 1): GameState { return createInitialState(seed, { startingCrew: true, bigCity: true }); }
@@ -20,49 +18,6 @@ function firstFront(s: GameState): string {
   for (const d of s.districts) for (const b of d.businesses) if (b.kind === 'front') return b.id;
   throw new Error('no front');
 }
-
-// ── CONTROL CURRENCY ──────────────────────────────────────────────────────────────────────────
-describe('control currency — City Hall favour gates how much you can hold', () => {
-  it('starts at the base cap, rises with City Hall greasing', () => {
-    const s = big();
-    expect(controlCap(s, 'player')).toBe(CONTROL_START);
-    s.player.bribes.politicians = 25; // 25 / 5 = +5 cap
-    expect(controlCap(s, 'player')).toBe(CONTROL_START + 5);
-  });
-
-  it('spent counts the holdings you maintain (extorted fronts); available = cap − spent', () => {
-    const s = big();
-    expect(controlSpent(s, 'player')).toBe(0);
-    const id = firstFront(s);
-    s.districts[0].businesses.find((b) => b.id === id)!.extortedBy = 'player';
-    expect(controlSpent(s, 'player')).toBe(1);
-    expect(controlAvailable(s, 'player')).toBe(controlCap(s, 'player') - 1);
-  });
-
-  it('canHold is false at the cap and the readout says raise City Hall', () => {
-    const s = big();
-    // fill every front in district-0 up to the starting cap
-    let held = 0;
-    for (const b of s.districts[0].businesses) {
-      if (b.kind === 'front' && held < CONTROL_START) { b.extortedBy = 'player'; held++; }
-    }
-    if (held >= CONTROL_START) {
-      expect(canHold(s, 'player')).toBe(false);
-      expect(controlReadout(s, 'player').read).toMatch(/NO CONTROL LEFT|CITY HALL/i);
-    }
-    // grease City Hall → room again
-    s.player.bribes.politicians = 50;
-    expect(canHold(s, 'player')).toBe(true);
-  });
-
-  it('readout renders a capped bar + a named label', () => {
-    const s = big();
-    const r = controlReadout(s, 'player');
-    expect(r.label).toMatch(/^CONTROL /);
-    expect(r.cap).toBe(CONTROL_START);
-    expect(r.bar.length).toBe(10);
-  });
-});
 
 // ── FOG OF WAR ──────────────────────────────────────────────────────────────────────────────────
 describe('fog of war — reveal radius + incremental delta', () => {

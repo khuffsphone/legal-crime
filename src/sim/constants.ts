@@ -322,3 +322,10 @@ export const CONTROL_COST_DISTRICT = 2; // control spent per held district
 
 // FOG-OF-WAR: tiles revealed in this radius around the HQ + each player unit (slow brass dissolve).
 export const FOG_REVEAL_RADIUS = 3.2; // tiles
+
+// ── RTS-30a — World & camera foundation ──────────────────────────────────────────────────────────
+// The sparse larger map edge (tiles square). ~an order of magnitude more tiles than the old 16² —
+// the render CULLS to the viewport so it stays performant regardless of map size.
+export const WORLD_SIZE = 96;
+// DISTRICT STATUS (the reworked control): you HOLD a district at ≥ this share of its businesses.
+export const HOLD_THRESHOLD = 0.6;

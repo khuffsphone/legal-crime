@@ -248,15 +248,6 @@ export {
   type BuildKey,
   type BuildOption,
 } from './pacing';
-// RTS-29 — core-loop reshape (peaceful builder): control currency, fog, extort-as-visits.
-export {
-  controlCap,
-  controlSpent,
-  controlAvailable,
-  canHold,
-  controlReadout,
-  type ControlReadout,
-} from './control';
 export {
   createFog,
   tileKey,
@@ -272,6 +263,24 @@ export {
   type ExtortProgress,
   type ExtortVisitResult,
 } from './extortion';
+export {
+  generateWorld,
+  districtOfTile as districtOfWorldTile,
+  tileKindAt,
+  openFraction,
+  type WorldLayout,
+  type WorldDistrict,
+  type TileKind,
+  type WorldGenOptions,
+} from './worldgen';
+export {
+  districtStatusOf,
+  cityRoster,
+  citySummary,
+  type DistrictHoldStatus,
+  type DistrictRow,
+  type CitySummary,
+} from './districtStatus';
 export {
   dominationProgress,
   goStraightProgress,

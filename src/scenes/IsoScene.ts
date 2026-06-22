@@ -30,7 +30,6 @@ import {
   updateAndObserve as observeWorld,
   harvestIncidents,
   recentIncidents,
-  buildMapLayout,
   startCollectorRun,
   processCollectorArrivals,
   dispatchThreat,
@@ -106,8 +105,12 @@ import {
   resolveAttack,
   advanceRoutes,
   ensureBusinessCollector,
-  controlReadout,
-  canHold,
+  cityRoster,
+  citySummary,
+  generateWorld,
+  tileKindAt,
+  WORLD_SIZE,
+  type WorldLayout,
   recordExtortVisit,
   extortProgress,
   createFog,
@@ -156,8 +159,6 @@ import {
   loyaltyMotion,
 } from './visualSpec';
 
-const COLS = 16;
-const ROWS = 16;
 const PAN_SPEED = 720;
 // RTS-22: a wider zoom range so the player can pull back to read the whole 9-district city or push
 // in to drive individual thugs. Zoom is eased toward a target each frame for a smooth feel.
@@ -173,22 +174,14 @@ const SCENE_WEEK_SECONDS = 55;
 const SCENE_PULSE_SECONDS = 10;
 
 
-// Subtle per-district colour identity (a tint multiplied over the cobbles).
-const DISTRICT_TINT = [0xffffff, 0xe7dcc6, 0xccd2d8, 0xe6cfae, 0xd9c6c2];
+// RTS-30a — the sparse-world ground palette (per tile kind), ~90% soot/asphalt per the world-spec.
+const GROUND_COLOR: Record<string, number> = {
+  ground: 0x1a1a1a, avenue: 0x141210, street: 0x1b1917, sidewalk: 0x2e2b27,
+  park: 0x2c3a2c, plaza: 0x262320, building: 0x14110f,
+};
 
-function districtOfTile(gy: number): number {
-  return Phaser.Math.Clamp(Math.round((gy - 1) / 3), 0, 4);
-}
-
-interface Block { gx: number; gy: number; style: keyof typeof BUILDING_STYLES; }
-// Filler tenements — city density AND nav obstacles the collector routes around.
-const BLOCKS: Block[] = [
-  { gx: 5, gy: 6, style: 'warehouse' },
-  { gx: 6, gy: 6, style: 'speakeasy' },
-  { gx: 10, gy: 5, style: 'speakeasy' },
-  { gx: 11, gy: 11, style: 'warehouse' },
-  { gx: 8, gy: 13, style: 'speakeasy' },
-];
+// RTS-30a — the three discrete zoom stops (CLOSE / MID resting / FAR strategy).
+const ZOOM_STOPS = [1.0, 0.6, 0.35] as const;
 
 interface UnitView {
   unit: MovableUnit;
@@ -212,6 +205,9 @@ export class IsoScene extends Phaser.Scene {
   private navGrid!: NavGrid;
   private state!: GameState;
   private layout!: MapLayout;
+  private world!: WorldLayout; // RTS-30a the sparse generated world (extends MapLayout)
+  private groundGfx?: Phaser.GameObjects.Graphics; // culled per-frame ground/streets/parks + fog
+  private uiCam?: Phaser.Cameras.Scene2D.Camera; // RTS-30a fixed HUD camera (never zooms)
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
@@ -301,10 +297,9 @@ export class IsoScene extends Phaser.Scene {
   private actionBody?: Phaser.GameObjects.Text;
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
-  private fogGfx?: Phaser.GameObjects.Graphics;
-  private fogDirty = true;          // redraw the veil only when newly-revealed tiles change
   private controlTitle?: Phaser.GameObjects.Text;
   private controlBody?: Phaser.GameObjects.Text;
+  private cityRowHits: { x: number; y: number; w: number; h: number; districtId: string }[] = [];
   private extortIntents = new Map<string, string>(); // unitId → businessId a thug is walking to lean on
   // RTS-25 — crisp text + per-frame rasterisation budget. textRes renders each Text's canvas at the
   // device pixel ratio (no blurry browser upscaling). setT() change-gates setText so we only re-
@@ -371,28 +366,30 @@ export class IsoScene extends Phaser.Scene {
     // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
     this.state.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
     this.applyDebugScenario();
-    this.layout = buildMapLayout(this.state, COLS, ROWS);
-    this.navGrid = makeGrid(COLS, ROWS, BLOCKS.map((b) => ({ gx: b.gx, gy: b.gy })));
+    // RTS-30a: the SPARSE LARGER world — buildings placed apart with setbacks across a 64² map,
+    // partitioned into districts. WorldLayout extends MapLayout, so collectors/routes consume it
+    // unchanged. The ground/streets/parks are CULLED to the viewport (drawGround), not 4096 Images.
+    this.world = generateWorld(this.state, { size: WORLD_SIZE });
+    this.layout = this.world;
+    this.navGrid = makeGrid(WORLD_SIZE, WORLD_SIZE); // walkable everywhere (buildings aren't blockers)
+    this.groundGfx = this.add.graphics().setDepth(0);
 
     this.drawCity();
-    this.drawPeriodDressing();
-    // RTS-29: a soot fog veil over the whole board, lifted in a brass-lit radius around the HQ + units
-    // (drawn once here, redrawn ONLY when new tiles reveal — never per frame).
-    this.fogGfx = this.add.graphics().setDepth(99950);
-    this.seedFogAroundPlayer();
     this.spawnUnits();
+    // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
+    // the opening pocket around the HQ + starting units into the revealed set.
+    this.seedFogAroundPlayer();
 
     // RTS-22: frame the player's home neighbourhood (where the extort-first opening happens), zoomed
     // out enough to read the block. The camera is fully driveable (WASD / drag / wheel / F-follow).
     this.routeGfx = this.add.graphics().setDepth(7);
-    // RTS-28: the default resting view CENTERS the whole play area (was resting up-and-left on the
-    // home corner), so the board sits balanced in frame from the first paint.
-    // RTS-29: open framed on the player's revealed POCKET (the HQ + starting block), since the rest of
-    // the board is under fog — centering the whole city would just frame soot. ([Z] still frames all.)
-    const hq = hqTileOf(this.layout, 'player');
-    const center = hq ? gridToScreen(hq.gx + 1, hq.gy + 1) : this.cityCenterPoint();
-    cam.centerOn(center.x, center.y);
-    this.targetZoom = 0.85; // closer in — a tighter, more intimate opening read of the pocket
+    // RTS-30a: clamp the camera to the WORLD bounds (no black void), and OPEN framed on the player's
+    // HQ DISTRICT at MID zoom — the calm, readable home base. The rest is under fog.
+    this.setWorldCameraBounds();
+    const home = this.world.districts[0];
+    const c = gridToScreen(home.plaza.gx, home.plaza.gy);
+    cam.centerOn(c.x, c.y - 60);
+    this.targetZoom = ZOOM_STOPS[1]; // MID = the resting view
     cam.setZoom(this.targetZoom);
 
     this.setupCameraControls();
@@ -410,6 +407,8 @@ export class IsoScene extends Phaser.Scene {
     if (this.sound.locked) this.sound.once('unlocked', startBeds); else startBeds();
     this.audio.setPhase(this.lastPhase as MusicPhase, true);
     this.buildAudioPanel();
+    // RTS-30a: split the world + HUD onto two cameras (AFTER all HUD exists) so the HUD never zooms.
+    this.setupUiCamera();
     // consigliere: the extort-first tip on a fresh load (gated to once)
     this.fireTipOnce('extort');
   }
@@ -467,24 +466,8 @@ export class IsoScene extends Phaser.Scene {
   // ── the city ─────────────────────────────────────────────────────────────────────────────
 
   private drawCity(): void {
-    // cobbled ground with streets + district tint
-    for (let gx = 0; gx < COLS; gx++) {
-      for (let gy = 0; gy < ROWS; gy++) {
-        const c = gridToScreen(gx, gy);
-        const road = gx % 4 === 0 || gy % 4 === 0;
-        const tile = this.add
-          .image(c.x, c.y, road ? TEX.tileStreet : TEX.tileLot)
-          .setDepth(depthValue(gx, gy) * 10)
-          .setTint(DISTRICT_TINT[districtOfTile(gy)]);
-        if (!road) tile.setAlpha(0.96);
-      }
-    }
-
-    // filler tenements (also nav obstacles)
-    for (const b of BLOCKS) {
-      const c = gridToScreen(b.gx, b.gy);
-      drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[b.style], depthValue(b.gx, b.gy) * 10 + 5);
-    }
+    // RTS-30a: the ground/streets/parks/plazas + fog are drawn CULLED per frame (drawGround) instead
+    // of 4096 tile Images. Only the sparse buildings/plates/markers below are drawn-once objects.
 
     // businesses — brick storefronts; a protection coin floats over player-extorted fronts
     for (const d of this.state.districts) {
@@ -550,82 +533,73 @@ export class IsoScene extends Phaser.Scene {
     }
   }
 
+  /** RTS-30a — CULLED ground render: each frame draw only the tiles in the camera's view (the big
+   * sparse map is ~4096 tiles; we never touch offscreen ones). Fog over unrevealed tiles; a faint
+   * district ownership wash; LOD drops per-tile detail at FAR zoom for performance. */
+  private drawGround(): void {
+    if (!this.groundGfx || !this.world) return;
+    const g = this.groundGfx; g.clear();
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const size = this.world.size;
+    const corners = [
+      screenToGrid(view.x, view.y), screenToGrid(view.right, view.y),
+      screenToGrid(view.x, view.bottom), screenToGrid(view.right, view.bottom),
+    ];
+    let minGx = Infinity, maxGx = -Infinity, minGy = Infinity, maxGy = -Infinity;
+    for (const c of corners) { minGx = Math.min(minGx, c.gx); maxGx = Math.max(maxGx, c.gx); minGy = Math.min(minGy, c.gy); maxGy = Math.max(maxGy, c.gy); }
+    const pad = 2;
+    minGx = Math.max(0, Math.floor(minGx) - pad); minGy = Math.max(0, Math.floor(minGy) - pad);
+    maxGx = Math.min(size - 1, Math.ceil(maxGx) + pad); maxGy = Math.min(size - 1, Math.ceil(maxGy) + pad);
+    const far = cam.zoom < 0.45;
+    // district ownership wash colour per district (computed once per frame — ~9 entries)
+    const wash = new Map<string, { c: number; a: number }>();
+    for (const row of cityRoster(this.state)) {
+      if (row.status === 'HELD') wash.set(row.id, { c: hexNum(SPEC.brass), a: 0.05 });
+      else if (row.status === 'RIVAL') wash.set(row.id, { c: hexNum(SPEC.rival), a: 0.07 });
+    }
+    if (far) {
+      // FAR LOD: a cheap soot fill over the view + only the non-ground features + washes + fog.
+      g.fillStyle(0x161310, 1).fillRect(view.x, view.y, view.width, view.height);
+    }
+    for (let gx = minGx; gx <= maxGx; gx++) {
+      for (let gy = minGy; gy <= maxGy; gy++) {
+        const pts = tileCorners(gx, gy);
+        if (!isRevealed(this.fog, gx, gy)) { g.fillStyle(0x0e0c0b, 0.97).fillPoints(pts, true); continue; }
+        const k = tileKindAt(this.world, gx, gy);
+        if (far && k === 'ground') { /* covered by the bulk soot fill */ }
+        else {
+          const checker = (gx + gy) % 2 === 0;
+          g.fillStyle(GROUND_COLOR[k] ?? (checker ? 0x1c1a18 : 0x201d1a), 1).fillPoints(pts, true);
+        }
+        const w = wash.get(this.world.districtOfTile[gy * size + gx]);
+        if (w) { g.fillStyle(w.c, w.a).fillPoints(pts, true); }
+      }
+    }
+  }
+
   // ── units ────────────────────────────────────────────────────────────────────────────────
 
   /** RTS-26 — sparse period set-dressing drawn ONCE (cached, never per-frame): cast-iron lampposts
    * with a warm glow at street corners, and a few parked Cadillacs along the kerb. Rich-art only. */
-  private drawPeriodDressing(): void {
-    if (!richArt()) return;
-    const occupied = new Set<string>();
-    for (const b of BLOCKS) occupied.add(`${b.gx},${b.gy}`);
-    for (const id of this.bizBuildings.keys()) { const r = this.bizBuildings.get(id)!; occupied.add(`${r.gx},${r.gy}`); }
-    // lampposts at a handful of road intersections
-    let lamps = 0;
-    for (let gx = 4; gx < COLS && lamps < 7; gx += 4) {
-      for (let gy = 4; gy < ROWS && lamps < 7; gy += 8) {
-        if (occupied.has(`${gx},${gy}`)) continue;
-        const c = gridToScreen(gx, gy);
-        const d = depthValue(gx, gy) * 10 + 4;
-        // a soft warm POOL of lamplight on the pavement (cheap atmosphere; helps read night paths)
-        this.add.image(c.x + 6, c.y + 2, TEX.glow).setTint(hexNum(SPEC.windowLit)).setScale(0.7, 0.4).setAlpha(0.16).setDepth(d - 2);
-        this.add.image(c.x, c.y, TEX.lamppost).setOrigin(0.5, 0.95).setDepth(d);
-        lamps++;
-      }
-    }
-    // a few parked Cadillacs along the kerb (road columns, between blocks)
-    const carSpots: [number, number][] = [[4, 2], [8, 10], [12, 6], [4, 14]];
-    for (const [gx, gy] of carSpots) {
-      if (occupied.has(`${gx},${gy}`)) continue;
-      const c = gridToScreen(gx, gy);
-      this.add.image(c.x, c.y + 4, TEX.car).setOrigin(0.5, 0.7).setDepth(depthValue(gx, gy) * 10 + 4);
-    }
-  }
-
   // ── RTS-29 fog of war ─────────────────────────────────────────────────────────────────────────
 
-  /** Reveal the opening pocket around the player's HQ + starting units, then draw the veil once. */
+  /** RTS-30a: reveal the opening pocket around the player's HQ + starting units. The veil is RENDERED
+   * culled in drawGround (per-visible-tile), so this only updates the revealed set. */
   private seedFogAroundPlayer(): void {
     const hq = hqTileOf(this.layout, 'player');
-    if (hq) revealAround(this.fog, hq.gx, hq.gy, FOG_REVEAL_RADIUS + 1, COLS, ROWS);
-    revealAround(this.fog, 3, 2, FOG_REVEAL_RADIUS, COLS, ROWS);
-    revealAround(this.fog, 4, 2, FOG_REVEAL_RADIUS, COLS, ROWS);
-    this.fogDirty = true;
-    this.redrawFog();
+    if (hq) revealAround(this.fog, hq.gx, hq.gy, FOG_REVEAL_RADIUS + 2, WORLD_SIZE, WORLD_SIZE);
+    for (const v of this.units) { const t = unitTile(v.unit); revealAround(this.fog, t.gx, t.gy, FOG_REVEAL_RADIUS, WORLD_SIZE, WORLD_SIZE); }
   }
 
-  /** Reveal around the HQ + every player unit each frame; mark the veil dirty only when NEW tiles
-   * uncover (so the veil is redrawn incrementally, never per frame). Cheap O(units·radius²). */
+  /** Reveal around the HQ + every player unit each frame (updates the set; drawGround renders it). */
   private revealFog(): void {
     const hq = hqTileOf(this.layout, 'player');
-    if (hq && revealAround(this.fog, hq.gx, hq.gy, FOG_REVEAL_RADIUS, COLS, ROWS).length) this.fogDirty = true;
+    if (hq) revealAround(this.fog, hq.gx, hq.gy, FOG_REVEAL_RADIUS, WORLD_SIZE, WORLD_SIZE);
     for (const v of this.units) {
       if (v.faction !== 'player') continue;
       const t = unitTile(v.unit);
-      if (revealAround(this.fog, t.gx, t.gy, FOG_REVEAL_RADIUS, COLS, ROWS).length) this.fogDirty = true;
-    }
-    if (this.fogDirty) this.redrawFog();
-  }
-
-  /** Redraw the soot veil over every still-shrouded tile + a soft brass-lit rim on the frontier.
-   * Called only when the revealed set changed (fogDirty). */
-  private redrawFog(): void {
-    if (!this.fogGfx) return;
-    this.fogDirty = false;
-    const g = this.fogGfx;
-    g.clear();
-    for (let gx = 0; gx < COLS; gx++) {
-      for (let gy = 0; gy < ROWS; gy++) {
-        if (isRevealed(this.fog, gx, gy)) continue;
-        const c = gridToScreen(gx, gy);
-        const pts = tileCorners(gx, gy).map((p) => ({ x: p.x, y: p.y }));
-        // soot fill; a touch lighter on the frontier (a revealed neighbour) for the brass-lit rim read
-        const frontier = isRevealed(this.fog, gx - 1, gy) || isRevealed(this.fog, gx + 1, gy)
-          || isRevealed(this.fog, gx, gy - 1) || isRevealed(this.fog, gx, gy + 1);
-        g.fillStyle(0x0e0c0b, frontier ? 0.82 : 0.96);
-        g.fillPoints(pts, true);
-        if (frontier) { g.lineStyle(1.5, hexNum(SPEC.brass), 0.18); g.strokePoints(pts, true); }
-        void c;
-      }
+      revealAround(this.fog, t.gx, t.gy, FOG_REVEAL_RADIUS, WORLD_SIZE, WORLD_SIZE);
     }
   }
 
@@ -661,7 +635,16 @@ export class IsoScene extends Phaser.Scene {
         .setOrigin(0.5, 1)
         .setVisible(false);
     }
+    // RTS-30a: runtime world objects must be ignored by the fixed UI camera (else they'd ghost on it).
+    this.worldFx(view.sprite, view.shadow, view.factionRing, view.selRing, view.cashTag, view.dangerRing);
     this.units.push(view);
+  }
+
+  /** RTS-30a — register runtime-created WORLD objects so the fixed UI camera ignores them (the
+   * create-time snapshot in setupUiCamera only covers objects that existed then). */
+  private worldFx(...objs: (Phaser.GameObjects.GameObject | undefined)[]): void {
+    if (!this.uiCam) return;
+    for (const o of objs) if (o) this.uiCam.ignore(o);
   }
 
   private updateUnits(dt: number): void {
@@ -816,6 +799,7 @@ export class IsoScene extends Phaser.Scene {
       boards.fillRect(c.x - 8, c.y + 12, 16, 3);
       this.cameras.main.flash(150, 225, 29, 29, false); // one-shot danger flash on closure (≤1.1s)
     }
+    this.worldFx(roof.gfx, boards);
     this.bizBuildings.set(bizId, { ...rec, gfx: roof.gfx, shut, boards });
   }
 
@@ -845,6 +829,7 @@ export class IsoScene extends Phaser.Scene {
     this.lastTrailAt = this.time.now;
     const gb = this.add.image(x + Phaser.Math.Between(-4, 4), y - 6, TEX.greenback)
       .setDepth(depth).setAngle(Phaser.Math.Between(-30, 30)).setAlpha(0.9);
+    this.worldFx(gb);
     this.tweens.add({ targets: gb, alpha: 0, y: y + 2, duration: MOTION.cashTrail, onComplete: () => gb.destroy() });
   }
 
@@ -860,8 +845,10 @@ export class IsoScene extends Phaser.Scene {
 
     // muzzle flash — danger-red, soft radial, brief (motion = danger).
     const flashGlow = this.add.image(s.x + 8, s.y - 14, TEX.glow).setTint(hexNum(SPEC.danger)).setScale(0.4).setDepth(100001);
+    this.worldFx(flashGlow);
     this.tweens.add({ targets: flashGlow, scale: 1.1, alpha: 0, duration: 180, onComplete: () => flashGlow.destroy() });
     const ring = this.add.circle(s.x, s.y - 8, 8).setStrokeStyle(4, hexNum(SPEC.danger), 1).setDepth(100001);
+    this.worldFx(ring);
     this.tweens.add({ targets: ring, scale: 7, alpha: 0, duration: 600, onComplete: () => ring.destroy() });
 
     // three sharp 6px shakes.
@@ -873,6 +860,7 @@ export class IsoScene extends Phaser.Scene {
     // grab-able banknotes scatter.
     for (let i = 0; i < 7; i++) {
       const note = this.add.image(s.x, s.y - 10, TEX.note).setDepth(100001).setAngle(Phaser.Math.Between(0, 360));
+      this.worldFx(note);
       this.tweens.add({
         targets: note,
         x: s.x + Phaser.Math.Between(-46, 46),
@@ -888,6 +876,7 @@ export class IsoScene extends Phaser.Scene {
     const flash = this.add
       .text(s.x, s.y - 50, `ROBBED  $${ev.amount}`, { fontFamily: NOIR_FONT, fontSize: '18px', color: SPEC.danger, fontStyle: 'bold' })
       .setOrigin(0.5, 1).setDepth(100002);
+    this.worldFx(flash);
     this.tweens.add({ targets: flash, y: s.y - 96, alpha: 0, duration: 1900, onComplete: () => flash.destroy() });
     if (v.cashTag) v.cashTag.setVisible(false);
     if (v.dangerRing) v.dangerRing.setVisible(false);
@@ -906,6 +895,7 @@ export class IsoScene extends Phaser.Scene {
     // coins (greenbacks) arc from the collector to the vault.
     for (let i = 0; i < 6; i++) {
       const coin = this.add.image(s.x, s.y - 10, TEX.greenback).setDepth(100001).setTint(hexNum(SPEC.cashGreen));
+      this.worldFx(coin);
       this.tweens.add({
         targets: coin,
         x: vault.x,
@@ -927,6 +917,7 @@ export class IsoScene extends Phaser.Scene {
     const flash = this.add
       .text(vault.x, vault.y - 40, `+ $${banked} BANKED`, { fontFamily: NOIR_FONT, fontSize: '16px', color: SPEC.cashGreen, fontStyle: 'bold' })
       .setOrigin(0.5, 1).setDepth(100002);
+    this.worldFx(flash);
     this.tweens.add({ targets: flash, y: vault.y - 70, alpha: 0, duration: 1600, onComplete: () => flash.destroy() });
     this.setStatus(`collector reached HQ — banked $${banked}`);
   }
@@ -940,6 +931,9 @@ export class IsoScene extends Phaser.Scene {
       if (this.legend?.visible) { this.hideLegend(); return; }
       // A real drag panned the camera — not a click.
       if (Math.hypot(p.x - this.pressX, p.y - this.pressY) > CLICK_SLOP) return;
+      // RTS-30a: a click on a CITY-roster row flies the camera to that district.
+      const row = this.cityRowHits.find((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+      if (row) { this.flyToDistrict(row.districtId); return; }
       const shift = !!(p.event as MouseEvent | undefined)?.shiftKey;
       // An open menu consumes the next click: a row runs its action, anywhere else dismisses it.
       if (this.ctxMenu) {
@@ -1031,7 +1025,7 @@ export class IsoScene extends Phaser.Scene {
   private commandExtortBusiness(businessId: string): void {
     const prog = extortProgress(this.state, businessId);
     if (!prog || !prog.extortable) { this.setStatus('that block already pays — pick an un-shaken [%] front'); return; }
-    if (!canHold(this.state, 'player')) { this.setStatus('NO CONTROL LEFT — grease CITY HALL [G] to raise the cap first'); return; }
+    // RTS-30a: extortion is NO LONGER gated by a control budget — only by walking time + free muscle.
     const thug = this.idlePlayerThug();
     if (!thug) { this.setStatus('no free muscle — wait for a thug to finish, or recruit [6]'); return; }
     const tile = businessTileOf(this.layout, businessId);
@@ -1150,6 +1144,7 @@ export class IsoScene extends Phaser.Scene {
     const c = gridToScreen(tile.gx, tile.gy);
     const corners = tileCorners(tile.gx, tile.gy).map((pt) => ({ x: pt.x - c.x, y: pt.y - c.y }));
     const mark = this.add.polygon(c.x, c.y, corners).setStrokeStyle(3, ok ? hexNum(SPEC.brass) : hexNum(SPEC.danger), 1).setDepth(depthValue(tile.gx, tile.gy) * 10 + 9);
+    this.worldFx(mark);
     this.tweens.add({ targets: mark, scale: ok ? 0.4 : 1, alpha: 0, duration: 650, onComplete: () => mark.destroy() });
   }
 
@@ -1173,15 +1168,18 @@ export class IsoScene extends Phaser.Scene {
     // brick-dust puffs (fog motes drifting up and fading).
     for (let i = 0; i < 8; i++) {
       const dust = this.add.circle(x + Phaser.Math.Between(-22, 22), y + Phaser.Math.Between(-6, 10), Phaser.Math.Between(1, 3), PAL.fog, 0.6).setDepth(100001);
+      this.worldFx(dust);
       this.tweens.add({ targets: dust, y: dust.y - Phaser.Math.Between(14, 30), alpha: 0, duration: 700 + i * 30, onComplete: () => dust.destroy() });
     }
     // coin burst (brass = money state).
     for (let i = 0; i < 6; i++) {
       const coin = this.add.image(x, y - 8, TEX.coin).setDepth(100001).setScale(0.6);
+      this.worldFx(coin);
       this.tweens.add({ targets: coin, x: x + Phaser.Math.Between(-30, 30), y: y - Phaser.Math.Between(18, 40), alpha: 0, angle: Phaser.Math.Between(-180, 180), duration: 700, ease: 'Cubic.Out', onComplete: () => coin.destroy() });
     }
     // "NOW PAYING" stamp — thumps on big then settles.
     const stamp = this.mkText(x, y - 34, 'NOW PAYING', { fontFamily: NOIR_FONT, fontSize: '17px', color: SPEC.brass, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002).setScale(2.2).setAlpha(0);
+    this.worldFx(stamp);
     this.tweens.add({ targets: stamp, scale: 1, alpha: 1, duration: MOTION.leanBeat * 0.35, ease: 'Back.Out' });
     this.tweens.add({ targets: stamp, alpha: 0, y: y - 54, delay: 900, duration: 500, onComplete: () => stamp.destroy() });
   }
@@ -1250,10 +1248,7 @@ export class IsoScene extends Phaser.Scene {
   private commandExpand(): void {
     const targetId = expandTargetDistrictId(this.state);
     if (!targetId) { this.setStatus('nowhere to expand — get a foothold first'); return; }
-    // RTS-29: holding a new district costs CONTROL — at the cap, EXPAND greys until you raise it.
-    if (!districtsHeld(this.state, 'player').some((x) => x.id === targetId) && !canHold(this.state, 'player', 2)) {
-      this.setStatus('NO CONTROL LEFT — grease CITY HALL [G] to raise the cap before expanding'); return;
-    }
+    // RTS-30a: no control-budget gate on expansion — pacing comes from space + slow movement.
     if (this.state.player.cash < EXPAND_COST) { this.setStatus(`can't afford to expand (need $${EXPAND_COST})`); return; }
     const d = this.state.districts.find((x) => x.id === targetId)!;
     const before = controlOf(d, 'player');
@@ -1319,6 +1314,7 @@ export class IsoScene extends Phaser.Scene {
     rec.gfx.destroy();
     const c = gridToScreen(rec.gx, rec.gy);
     const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.casino, rec.depth, { lit: !rec.shut });
+    this.worldFx(roof.gfx);
     this.bizBuildings.set(bizId, { ...rec, gfx: roof.gfx, styleKey: 'casino' });
     // lift the coin/glow markers to the taller roof
     const m = this.bizMarkers.get(bizId);
@@ -1329,6 +1325,7 @@ export class IsoScene extends Phaser.Scene {
     this.tweens.add({ targets: roof.gfx, scaleY: 1, duration: 600, ease: 'Back.Out' });
     const stamp = this.mkText(c.x, roof.roofY + 10, 'OPEN', { fontFamily: NOIR_DISPLAY, fontSize: '18px', color: NOIR_PALETTE.brass, fontStyle: 'bold' })
       .setOrigin(0.5).setDepth(rec.depth + 40).setScale(2.4).setAlpha(0);
+    this.worldFx(stamp);
     this.tweens.add({ targets: stamp, scale: 1, alpha: 1, duration: 300, ease: 'Back.Out',
       onComplete: () => this.tweens.add({ targets: stamp, alpha: 0, delay: 700, duration: 400, onComplete: () => stamp.destroy() }) });
     this.cameras.main.flash(180, 184, 134, 43, false); // a brass flash beat (event, ≤1.1s)
@@ -1505,6 +1502,7 @@ export class IsoScene extends Phaser.Scene {
 
   private floatText(x: number, y: number, text: string, color: string): void {
     const t = this.mkText(x, y, text, { fontFamily: NOIR_FONT, fontSize: '15px', color, fontStyle: 'bold' }).setOrigin(0.5, 1).setDepth(100002);
+    this.worldFx(t); // a world-space beat — keep it off the fixed UI camera
     this.tweens.add({ targets: t, y: y - 36, alpha: 0, duration: 1500, onComplete: () => t.destroy() });
   }
 
@@ -1572,8 +1570,9 @@ export class IsoScene extends Phaser.Scene {
         ].join('\n');
       }
     }
-    const di = districtOfTile(tile.gy);
-    const d = inspectDistrict(this.state, `district-${di}`);
+    // RTS-30a: map the hovered tile to its district via the world partition.
+    const did = this.world.districtOfTile[Math.round(tile.gy) * this.world.size + Math.round(tile.gx)];
+    const d = did ? inspectDistrict(this.state, did) : undefined;
     if (d) {
       return [`${d.name}`, d.holderName ? `held by ${d.holderName}` : 'contested', `police ${d.policePresence} · your control ${d.playerControl}`].join('\n');
     }
@@ -1587,22 +1586,11 @@ export class IsoScene extends Phaser.Scene {
 
   // ── camera ───────────────────────────────────────────────────────────────────────────────
 
-  /** RTS-28 — the screen-space centroid of ALL the play content (every business + HQ), so the default
-   * resting view CENTERS the board instead of resting up-and-left on the home corner. */
-  private cityCenterPoint(): { x: number; y: number } {
-    const tiles: { gx: number; gy: number }[] = [];
-    for (const b of allBusinesses(this.state)) { const t = businessTileOf(this.layout, b.id); if (t) tiles.push(t); }
-    for (const fid of ['player', 'rival-a', 'rival-b']) { const t = hqTileOf(this.layout, fid); if (t) tiles.push(t); }
-    if (tiles.length === 0) return gridToScreen((COLS - 1) / 2, (ROWS - 1) / 2);
-    const gx = tiles.reduce((a, t) => a + t.gx, 0) / tiles.length;
-    const gy = tiles.reduce((a, t) => a + t.gy, 0) / tiles.length;
-    return gridToScreen(gx, gy);
-  }
-
-  /** [Z] RTS-23 — one press to FRAME THE WHOLE CITY: fit all 9 districts and centre them. */
+  /** [Z] RTS-23/30a — one press to FRAME THE WHOLE CITY (the big sparse map) + centre it. */
   private frameCity(): void {
     const cam = this.cameras.main;
-    const corners = [gridToScreen(0, 0), gridToScreen(COLS - 1, 0), gridToScreen(0, ROWS - 1), gridToScreen(COLS - 1, ROWS - 1)];
+    const S = this.world.size;
+    const corners = [gridToScreen(0, 0), gridToScreen(S - 1, 0), gridToScreen(0, S - 1), gridToScreen(S - 1, S - 1)];
     const minX = Math.min(...corners.map((c) => c.x)) - ISO_TILE_HALF_WIDTH;
     const maxX = Math.max(...corners.map((c) => c.x)) + ISO_TILE_HALF_WIDTH;
     const minY = Math.min(...corners.map((c) => c.y)) - ISO_TILE_HEIGHT;
@@ -1622,6 +1610,59 @@ export class IsoScene extends Phaser.Scene {
     if (!v) { this.setStatus('select a thug first, then [F] to centre on it'); return; }
     const s = unitScreenPos(v.unit);
     this.cameras.main.pan(s.x, s.y, 280, 'Sine.easeInOut');
+  }
+
+  /** RTS-30a — clamp the world camera to the iso bounds of the whole map (no black void on pan). */
+  private setWorldCameraBounds(): void {
+    const s = this.world.size;
+    const cs = [gridToScreen(0, 0), gridToScreen(s - 1, 0), gridToScreen(0, s - 1), gridToScreen(s - 1, s - 1)];
+    const minX = Math.min(...cs.map((c) => c.x)) - ISO_TILE_HALF_WIDTH * 2;
+    const maxX = Math.max(...cs.map((c) => c.x)) + ISO_TILE_HALF_WIDTH * 2;
+    const minY = Math.min(...cs.map((c) => c.y)) - ISO_TILE_HEIGHT * 2;
+    const maxY = Math.max(...cs.map((c) => c.y)) + ISO_TILE_HEIGHT * 2;
+    this.cameras.main.setBounds(minX, minY, maxX - minX, maxY - minY);
+  }
+
+  /** RTS-30a — the CRITICAL world/HUD split: a second FIXED ui camera renders the HUD at 1:1 and is
+   * never transformed by zoom/pan, so the instrument panel never drifts. The world (default scroll
+   * factor) renders on the main camera (zoom/pan); the HUD (scrollFactor 0) renders on the ui camera.
+   * Partitioned by the scene's long-standing convention (HUD = scrollFactor 0). */
+  private setupUiCamera(): void {
+    const main = this.cameras.main;
+    const ui = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+    ui.setName('ui');
+    this.uiCam = ui;
+    const hud: Phaser.GameObjects.GameObject[] = [];
+    const world: Phaser.GameObjects.GameObject[] = [];
+    for (const obj of this.children.list) {
+      const sf = (obj as unknown as { scrollFactorX?: number }).scrollFactorX;
+      (sf === 0 ? hud : world).push(obj);
+    }
+    main.ignore(hud); // the HUD never zooms/pans with the world
+    ui.ignore(world); // the world never renders on the fixed panel
+    this.scale.on('resize', () => ui.setSize(this.scale.width, this.scale.height));
+  }
+
+  /** RTS-30a — snap to the next/prev of the 3 zoom stops (CLOSE/MID/FAR), anchored to the cursor. */
+  private cycleZoom(dir: 1 | -1): void {
+    const cur = this.targetZoom;
+    let i = 0; let best = Infinity;
+    ZOOM_STOPS.forEach((z, k) => { const d = Math.abs(z - cur); if (d < best) { best = d; i = k; } });
+    const next = ZOOM_STOPS[Phaser.Math.Clamp(i - dir, 0, ZOOM_STOPS.length - 1)]; // dir +1 = closer
+    this.targetZoom = next;
+    const p = this.input.activePointer;
+    const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+    this.zoomAnchor = { sx: p.x, sy: p.y, wx: wp.x, wy: wp.y };
+  }
+
+  /** RTS-30a — fly the camera to a district (clicked in the roster) at FAR zoom. */
+  private flyToDistrict(districtId: string): void {
+    const d = this.world.districts.find((x) => x.id === districtId);
+    if (!d) return;
+    const c = gridToScreen(d.centroid.gx, d.centroid.gy);
+    this.targetZoom = ZOOM_STOPS[2];
+    this.cameras.main.pan(c.x, c.y, 420, 'Sine.easeInOut');
+    this.setStatus(`flying to ${d.name}`);
   }
 
   private setupCameraControls(): void {
@@ -1647,6 +1688,10 @@ export class IsoScene extends Phaser.Scene {
     });
     this.input.keyboard?.on('keydown-F', () => this.centerOnSelection());
     this.input.keyboard?.on('keydown-Z', () => this.frameCity());
+    // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).
+    this.input.keyboard?.on('keydown-PLUS', () => this.cycleZoom(1));
+    this.input.keyboard?.on('keydown-EQUALS', () => this.cycleZoom(1));
+    this.input.keyboard?.on('keydown-MINUS', () => this.cycleZoom(-1));
     // RTS-29: collectors are AUTOMATIC now (one per extorted front) — no player routing. [T] just informs.
     this.input.keyboard?.on('keydown-T', () => this.setStatus('collectors are automatic — one spawns per front you extort ([E]); no routing needed'));
     this.input.keyboard?.on('keydown-E', () => this.commandExtort());
@@ -1686,7 +1731,8 @@ export class IsoScene extends Phaser.Scene {
   update(_t: number, delta: number): void {
     const dt = delta / 1000;
     this.updateUnits(dt);
-    this.revealFog(); // RTS-29: peel back the fog around the HQ + moving units (incremental redraw)
+    this.revealFog(); // RTS-29: peel back the fog around the HQ + moving units
+    this.drawGround(); // RTS-30a: culled ground/streets/parks/fog/washes for the visible tiles only
     this.refreshHud();
     this.refreshObjective();
     this.refreshFeed();
@@ -1762,8 +1808,8 @@ export class IsoScene extends Phaser.Scene {
 
     // RTS-29 — the CONTROL readout (the freed Market dock tab): a brass-bezel meter under the route
     // pill. "CONTROL ███░░ 7/10", named + capped, with a plain-English tooltip.
-    this.controlTitle = this.mkText(0, 0, 'CONTROL  [the turf you can hold]', { fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
-    this.controlBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+    this.controlTitle = this.mkText(0, 0, "THE CITY — WHAT'S YOURS", { fontFamily: NOIR_DISPLAY, fontSize: '14px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
+    this.controlBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3 }).setScrollFactor(0).setDepth(100001);
 
     // CONTEXT card — the selected thug's card + its valid verbs.
     this.ctxCardTitle = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100001);
@@ -1937,6 +1983,7 @@ export class IsoScene extends Phaser.Scene {
     const txt = lostByPlayer ? 'BLOCK LOST!' : 'BLOCK TAKEN';
     const t = this.mkText(label.x, label.y - 14, txt, { fontFamily: NOIR_FONT, fontSize: '15px', color: lostByPlayer ? SPEC.danger : SPEC.rival, fontStyle: 'bold' })
       .setOrigin(0.5, 1).setDepth(100002);
+    this.worldFx(t);
     this.tweens.add({ targets: t, y: t.y - 30, alpha: 0, duration: 1800, onComplete: () => t.destroy() });
     if (lostByPlayer) this.cameras.main.shake(160, 0.004);
   }
@@ -2199,15 +2246,29 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** RTS-29 — the CONTROL meter (the freed Market dock tab): "CONTROL ███░░ 7/10", named + capped. */
+  /** RTS-30a — THE CITY — WHAT'S YOURS: the district-status roster (the reworked "control"). A row per
+   * district (pip · name · status · biz-held/total · tag) + a summary line. Click a row → fly there.
+   * Lives in the freed dock space under the channels/collectors pill. */
   private drawControl(g: Phaser.GameObjects.Graphics): void {
     if (!this.controlTitle || !this.controlBody) return;
     const r = this.channelPanelRect; const x = r.x, y = r.y + r.h + 8 + 32, w = r.w;
-    const cr = controlReadout(this.state, 'player');
-    const atCap = cr.available <= 0;
-    this.decoFrame(g, x, y, w, 44, atCap ? hexNum(SPEC.danger) : PAL.brass, 0.82);
-    this.controlTitle.setPosition(x + 8, y + 5).setVisible(true);
-    this.setTC(this.controlBody, cr.label, atCap ? SPEC.danger : SPEC.brass).setPosition(x + 8, y + 22).setVisible(true);
-    this.hudRegions.push({ x, y, w, h: 44, explain: cr.read });
+    const rows = cityRoster(this.state);
+    const sum = citySummary(this.state);
+    const rowH = 15, headH = 18, h = headH + rows.length * rowH + 18;
+    this.decoFrame(g, x, y, w, h, PAL.brass, 0.84);
+    this.controlTitle.setPosition(x + 8, y + 4).setVisible(true);
+    this.cityRowHits = [];
+    const lines: string[] = [];
+    rows.forEach((row, i) => {
+      const ry = y + headH + i * rowH;
+      const held = row.bizTotal > 0 ? `${row.bizHeld}/${row.bizTotal}` : '—';
+      lines.push(`${row.pip} ${row.name.replace('The ', '').padEnd(13).slice(0, 13)} ${row.status.padEnd(11)} ${held.padStart(5)} ${row.tag}`);
+      this.cityRowHits.push({ x, y: ry, w, h: rowH, districtId: row.id });
+      this.hudRegions.push({ x, y: ry, w, h: rowH, explain: `${row.name}: ${row.status} (${held} businesses). Click to fly the camera there.` });
+    });
+    lines.push(`── HELD ${sum.held}/${sum.total} · ${sum.establishing} establishing · ${sum.rival} rival`);
+    this.setTC(this.controlBody, lines.join('\n'), NOIR_PALETTE.bone).setPosition(x + 8, y + headH);
+    this.controlBody.setVisible(true);
   }
 
   /** RTS-23 — the CONTEXT card (bottom-left): a HOVERED business's card (state · yield · heat + its

@@ -2434,3 +2434,74 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
 - Gate: typecheck ✅  build ✅  test ✅ (641; +4 dispatch). [E] now dispatches an idle thug to a [%]
   front → the visit → convert → collector → control-spend loop runs.
 - Commit: rts29.1: fix idle-thug faction resolution (dispatch was dead) — green
+
+## RTS-30a (World & camera foundation — sparse map · districts · control decoupled) — GREEN  (2026-06-22)
+- Summary: The foundation slice of RTS-30 (biggest change since the iso conversion). FOUR build items,
+  nothing else (NO turf war, collector interception, war content, or the UI-declutter/toolbar — those
+  are 30b/30c). /src/sim stays PURE & Phaser-free; tick/applyCommand CORE MATH untouched (new systems
+  are pure reads). 641 → 645 green (−4 retired control-currency tests, +8 new world tests).
+- 1) SPARSE LARGER MAP — NEW pure `src/sim/worldgen.ts` (`generateWorld`) supersedes the 16² block
+  layout with a 96² sparse iso city (WORLD_SIZE=96, 9216 tiles ≈ 36× the old map). Deterministic from
+  `state.seed ^ 0x30a` via the Rng wrapper. Districts arrange into a region grid that PARTITIONS the
+  map; each region gets 4-wide AVENUES on its edges + a STREET cross (the negative space), a 4×4 PARK
+  + a 3×3 PLAZA (fountain), then business parcels placed sparsely by `findParcel`: an open 'ground'
+  tile with a ≥1-tile setback (no building in its 8-neighbourhood) AND the min-gap rule (no two
+  footprints within 1 tile). All 51 sim businesses + every HQ get a tile; openFraction ≈ 0.99 per
+  district (well past the sparse target — buildings sit far apart so a thug strolls visible seconds
+  between them; DISTANCE is the throttle now, not a control spend). WorldLayout EXTENDS MapLayout, so
+  the existing pure route/collector/movement code consumes it unchanged.
+- 2) DISTRICTS as a first-class spatial unit — every tile carries a `districtOfTile` id (a COMPLETE
+  partition: every tile in exactly one district, asserted in tests). On the map: a low-opacity
+  ownership wash painted per-tile in drawGround (brass 5% HELD / rival-red 7% RIVAL / none neutral)
+  and a plaza nameplate label. Reuses the bigCity district names (Dockside … Uptown).
+- 3) CAMERA — the CRITICAL world/HUD split. A second FIXED ui camera (`setupUiCamera`) renders the
+  HUD at 1:1 and is NEVER transformed; the main camera owns zoom/pan over the world. Objects are
+  partitioned by the scene's long-standing `scrollFactor 0 = HUD` convention (snapshot at create);
+  runtime-created WORLD objects are registered via a new `worldFx()` helper (uiCam.ignore) so they
+  can't ghost onto the fixed panel — wired into attachView, floatText, leanBeat, relightBuilding,
+  morphBuilding, drawTargetMarker, dropGreenback, flashAmbush, flashDeposit, flashTerritory. ZOOM: 3
+  stops (CLOSE 1.0× / MID 0.6× resting / FAR 0.35×) smoothly interpolated and anchored to the cursor
+  (the world point under the pointer stays pinned), driven by +/- keys, the wheel, and cycleZoom. LOD
+  at FAR (zoom < 0.45): a bulk soot fill replaces the per-tile ground draw. PAN: edge/drag/WASD+arrows,
+  eased, clamped to the iso world bounds (`setWorldCameraBounds`). Opening frames the player's HQ
+  district plaza at MID zoom. Because the HUD lives on a separate untransformed camera, it cannot
+  reflow/drift on zoom/pan/resize (the resize handler only resizes the ui camera viewport).
+- 4) DECOUPLE EXTORTION FROM CONTROL + REPURPOSE CONTROL — the spend-to-extort meter is RETIRED
+  (`src/sim/control.ts` DELETED). commandExtortBusiness/commandExpand no longer consult a control
+  budget — extortion is gated ONLY by walking time/distance + a free thug; expand only by cash.
+  Control is now DISTRICT STATUS: NEW pure `src/sim/districtStatus.ts` — `districtStatusOf` returns
+  HELD (player ≥ HOLD_THRESHOLD=0.6 of a district's businesses) / ESTABLISHING (some, under threshold)
+  / NEUTRAL / RIVAL; CONTESTED is reserved for 30c and never produced here. `cityRoster` + `citySummary`
+  back the repurposed right-dock panel "THE CITY — WHAT'S YOURS" (row = pip · name · status · held/total
+  · tag; a summary line; click a row → camera flies to that district). A read-only status board, not a
+  turf war.
+- PERFORMANCE: render CULLS to the viewport — drawGround derives the visible tile window from
+  cam.worldView corners (→ screenToGrid, padded by 2) and draws ONLY those tiles into one Graphics, so
+  cost is bounded by SCREEN size, not map size (96² is no costlier than 16² at a given zoom). The ~51
+  buildings are baked-once Graphics (Phaser frustum-culls them); fog is folded into the same culled
+  draw; FAR LOD swaps per-tile fills for a bulk soot rect. The structural guarantee: nothing iterates
+  the 9216-tile array per frame. FPS can't be sampled in this headless env — the live [P] overlay
+  (FPS · frame-ms · text-rasterisations/sec) remains for Cowork to confirm the rts25 baseline holds at
+  each zoom; the culling argument says it must.
+- TESTS: REMOVED the 4 control-currency tests from tests/reshape.test.ts (their premise — control
+  gates/limits extortion — is gone; noted inline) + the control.ts/CONTROL_START imports. ADDED
+  tests/world.test.ts (+8): MapLayout-compat (every business+HQ tiled), the district PARTITION
+  (complete + exactly-one), SPARSENESS (no building in any 8-neighbourhood; openFraction > 0.85),
+  park+plaza per district, determinism, district status NEUTRAL→ESTABLISHING→HELD, roster+summary,
+  and CONTESTED-never-produced. 641 − 4 + 8 = 645.
+- PLAY-THROUGH (the new map, exercisable): the loop is unchanged in verbs but now spaced out — select
+  a thug, right-click a [%] front (or [E] on the onboarding target) → an idle thug walks the avenues
+  to it (visible seconds at STROLL_SPEED across the sparse 96² blocks) → on arrival it LEANS
+  (processExtortArrivals records a visit; no control checked) → repeat to fold it into a [$] earner →
+  the per-business collector spawns. No "NO CONTROL LEFT" can block it. The CITY roster ticks the
+  district from NEUTRAL → ESTABLISHING as fronts fold, and HELD once ≥60% of a district pays; clicking
+  the row flies the camera there. Through all of it the HUD panels stay pinned (separate fixed camera)
+  while the world zooms/pans beneath them.
+- Files: NEW src/sim/worldgen.ts, src/sim/districtStatus.ts, tests/world.test.ts; DELETED
+  src/sim/control.ts; edited src/sim/constants.ts (WORLD_SIZE, HOLD_THRESHOLD), src/sim/index.ts
+  (export swap), tests/reshape.test.ts (retire control tests), src/scenes/IsoScene.ts (worldgen render
+  + culled drawGround + two-camera split + zoom stops/anchor + CITY roster + gate removal).
+- Gate: typecheck ✅  build ✅  test ✅ (645). Sparse 96² map reads + paces by distance; the anchored
+  3-stop camera zooms/pans with a non-drifting HUD; extortion needs no control and control is now the
+  district-status board.
+- Commit: rts30a: World & camera foundation - sparse map, districts, control decoupled - green
