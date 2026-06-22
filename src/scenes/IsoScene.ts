@@ -132,6 +132,9 @@ import {
   TEX,
   PAL,
 } from './cityArt';
+import { AudioManager } from './audio';
+import { cycleVolume } from './audioMap';
+import type { MusicPhase } from './audioMap';
 import {
   SPEC,
   MOTION,
@@ -261,6 +264,13 @@ export class IsoScene extends Phaser.Scene {
   private marketBody?: Phaser.GameObjects.Text;
   private ctxBizId?: string; // the business currently shown in the context card (for [U])
   private artRich = richArt(); // RTS-26: cached rich/lean flag (don't re-parse the URL per frame)
+  // RTS-27 audio
+  private audio!: AudioManager;
+  private lastFederalTier = 0;     // to fire the teletype only when the tier CROSSES up
+  private lastMutinyName = '';     // fire the mutiny stinger on the transition, not every frame
+  private tipsFired = new Set<string>(); // consigliere tips: first-occurrence gating
+  private audioPanelOpen = false;
+  private audioPanel?: Phaser.GameObjects.Text;
   // RTS-25 — crisp text + per-frame rasterisation budget. textRes renders each Text's canvas at the
   // device pixel ratio (no blurry browser upscaling). setT() change-gates setText so we only re-
   // rasterise a label when its string actually changed (the per-frame text churn was the bottleneck).
@@ -309,6 +319,11 @@ export class IsoScene extends Phaser.Scene {
     return o;
   }
 
+  preload(): void {
+    // RTS-27: register the audio library for loading (missing clips 404 → graceful no-op).
+    AudioManager.preload(this);
+  }
+
   create(): void {
     buildCityTextures(this);
     const cam = this.cameras.main;
@@ -340,6 +355,17 @@ export class IsoScene extends Phaser.Scene {
     this.drawHud();
     this.buildObjective();
     this.buildLegend();
+
+    // ── RTS-27 AUDIO: wire the manager, start the beds (on unlock), seed the phase machine ──
+    this.audio = new AudioManager(this);
+    this.audio.ready();
+    this.lastPhase = hudPhase(this.state).phase; // seed so we don't sting on the first frame
+    const startBeds = (): void => this.audio.startBeds();
+    if (this.sound.locked) this.sound.once('unlocked', startBeds); else startBeds();
+    this.audio.setPhase(this.lastPhase as MusicPhase, true);
+    this.buildAudioPanel();
+    // consigliere: the extort-first tip on a fresh load (gated to once)
+    this.fireTipOnce('extort');
   }
 
   // ── onboarding objective (RTS-11) ────────────────────────────────────────────────────────
@@ -1001,6 +1027,7 @@ export class IsoScene extends Phaser.Scene {
         const run = startCollectorRun(this.state, this.layout, 'player', d.id, this.navGrid);
         if (run.unit) {
           this.attachView(run.unit, 'player');
+          this.audio?.confirm(); // RTS-27 crew-order confirm on dispatch
           if (run.unit.protectedRun) {
             this.setStatus(`collector dispatched from ${d.name} — first run rides home SAFE`);
           } else if (hotBefore) {
@@ -1026,6 +1053,7 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     const hq = hqTileOf(this.layout, 'player');
     if (hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, `OPENED ${kind.toUpperCase()} RACKET`, NOIR_PALETTE.brass); }
+    this.audio?.confirm(); this.fireTipOnce('launder'); // RTS-27 crew confirm + the consigliere's money tip
     this.setStatus(`opened a ${kind} racket in ${d.name}`);
   }
 
@@ -1038,7 +1066,15 @@ export class IsoScene extends Phaser.Scene {
     applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: ch, amount: cur + 10 });
     this.state = harvestIncidents(this.state);
     const paid = this.state.player.bribes[ch] > cur;
+    if (paid) { this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); } // RTS-27 distinct cue per channel
     this.setStatus(paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`);
+  }
+
+  /** RTS-27 — fire a consigliere VO tip the FIRST time its onboarding trigger occurs (don't spam). */
+  private fireTipOnce(which: 'extort' | 'grease' | 'launder' | 'war'): void {
+    if (this.tipsFired.has(which)) return;
+    this.tipsFired.add(which);
+    this.audio?.tip(which);
   }
 
   // ── the build verbs (RTS-20) — how the player leaves ESTABLISH ───────────────────────────────
@@ -1159,6 +1195,7 @@ export class IsoScene extends Phaser.Scene {
     const res = resolveRaid(this.state, target.id);
     this.state = harvestIncidents(this.state);
     this.flashTerritory(target.id, false);
+    this.audio?.combat('raid'); this.audio?.confirm(); // RTS-27 tommy-gun + crew confirm
     this.setStatus(res.repelled ? `raid on ${target.name} was REPELLED` : `RAID on ${target.name}!`);
   }
 
@@ -1170,6 +1207,7 @@ export class IsoScene extends Phaser.Scene {
     if (!g.ok) { this.setStatus(`SABOTAGE: ${g.reason}`); return; }
     const res = resolveSabotage(this.state, biz.id);
     this.state = harvestIncidents(this.state);
+    this.audio?.combat('sabotage'); this.audio?.confirm();
     this.setStatus(res.destroyed ? 'racket WRECKED' : 'rival racket sabotaged');
   }
 
@@ -1181,6 +1219,7 @@ export class IsoScene extends Phaser.Scene {
     if (!g.ok) { this.setStatus(`HIT ${w.name}: ${g.reason}`); return; }
     const res = resolveAssassinate(this.state, w.familyId);
     this.state = harvestIncidents(this.state);
+    this.audio?.combat('assassinate'); this.audio?.confirm(); // RTS-27 single pistol report
     const hq = hqIntegrityOf(this.state.rivals.find((r) => r.id === w.familyId)!);
     this.setStatus(res.success ? (res.eliminated ? `${w.name} ELIMINATED` : `struck ${w.name}'s HQ — integrity ${hq}`) : `the hit on ${w.name} failed`);
   }
@@ -1193,6 +1232,7 @@ export class IsoScene extends Phaser.Scene {
     if (!g.ok) { this.setStatus(`LOCKOUT ${w.name}: ${g.reason}`); return; }
     resolveLockout(this.state, w.familyId);
     this.state = harvestIncidents(this.state);
+    this.audio?.combat('lockout'); this.audio?.confirm(); // RTS-27 the Bureau's siren
     this.setStatus(`the Bureau is locking down ${w.name}`);
   }
 
@@ -1254,6 +1294,10 @@ export class IsoScene extends Phaser.Scene {
     if (this.endgameShown) return;
     this.endgameShown = true;
     const won = this.state.status === 'won';
+    // RTS-27: the win/lose STING + a VO one-liner, and switch the music bed (theme swell / defeat).
+    this.audio?.play(won ? 'sting_win' : 'sting_lose');
+    this.audio?.vo([won ? 'vo_win' : 'vo_lose']);
+    this.audio?.setPhase(won ? 'TITLE' : 'GAMEOVER');
     const w = this.scale.width, h = this.scale.height;
     this.add.rectangle(0, 0, 6000, 4000, PAL.soot, 0.82).setOrigin(0, 0).setScrollFactor(0).setDepth(200000);
     const last = [...this.state.log].reverse().find((e) => e.kind === 'game-over');
@@ -1430,14 +1474,18 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-K', () => this.toggleCrew());
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
     this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
-    // RTS-17 — the offensive.
-    this.input.keyboard?.on('keydown-ONE', () => this.commandRaid());
-    this.input.keyboard?.on('keydown-TWO', () => this.commandSabotage());
-    this.input.keyboard?.on('keydown-THREE', () => this.commandAssassinate());
-    this.input.keyboard?.on('keydown-FOUR', () => this.commandLockout());
+    // RTS-17 — the offensive. RTS-27: when the audio panel is open, 1–5 adjust the volume buses
+    // instead of firing offense/build verbs (so the settings surface is keyboard-drivable).
+    this.input.keyboard?.on('keydown-ONE', () => this.audioPanelOpen ? this.cycleAudioBus(0) : this.commandRaid());
+    this.input.keyboard?.on('keydown-TWO', () => this.audioPanelOpen ? this.cycleAudioBus(1) : this.commandSabotage());
+    this.input.keyboard?.on('keydown-THREE', () => this.audioPanelOpen ? this.cycleAudioBus(2) : this.commandAssassinate());
+    this.input.keyboard?.on('keydown-FOUR', () => this.audioPanelOpen ? this.cycleAudioBus(3) : this.commandLockout());
     // RTS-20 — the build verbs (leave ESTABLISH).
-    this.input.keyboard?.on('keydown-FIVE', () => this.commandExpand());
+    this.input.keyboard?.on('keydown-FIVE', () => this.audioPanelOpen ? this.cycleAudioBus(4) : this.commandExpand());
     this.input.keyboard?.on('keydown-SIX', () => this.commandRecruit());
+    // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
+    this.input.keyboard?.on('keydown-O', () => this.toggleAudioPanel());
+    this.input.keyboard?.on('keydown-ZERO', () => { this.audio?.toggleMute(); this.refreshAudioPanel(); });
     // RTS-24 — vice upgrade ([U] on the hovered racket) + THE MARKET ([M] toggle, [N] next good,
     // [Y] buy, [J] sell — buy/sell act only while the market tab is open).
     this.input.keyboard?.on('keydown-U', () => this.commandViceUpgrade());
@@ -1687,6 +1735,11 @@ export class IsoScene extends Phaser.Scene {
   private refreshCrew(): void {
     if (!this.crewTitle) return;
     const rows = crewReadout(this.state.player);
+    // RTS-27: the mutiny stinger when a member FIRST becomes primed to betray (reuses `rows`, no
+    // extra per-frame allocation; UI-independent of whether the roster panel is open).
+    const primed = rows.find((m) => m.status === 'disloyal')?.name ?? '';
+    if (primed && primed !== this.lastMutinyName) this.audio?.mutiny();
+    this.lastMutinyName = primed;
     const now = this.time.now;
     const baseY = this.scale.height - 30 - rows.length * 18;
     this.crewTitle.setPosition(12, baseY - 18).setVisible(this.crewVisible);
@@ -2030,12 +2083,19 @@ export class IsoScene extends Phaser.Scene {
 
   // ── RTS-23 audio-feedback seams ──────────────────────────────────────────────────────────────
 
-  /** A single discrete event signal a future SFX/VO layer can hook onto. Drives a HUD beat now. */
+  /** A single discrete event signal. Drives the HUD beat AND (RTS-27) the matching audio cue. */
   private signalBeat(kind: 'extort' | 'banked' | 'ambush' | 'federal' | 'unrest' | 'phase' | 'attack' | 'capture', label?: string): void {
     this.wireFlashUntil = this.time.now + 900; // the Wire frame pulses on any major beat
     if (label) this.setStatus(label);
-    // (hook point) future: this.sound.play(kind)
-    void kind;
+    // RTS-27: hang the catalogued clip on the beat that already fires (no new triggers).
+    switch (kind) {
+      case 'extort': this.audio?.extort(); break;
+      case 'banked': this.audio?.banked(); break;
+      case 'ambush': this.audio?.combat('ambush'); break;
+      case 'attack': this.audio?.combat('attack'); break;
+      case 'unrest': this.audio?.mutiny(); break;
+      // 'phase' / 'federal' / 'capture' are handled at their richer call sites (sting + music / tier).
+    }
   }
 
   /** Watch state for major beats (new alert on the Wire, a phase change) and emit a signal. */
@@ -2043,14 +2103,56 @@ export class IsoScene extends Phaser.Scene {
     const last = this.state.incidents[this.state.incidents.length - 1];
     if (last && last.seq !== this.lastIncidentSeq) {
       this.lastIncidentSeq = last.seq;
-      if (last.severity === 'danger' || last.severity === 'warning') this.wireFlashUntil = this.time.now + 900;
+      const needsYou = last.severity === 'danger' || last.severity === 'warning';
+      if (needsYou) this.wireFlashUntil = this.time.now + 900;
+      // RTS-27 progressive disclosure for the ears: only needs-you slips RING (📞); routine = soft tick.
+      this.audio?.wire(needsYou ? 'crisis' : 'routine');
     }
     if (this.lastPhase && this.lastPhase !== phase) {
       this.flashPhaseChange(phase);
-      this.signalBeat('phase');
+      // RTS-27: crossfade the adaptive music to the new phase bed + a phase sting.
+      this.audio?.setPhase(phase as MusicPhase);
+      this.audio?.play(this.audio.stingForPhaseKey(phase as MusicPhase));
+      if (phase === 'CONTEST' || phase === 'FIRST BLOOD') this.fireTipOnce('war');
     }
     this.lastPhase = phase;
-    void p;
+    // RTS-27: the teletype escalation only when the federal tier CROSSES up (50/70/85).
+    if (p.federalTier > this.lastFederalTier) this.audio?.federal(p.federalTier);
+    this.lastFederalTier = p.federalTier;
+  }
+
+  // ── RTS-27 audio settings surface ──────────────────────────────────────────────────────────
+
+  private static readonly AUDIO_BUSES: (keyof import('./audio').AudioSettings)[] = ['master', 'music', 'sfx', 'vo', 'ambience'];
+
+  private buildAudioPanel(): void {
+    this.audioPanel = this.mkText(12, this.scale.height - 140, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807dd', lineSpacing: 3 })
+      .setOrigin(0, 1).setScrollFactor(0).setDepth(200002).setPadding(8, 6, 8, 6).setVisible(false);
+    this.refreshAudioPanel();
+  }
+
+  private toggleAudioPanel(): void {
+    this.audioPanelOpen = !this.audioPanelOpen;
+    this.audioPanel?.setVisible(this.audioPanelOpen);
+    if (this.audioPanelOpen) this.refreshAudioPanel();
+  }
+
+  /** Cycle one bus's volume down a notch (100→75→50→25→0→100) and respect it immediately. */
+  private cycleAudioBus(index: number): void {
+    if (!this.audio) return;
+    const bus = IsoScene.AUDIO_BUSES[index];
+    const cur = this.audio.getSettings()[bus] as number;
+    this.audio.setBusVolume(bus, cycleVolume(cur));
+    this.refreshAudioPanel();
+  }
+
+  private refreshAudioPanel(): void {
+    if (!this.audioPanel || !this.audio) return;
+    const s = this.audio.getSettings();
+    const bar = (v: number): string => '▮'.repeat(Math.round(v * 4)) + '▭'.repeat(4 - Math.round(v * 4));
+    const lines = ['♪ AUDIO  [O] close · [0] mute' + (s.muted ? '  (MUTED)' : '')];
+    IsoScene.AUDIO_BUSES.forEach((b, i) => lines.push(`[${i + 1}] ${b.toUpperCase().padEnd(9)} ${bar(s[b] as number)} ${Math.round((s[b] as number) * 100)}%`));
+    this.setT(this.audioPanel, lines.join('\n')).setColor(s.muted ? SPEC.danger : NOIR_PALETTE.bone);
   }
 
   /** A centred banner when the match phase changes (a clear visual beat for audio/VO to hook). */

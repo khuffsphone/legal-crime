@@ -2242,3 +2242,52 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
 - Gate: typecheck ✅  build ✅  test ✅ (607). Procedural/vector only; four channels + 50/70/85
   untouched; faction-accent law + red discipline honoured; behaviour/tests un-regressed.
 - Commit: rts26: Procedural Gangster Art — green
+
+## RTS-27 (Audio Wiring) — GREEN  (2026-06-22)
+- Summary: Wired the full audio library onto the HUD seams designed in across rts22→24 — NO new game
+  systems, content, or balance. tick/applyCommand untouched; /src/sim Phaser-free; render+audio
+  Phaser-side. Sound hangs on the beats that ALREADY fire (the rts23 signalBeat seam + the existing
+  grease/combat/federal/phase/mutiny/endgame visual triggers); no new triggers invented. 607 → 618
+  green (+11 for the pure audio-map/rotation helpers). Built on the rts25/rts26 HEAD.
+- AUDIOMANAGER (src/scenes/audio.ts, Phaser-side): preloads the catalogued .m4a clips from
+  public/audio/ (a missing file 404s → play() no-ops, so the wiring is complete now and lights up as
+  assets land). play(key) honours per-CATEGORY buses (sfx / vo / music / ambience) × a master, a
+  global mute, a per-clip debounce, and a ONE-URGENT-AT-A-TIME rule (urgent cues don't stack and duck
+  the beds). VO takes rotate (no back-to-back repeat). Settings persist to localStorage and are
+  respected on every play and on the live beds.
+- SEAM → CLIP (hung on the existing visual beats):
+  • money banked / collector dispatch → cashdrop 🪙 · extort lands → extort 🥃 · ambush/raid/attack →
+    tommygun 🔫 · assassinate/sabotage → pistol · lockout → siren · federal 50/70/85 CROSS-up →
+    teletype warning 🔔 (siren at 85) · grease level-up → a distinct cue per channel (whistle/gavel/
+    stamp/receiver) · mutiny primed → the mutiny stinger.
+  • THE WIRE (progressive disclosure for the ears): only NEEDS-YOU slips (danger/warning) RING (📞
+    wire_crisis); routine info/gain slips get a soft tick (wire_routine) — mirrors the visual priority.
+  • The provided drop wires immediately (extort, cashdrop, tommygun, pistol, siren, warning, mutiny +
+    all music/ambience beds); grease cues, door/typewriter, wire rings, stings and VO are wired with
+    their expected filenames and sound the moment they're dropped in public/audio/ (documented in its
+    README).
+- STINGS: each phase-transition banner → its phase sting + the music crossfade; the win/lose overlay
+  → the win/lose sting + a VO one-liner + a music switch (theme swell / defeat bed).
+- VO: crew-order confirms on action commands (collect/grease/reinvest/raid/sabotage/assassinate/
+  lockout), takes rotated; the consigliere tips on their existing onboarding triggers (extort-first on
+  fresh load, grease on first grease, launder on first racket, war on reaching CONTEST/FIRST BLOOD),
+  each gated to FIRST-occurrence so they never spam.
+- MUSIC STATE MACHINE (audioMap.musicBedForPhase, pure+tested): TITLE→theme, ESTABLISH→calm-build,
+  FIRST BLOOD/CONTEST→contest-tension, DECAPITATE→war, GAMEOVER→defeat; crossfades 0.9s on phase
+  change; the city-ambience bed loops underneath; urgent stings/VO DUCK music+ambience ~45% then
+  restore. Starts on Phaser sound-unlock (first input), so autoplay policy is honoured.
+- SETTINGS SURFACE: [O] opens an audio panel (master + the four buses + mute, with volume bars);
+  while open, [1–5] cycle each bus 100→75→50→25→0→100; [0] toggles master mute (works anytime).
+  Persisted; the live beds re-volume immediately.
+- PERFORMANCE: preload-once + reuse; audio is event-driven — NO per-frame audio allocation (the
+  mutiny check reuses refreshCrew's already-computed crew rows; the federal/phase/wire checks are O(1)
+  int/seq compares that already ran). The rts25 update() loop is otherwise unchanged → FPS unaffected
+  (verify live with the [P] overlay).
+- Files: NEW src/scenes/audioMap.ts (pure mapping/rotation) + tests/audioMap.test.ts (11); NEW
+  src/scenes/audio.ts (AudioManager); NEW public/audio/README.md (the key→file manifest + drop
+  instructions); src/scenes/IsoScene.ts (preload audio; route signalBeat + grease/combat/federal/
+  phase/mutiny/endgame/VO/tips; the [O] settings panel). No sim changes.
+- Gate: typecheck ✅  build ✅  test ✅ (618; +11 audioMap: phase→bed, only-needs-you-rings,
+  grease/federal/combat cue maps, VO take-rotation, volume helpers). Four channels + 50/70/85 kept;
+  no Gangsters conflations; behaviour/tests un-regressed.
+- Commit: rts27: Audio Wiring — green
