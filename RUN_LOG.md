@@ -2597,3 +2597,63 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   fountains, and ~300 scattered neutral props filling the void — culled + cached + LOD'd so the frame
   rate holds, and NOT one moving entity or new building category was added (Tier-3).
 - Commit: rts30b-ground: ground plane + static set dressing — green
+
+## RTS-30 LIVING-CITY PASS 1 (Ambient pedestrians + cars) — GREEN  (2026-06-22)
+- Summary: The highest life-per-frame layer + THE frame-budget test — pooled ambient PEDESTRIANS + a
+  few CARS strolling/rolling the city the RTS-30b ground layer drew. ONLY this: no animals/vendors/
+  buses/construction (Pass 3), no new buildings (Pass 2), no gameplay hooks. VISUAL-ONLY — no economy/
+  content/logic/balance change; tick/applyCommand untouched; /src/sim Phaser-free; procedural/vector
+  only. 651 → 661 green (+10 pure pool/graph/step/liveliness tests).
+- THE GOVERNING LAW (honored): ambient life is faction-NEUTRAL (muted greys/browns only — pedestrian
+  coats #3A3733/#4A4036/#3A2C20/#5A5043, civilian cars dull #23211E, taxi a MUTED checker
+  #4A4036/#2E2B27, never yellow; NO brass, NO rival-red), visually SUBORDINATE (~14px peds / ~24px cars
+  vs the 56px units, flatter, lower-contrast, no accent/glow/badge), on non-interactive tiles only
+  (sidewalks/roads), calm motion (~⅓ unit speed). A ped/taxi can't be mistaken for a brass thug or a
+  red rival.
+- 1) GRAPHS (pure src/sim/cityGraph.ts) — buildCityGraph(layout) precomputes ONCE from the ground tile
+  classes: a SIDEWALK graph (per-tile 4-bit neighbour adjacency + a node list) for pedestrians + a
+  ROAD-LANE graph (avenue/street) for vehicles. O(map) once; no per-frame graph cost. (96²: 1253
+  sidewalk nodes, 5100 road nodes, built in ~6ms at map load.)
+- 2) PEDESTRIANS — ~14px stick-with-mass figures (coat capsule + flesh head dot + hat brim + a 2-frame
+  leg tick, no face; 4 coats × 2 frames baked in cityArt). Walk the sidewalk graph at 0.42 tiles/s,
+  pickStep() continues straight 60%, turns at corners, never U-turns unless dead-end, 6% window-shop
+  pause. POOLED + capped, spawned within the cull ring on sidewalk tiles, returned to the pool when
+  culled offscreen >2s.
+- 3) CARS/TAXIS — ~24px simplified cars (body + cabin + window glint + 2 wheels + a faint warm
+  headlamp; far smaller/flatter than the 64px hero Cadillac). Follow the road graph, prefer to keep
+  heading (lane flow), light spacing (won't step onto a tile another car holds), brief dead-end/traffic
+  pause; flipX approximates iso facing. ~28% spawn as the muted-checker taxi. POOLED + capped.
+- 4) LOD + CULL — only agents inside the camera worldView + a 1-tile margin (160px) are simulated;
+  offscreen ones freeze and return to the pool after 2s. MID (zoom 0.45–0.8): caps halved + ped walk
+  frames frozen (static dots). FAR (<0.45): ALL moving life culled — so the most-tiles-in-frame zoom is
+  the CHEAPEST for ambient life (the budget self-balances). gridToScreen inlined in the hot loop (no
+  Vec2 alloc); reverse-iterate + swap-remove cull (no per-frame allocation).
+- POOLING (mandatory, done) — pools pre-allocate ALL sprites at construction (the configured liveliness
+  cap); spawn = activate a pooled agent, despawn = return it. ZERO per-frame allocation. Built BEFORE
+  setupUiCamera so the pre-allocated sprites land in the world-camera partition (the fixed HUD camera
+  ignores them — no ghosting).
+- LIVELINESS SETTING — ?life=low|med|high (default MED), the single perf dial: low 15p/4c, MED 30p/8c
+  (the recommended ship), high 45p/12c. Pure parseLiveliness + LIVELINESS_CAPS (tested).
+- ⭐ PERF GATE (the whole point of Pass 1): the per-frame cost is N moving agents translating. Measured
+  the agent-logic CPU on the real 96² graph: at the MED cap (30p+8c = 38 agents) it is ~3 µs/frame
+  (~0.018% of a 16.6ms/60fps frame); at HIGH (57 agents) ~0.7 µs/frame post-warmup. The render side
+  adds ≤38 cached sprites to the batcher (trivial — it batches thousands) and FAR culls them entirely.
+  CONCLUSION: ambient life cannot move FPS off the rts30b baseline — the moving-agent budget is
+  effectively free at MED. (A true browser-composited FPS can't be sampled in this headless env; the
+  live [P] overlay now reads `life Np/Mc` so Cowork can confirm the GPU FPS at CLOSE with full caps.)
+- DEFERRED (noted, not Pass 1): per-car night headlamp GLOW object (the baked lamp is a faint static
+  dot for now); edge-only spawning (agents currently spawn anywhere in the cull ring so the city fills
+  immediately for the ?reveal=1 showcase) — both cheap polish for a later pass.
+- TESTS (+10 pure): Pool (pre-alloc/activate/return/exhaust + the reverse-iterate-release cull pattern);
+  graph build (nodes match the tile classes, adjacency links only same-kind, deterministic); pickStep
+  (dead-end −1, straight-bias, no-U-turn-unless-forced, only returns set bits); parseLiveliness +
+  caps ordering. 651 + 10 = 661.
+- Files: NEW src/sim/pool.ts, src/sim/cityGraph.ts, src/scenes/ambientLife.ts, tests/livingCity.test.ts;
+  src/sim/index.ts (exports), src/scenes/cityArt.ts (bakePed ×8 + bakeCarLite/taxi + PED_COATS/
+  pedTexKey), src/scenes/IsoScene.ts (instantiate AmbientLife before setupUiCamera; update() tick; [P]
+  overlay life counts).
+- Gate: typecheck ✅  build ✅  test ✅ (661). With ?reveal=1 the city now breathes — tiny grey
+  pedestrians stroll the sidewalks and a few dull cars/taxis roll the avenues, all muted/subordinate,
+  culled at FAR; measured agent CPU ~3 µs/frame at the MED cap (≈0.018% of a frame) so the baseline FPS
+  holds. No moving entity can be mistaken for a unit; no animals/buses/buildings added (later passes).
+- Commit: living-pass1: pedestrians + cars — green

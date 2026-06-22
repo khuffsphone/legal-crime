@@ -279,6 +279,17 @@ export {
   type PropPlacement,
   type ScatterOptions,
 } from './worldgen';
+export { Pool } from './pool';
+export {
+  buildCityGraph,
+  pickStep,
+  parseLiveliness,
+  LIVELINESS_CAPS,
+  STEP_DIRS,
+  type CityGraph,
+  type Liveliness,
+  type LifeCaps,
+} from './cityGraph';
 export {
   districtStatusOf,
   cityRoster,

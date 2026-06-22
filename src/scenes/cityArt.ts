@@ -72,6 +72,9 @@ export const TEX = {
   mailbox: 'lcr_mailbox',
   bench: 'lcr_bench',
   fence: 'lcr_fence',
+  // RTS-30 living-city Pass 1: ambient moving life — faction-NEUTRAL, subordinate to the 56px units.
+  carLite: 'lcr_carlite',
+  taxi: 'lcr_taxi',
   coin: 'lcr_coin',
   tileStreet: 'lcr_tile_street',
   tileLot: 'lcr_tile_lot',
@@ -450,6 +453,60 @@ function bakeFence(scene: Phaser.Scene): void {
   g.destroy();
 }
 
+// ── RTS-30 living-city Pass 1: ambient PEDESTRIANS + CARS (faction-neutral, muted, subordinate) ──
+// THE GOVERNING LAW: muted greys/browns ONLY — never brass (player/money), never red (rival/danger).
+// A pedestrian/taxi must be instantly distinguishable from a 56px brass thug or a rival-red unit:
+// they are ~14–24px, flatter, lower-contrast, no accent/glow/badge.
+
+/** The four muted civilian COAT tones (the law — civilian greys/browns, never accent colours). */
+export const PED_COATS = [0x3a3733, 0x4a4036, 0x3a2c20, 0x5a5043] as const;
+
+/** Baked texture key for a pedestrian coat variant + walk frame (2-frame leg tick). */
+export function pedTexKey(coat: number, frameB: boolean): string {
+  return `lcr_ped_${coat}_${frameB ? 'b' : 'a'}`;
+}
+
+/** A tiny ~14px "stick-with-mass" pedestrian: coat capsule + flesh head dot + a dark hat brim + two
+ * leg ticks that alternate between the two frames. NO face — a background figure. Muted, flat. */
+function bakePed(scene: Phaser.Scene, coatIdx: number, frameB: boolean): void {
+  const key = pedTexKey(coatIdx, frameB);
+  if (scene.textures.exists(key)) return;
+  const coat = PED_COATS[coatIdx];
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 12, H = 20, cx = W / 2;
+  g.fillStyle(PAL.sootDeep, 0.25); g.fillEllipse(cx, H - 2, 8, 3); // contact shadow
+  g.fillStyle(0x2a2620, 1); // leg ticks (alternating stance)
+  if (frameB) { g.fillRect(cx - 1.6, H - 7, 1.6, 6); g.fillRect(cx + 0.2, H - 7, 1.6, 6); }
+  else { g.fillRect(cx - 3, H - 7, 1.6, 6); g.fillRect(cx + 1.4, H - 7, 1.6, 6); }
+  g.fillStyle(coat, 1); g.fillRoundedRect(cx - 3, H - 15, 6, 9, 2.4); // coat capsule (the mass)
+  g.fillStyle(PAL.sootDeep, 0.35); g.fillRect(cx, H - 15, 3, 9); // SE shadow half (subtle)
+  g.fillStyle(PAL.fleshDark, 1); g.fillCircle(cx, H - 16, 2.3); // head dot (muted flesh)
+  g.fillStyle(PAL.ink, 1); g.fillEllipse(cx, H - 17.6, 5, 1.6); // hat brim
+  g.generateTexture(key, W, H);
+  g.destroy();
+}
+
+/** A simplified ~24px ambient car (much smaller/flatter than the 64px hero Cadillac): body + cabin +
+ * window glint + 2 wheels + a faint warm headlamp. `taxi` adds a MUTED checker band (never yellow). */
+function bakeCarLite(scene: Phaser.Scene, key: string, taxi: boolean): void {
+  if (scene.textures.exists(key)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 26, H = 14;
+  g.fillStyle(PAL.sootDeep, 0.35); g.fillEllipse(W / 2, H - 2, 22, 4); // shadow
+  const body = taxi ? 0x2e2b27 : 0x23211e; // dull neutrals (taxi NOT yellow; civilian never rival-red)
+  g.fillStyle(body, 1); g.fillRoundedRect(2, 5, 22, 6, 2.5); // body
+  g.fillStyle(0x14110f, 1); g.fillRoundedRect(8, 2, 10, 5, 2); // cabin / roof
+  g.fillStyle(PAL.glass, 1); g.fillRect(9, 3, 7, 2.4); // window glint band
+  g.fillStyle(PAL.bone, 0.16); g.fillRect(9, 3, 7, 0.8); // 1px hi
+  if (taxi) for (let i = 0; i < 8; i++) { g.fillStyle(i % 2 ? 0x4a4036 : 0x2e2b27, 1); g.fillRect(3 + i * 2.6, 8, 2.6, 1.8); } // muted checker
+  g.fillStyle(PAL.sootDeep, 1); g.fillCircle(7, 11, 2.2); g.fillCircle(19, 11, 2.2); // wheels
+  g.fillStyle(0x3a342e, 1); g.fillCircle(7, 11, 1); g.fillCircle(19, 11, 1);
+  g.fillStyle(0x3a3733, 1); g.fillRect(23, 6.5, 2, 3.5); // front fender
+  g.fillStyle(PAL.lamp, 0.85); g.fillCircle(24, 7.5, 1); // faint warm headlamp (warm, never danger)
+  g.generateTexture(key, W, H);
+  g.destroy();
+}
+
 /** The rotating brass "protection" coin (a % badge) that floats over an extorted front. */
 function bakeCoin(scene: Phaser.Scene): void {
   if (scene.textures.exists(TEX.coin)) return;
@@ -574,6 +631,10 @@ export function buildCityTextures(scene: Phaser.Scene): void {
   bakeMailbox(scene);
   bakeBench(scene);
   bakeFence(scene);
+  // RTS-30 living-city Pass 1: 4 coats × 2 walk frames of pedestrian + the small car + the taxi.
+  for (let c = 0; c < PED_COATS.length; c++) { bakePed(scene, c, false); bakePed(scene, c, true); }
+  bakeCarLite(scene, TEX.carLite, false);
+  bakeCarLite(scene, TEX.taxi, true);
   bakeCoin(scene);
   bakeTile(scene, TEX.tileStreet, PAL.charcoal, PAL.slate, PAL.soot);
   bakeTile(scene, TEX.tileLot, 0x221d18, PAL.charcoal, PAL.ink);

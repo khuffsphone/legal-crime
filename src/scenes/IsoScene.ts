@@ -110,6 +110,8 @@ import {
   generateWorld,
   tileKindAt,
   scatterProps,
+  parseLiveliness,
+  LIVELINESS_CAPS,
   WORLD_SIZE,
   type WorldLayout,
   type WorldDistrict,
@@ -154,6 +156,7 @@ import {
   nextTimeScale, scaledDt, skipWeekDt,
 } from './playability';
 import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
+import { AmbientLife } from './ambientLife';
 import {
   SPEC,
   MOTION,
@@ -244,6 +247,7 @@ export class IsoScene extends Phaser.Scene {
   private dressingDark: { img: Phaser.GameObjects.Image; gx: number; gy: number }[] = [];
   private dressingFar = false;
   private lastFogSize = -1; // gate the prop-reveal scan: only run when the fog actually grew
+  private ambient?: AmbientLife; // RTS-30 living-city Pass 1: pooled ambient pedestrians + cars
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
@@ -415,6 +419,11 @@ export class IsoScene extends Phaser.Scene {
 
     this.drawCity();
     this.drawSetDressing(); // RTS-30b-ground: faction-neutral static props on the open tiles
+    // RTS-30 living-city Pass 1: pooled ambient pedestrians + cars on the sidewalk/road graphs. Caps are
+    // the single "city liveliness" dial (?life=low|med|high, default med). Built BEFORE setupUiCamera so
+    // its pre-allocated sprites land in the world-camera partition (ignored by the fixed HUD camera).
+    const caps = LIVELINESS_CAPS[parseLiveliness(typeof window !== 'undefined' ? (window.location?.search ?? '') : '')];
+    this.ambient = new AmbientLife(this, this.world, caps, this.state.seed);
     this.spawnUnits();
     // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
     // the opening pocket around the HQ + starting units into the revealed set.
@@ -1904,6 +1913,7 @@ export class IsoScene extends Phaser.Scene {
     this.revealFog(); // RTS-29: peel back the fog around the HQ + moving units
     this.drawGround(); // RTS-30a: culled ground/streets/parks/fog/washes for the visible tiles only
     this.updateDressingVisibility(); // RTS-30b-ground: fog-reveal + FAR-LOD bulk-hide of static props
+    this.ambient?.update(dt, this.cameras.main); // living-city Pass 1: pooled, culled, LOD'd peds + cars
     this.refreshHud();
     this.refreshObjective();
     this.refreshFeed();
@@ -2044,7 +2054,8 @@ export class IsoScene extends Phaser.Scene {
     if (this.perfVisible && this.perfText) {
       const fps = Math.round(this.game.loop.actualFps);
       const ms = (deltaMs).toFixed(1);
-      this.setT(this.perfText, `FPS ${fps} · frame ${ms}ms · text-raster ${this.rasterPerSec}/s · DPR ${this.textRes}`)
+      const life = this.ambient ? ` · life ${this.ambient.pedCount}p/${this.ambient.carCount}c` : '';
+      this.setT(this.perfText, `FPS ${fps} · frame ${ms}ms · text-raster ${this.rasterPerSec}/s${life} · DPR ${this.textRes}`)
         .setPosition(this.scale.width / 2, 6);
     }
   }
