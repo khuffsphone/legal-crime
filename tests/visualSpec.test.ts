@@ -50,10 +50,14 @@ describe('motion budget — one fast loop = danger', () => {
   });
 
   it('all idle loyalty loops idle slow (≥ IDLE_LOOP_MIN_MS); none of them read as danger', () => {
-    for (const k of ['loyaltyBob', 'waverRoll', 'disloyalPulse', 'selectionPulse', 'coinSpin'] as const) {
+    for (const k of ['loyaltyBob', 'waverRoll', 'disloyalPulse', 'selectionPulse', 'coinSpin', 'idleBreath'] as const) {
       expect(MOTION[k]).toBeGreaterThanOrEqual(IDLE_LOOP_MIN_MS);
       expect(motionIsDanger(MOTION[k])).toBe(false);
     }
+  });
+
+  it('the kill flash is the one fast danger beat (RTS-30e: ≤ the danger budget, fired once)', () => {
+    expect(MOTION.killFlash).toBeLessThanOrEqual(DANGER_LOOP_MAX_MS);
   });
 });
 

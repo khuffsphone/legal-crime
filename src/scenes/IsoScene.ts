@@ -195,8 +195,17 @@ import {
   federalBarColor,
   loyaltyMotion,
 } from './visualSpec';
+import {
+  combatVfxForVerb,
+  attackMotionForWeapon,
+  corpseMemoryRole,
+  outcomeDownedAMan,
+  killNudgePx,
+  type CombatVfx,
+} from './feelMap';
 
 const PAN_SPEED = 720;
+const RUN_BOB_SPEED = 1.55; // RTS-30e: a unit moving faster than the STROLL gets the quicker RUN footfall
 // RTS-22: a wider zoom range so the player can pull back to read the whole 9-district city or push
 // in to drive individual thugs. Zoom is eased toward a target each frame for a smooth feel.
 const MIN_ZOOM = 0.3;
@@ -280,9 +289,23 @@ interface UnitView {
   cashTag?: Phaser.GameObjects.Text;
   dangerRing?: Phaser.GameObjects.Ellipse;
   satchelTier?: 1 | 2 | 3; // RTS-26: last-rendered collector satchel tier (swap texture only on change)
+  // RTS-30e action-motion state: a per-unit idle phase (desync) + transient attack/hit one-shots.
+  idleSeed?: number;
+  attackUntil?: number; // time.now ms until the attack recoil/swing finishes
+  attackKind?: 'melee' | 'ranged';
+  attackFaceRight?: boolean; // recoil direction (away from the target)
+  hitUntil?: number; // time.now ms until the hit-react flinch finishes
 }
 
 interface BizMarker { coin: Phaser.GameObjects.Image; glow?: Phaser.GameObjects.Image; roofX: number; roofY: number; }
+
+/** RTS-30e — a deterministic 0..1000 phase offset from a unit id, so idle breaths/sways desync across
+ * the crew without per-frame randomness (motion stays deterministic + replay-safe). */
+function hashSeed(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 100000;
+  return h;
+}
 
 export class IsoScene extends Phaser.Scene {
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -842,7 +865,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30c-2a: a weapon-tier enforcer renders its distinct silhouette (player brass; red discipline).
     const figKey = faction === 'player' && unit.weapon ? enforcerTexKey(unit.weapon) : figureKeyFor(unit.role, faction, 1);
     const sprite = this.add.image(0, 0, figKey).setOrigin(0.5, 0.93);
-    const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing };
+    const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing, idleSeed: hashSeed(unit.id) };
     if (unit.role === 'collector') {
       view.dangerRing = this.add.ellipse(0, 0, 40, 22).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
       view.cashTag = this.add
@@ -932,6 +955,11 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private despawnContestMuscle(c: Contest): void {
+    // RTS-30e: a repelled invasion's muscle goes DOWN — play the kill beat where each one stood.
+    for (const id of c.muscleIds) {
+      const v = this.units.find((u) => u.unit.id === id);
+      if (v) { const s = unitScreenPos(v.unit); this.playKill(s.x, s.y, v.faction); }
+    }
     for (const id of c.muscleIds) this.removeUnitById(id);
     c.muscleIds = [];
   }
@@ -1036,9 +1064,35 @@ export class IsoScene extends Phaser.Scene {
       const tile = v.unit.pos;
       const depth = depthValue(Math.round(tile.gx), Math.round(tile.gy)) * 10 + 8;
       const moving = v.unit.path.length > 0;
-      const bob = moving ? Math.sin(now / 90 + s.x) * 1.5 : Math.sin(now / 600 + s.x) * 0.6;
+      const seed = v.idleSeed ?? 0;
+      // RTS-30e LOCOMOTION: a footstep BOB while moving (faster cadence = a RUN read for an urgent
+      // unit), and a gentle IDLE BREATH + sway when still (a slow ≥1.3s loop — units never freeze).
+      let bob: number, breath = 1, sway = 0;
+      if (moving) {
+        const cadence = v.unit.speed >= RUN_BOB_SPEED ? MOTION.runBob : MOTION.walkBob;
+        bob = Math.abs(Math.sin((now + seed) / (cadence / Math.PI))) * 2.0; // a lifting footfall
+      } else {
+        const ph = (now + seed * 7) / MOTION.idleBreath * Math.PI * 2;
+        bob = 0;
+        breath = 1 + Math.sin(ph) * 0.015; // a shallow chest breath (vertical)
+        sway = Math.sin(ph * 0.5) * 0.7;   // a slow weight shift
+      }
+      // RTS-30e ATTACK recoil (one-shot): aim→fire kicks the figure back from its target; a melee
+      // wind-up→swing lunges in then settles. RTS-30e HIT flinch: a short knock-back nudge when struck.
+      let kick = 0, lift = 0;
+      if (v.attackUntil && now < v.attackUntil) {
+        const t = 1 - (v.attackUntil - now) / MOTION.attackRecoil; // 0→1 over the beat
+        const env = Math.sin(Math.min(1, t) * Math.PI); // ease in/out
+        const dir = v.attackFaceRight ? 1 : -1;
+        if (v.attackKind === 'ranged') { kick = -dir * 5 * env; lift = -1.5 * env; } // recoil back + up
+        else { kick = dir * 6 * env; lift = -3 * env; } // melee lunge in + up
+      }
+      if (v.hitUntil && now < v.hitUntil) {
+        const t = (v.hitUntil - now) / MOTION.hitFlinch; // 1→0
+        kick += (v.faction === 'player' ? -1 : 1) * 3 * t; // a recoiling knock-back
+      }
 
-      v.sprite.setPosition(s.x, s.y - bob).setDepth(depth).setFlipX(!facesRight(unitFacing(v.unit)));
+      v.sprite.setPosition(s.x + sway + kick, s.y - bob + lift).setDepth(depth).setScale(1, breath).setFlipX(!facesRight(unitFacing(v.unit)));
       v.shadow.setPosition(s.x, s.y + 2).setDepth(depth - 2);
       v.factionRing.setPosition(s.x, s.y + 2).setDepth(depth - 1);
 
@@ -1181,6 +1235,7 @@ export class IsoScene extends Phaser.Scene {
     this.signalBeat('ambush', 'YOUR COLLECTOR WAS ROBBED — guard the route'); // RTS-23 audio seam
     const v = this.units.find((u) => u.unit.id === ev.collectorId);
     if (!v) return;
+    this.triggerHitReact(ev.collectorId); // RTS-30e: the robbed collector flinches from the hit
     const s = unitScreenPos(v.unit);
 
     // muzzle flash — danger-red, soft radial, brief (motion = danger).
@@ -1411,6 +1466,8 @@ export class IsoScene extends Phaser.Scene {
       const res = recordExtortVisit(this.state, 'player', bizId);
       this.state = harvestIncidents(this.state);
       const c = gridToScreen(tile.gx, tile.gy);
+      // RTS-30e: the lean is a melee SHOVE — the thug winds up and swings at the storefront.
+      if (res.ok || res.converted) this.triggerAttackMotion(this.units.find((v) => v.unit.id === unitId), undefined, c.x);
       if (res.converted) {
         this.seedBackPay(bizId); this.leanBeat(c.x, c.y); this.signalBeat('extort');
         const setup = ensureBusinessCollector(this.state, this.layout, 'player', bizId, this.navGrid);
@@ -1440,7 +1497,9 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     if (!res.ok) { this.setStatus(`can't attack: ${res.reason}`); return; }
     const tile = businessTileOf(this.layout, businessId);
-    if (tile) { this.sendSelectedTo(tile); const c = gridToScreen(tile.gx, tile.gy); this.floatText(c.x, c.y - 30, `SHUT DOWN ${res.weeks}wk`, SPEC.danger); }
+    if (tile) { this.sendSelectedTo(tile); const c = gridToScreen(tile.gx, tile.gy); this.floatText(c.x, c.y - 30, `SHUT DOWN ${res.weeks}wk`, SPEC.danger);
+      // RTS-30e: a muzzle-clash on the racket + the attacker's recoil.
+      const actor = this.actingUnitView(c.x, c.y); this.triggerAttackMotion(actor, actor?.unit.weapon, c.x); this.combatContact(c.x, c.y, combatVfxForVerb('attack')); }
     this.signalBeat('attack');
     const insp = inspectBusiness(this.state, businessId);
     this.setStatus(`${insp?.name ?? 'business'} shut down for ${res.weeks} weeks — it stops producing`);
@@ -1780,6 +1839,122 @@ export class IsoScene extends Phaser.Scene {
     else this.setStatus(`${side.toUpperCase()} ${row.name} — ${res.reason}`);
   }
 
+  // ── RTS-30e game-feel: action motion + combat-contact VFX + the kill beat ──────────────────────
+
+  /** The player unit that should ACT for a command: the first selected commandable unit, else the
+   * nearest player muscle to the target world point (so a click without a selection still animates). */
+  private actingUnitView(targetWx?: number, targetWy?: number): UnitView | undefined {
+    const sel = this.commandableViews().find((v) => this.selection.ids.includes(v.unit.id));
+    if (sel) return sel;
+    const muscle = this.commandableViews();
+    if (muscle.length === 0 || targetWx === undefined || targetWy === undefined) return muscle[0];
+    let best = muscle[0], bestD = Infinity;
+    for (const v of muscle) { const s = unitScreenPos(v.unit); const d = Math.hypot(s.x - targetWx, s.y - targetWy); if (d < bestD) { bestD = d; best = v; } }
+    return best;
+  }
+
+  /** RTS-30e — fire a unit's ATTACK motion (a one-shot recoil/swing) toward a world point. */
+  private triggerAttackMotion(view: UnitView | undefined, weapon: WeaponTier | undefined, targetWx: number): void {
+    if (!view) return;
+    const s = unitScreenPos(view.unit);
+    view.attackUntil = this.time.now + MOTION.attackRecoil;
+    view.attackKind = attackMotionForWeapon(weapon);
+    view.attackFaceRight = targetWx >= s.x;
+  }
+
+  /** RTS-30e — a unit's HIT-REACT flinch (struck / robbed). */
+  private triggerHitReact(unitId: string): void {
+    const v = this.units.find((u) => u.unit.id === unitId);
+    if (v) v.hitUntil = this.time.now + MOTION.hitFlinch;
+  }
+
+  /** RTS-30e — the CONTACT vfx at a target (world coords). All MOTION pulses, never a static mark:
+   *  muzzle = a danger-red flash + spark streaks; shatter = brass-line shards; dust = a soot mushroom
+   *  + debris + shock-ring (the heaviest). Bounded particle counts; world-layer, viewport-culled. */
+  private combatContact(wx: number, wy: number, kind: CombatVfx): void {
+    if (!this.onScreen(wx, wy)) return; // cost bounded by the viewport, not the map
+    const cam = this.cameras.main;
+    if (kind === 'muzzle') {
+      const flash = this.add.image(wx, wy - 16, TEX.glow).setTint(hexNum('#ff5a2c')).setScale(0.35).setDepth(100001); // muzzle #FF5A2C, motion-only
+      this.worldFx(flash);
+      this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: 150, onComplete: () => flash.destroy() });
+      for (let i = 0; i < 5; i++) {
+        const spark = this.add.rectangle(wx, wy - 16, 3, 1.5, hexNum(SPEC.danger), 1).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
+        this.worldFx(spark);
+        this.tweens.add({ targets: spark, x: wx + Phaser.Math.Between(-26, 26), y: wy - 16 + Phaser.Math.Between(-18, 10), alpha: 0, duration: 220 + i * 20, onComplete: () => spark.destroy() });
+      }
+      cam.shake(70, 0.004);
+    } else if (kind === 'shatter') {
+      for (let i = 0; i < 9; i++) { // brass-line glass shards (NOT red)
+        const shard = this.add.rectangle(wx, wy - 14, Phaser.Math.Between(2, 5), 1.5, hexNum(SPEC.brass), 0.95).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
+        this.worldFx(shard);
+        this.tweens.add({ targets: shard, x: wx + Phaser.Math.Between(-34, 34), y: wy + Phaser.Math.Between(-6, 28), angle: Phaser.Math.Between(-220, 220), alpha: 0, duration: 520 + i * 25, ease: 'Cubic.Out', onComplete: () => shard.destroy() });
+      }
+      cam.shake(60, 0.003);
+    } else { // 'dust' — the demolish mushroom: debris + soot shock-ring + a heavier kick
+      const ring = this.add.circle(wx, wy - 6, 6).setStrokeStyle(3, hexNum(SPEC.fog), 0.6).setDepth(100001);
+      this.worldFx(ring);
+      this.tweens.add({ targets: ring, scale: 6, alpha: 0, duration: 650, ease: 'Quad.Out', onComplete: () => ring.destroy() });
+      for (let i = 0; i < 14; i++) {
+        const r = Phaser.Math.Between(2, 5);
+        const dust = this.add.circle(wx + Phaser.Math.Between(-10, 10), wy - 6, r, hexNum(i % 3 === 0 ? SPEC.brickDark : SPEC.fog), 0.7).setDepth(100001);
+        this.worldFx(dust);
+        this.tweens.add({ targets: dust, x: dust.x + Phaser.Math.Between(-30, 30), y: wy - 6 - Phaser.Math.Between(20, 58), scale: { from: 1, to: 1.8 }, alpha: 0, duration: 800 + i * 30, ease: 'Quad.Out', onComplete: () => dust.destroy() });
+      }
+      cam.shake(150, 0.006);
+    }
+  }
+
+  /** Whether a world point is within the (padded) camera view — viewport culling for FX cost. */
+  private onScreen(wx: number, wy: number, pad = 120): boolean {
+    const v = this.cameras.main.worldView;
+    return wx >= v.x - pad && wx <= v.right + pad && wy >= v.y - pad && wy <= v.bottom + pad;
+  }
+
+  /** RTS-30e — the KILL / DOWNED beat (Design §4): ONE danger-red muzzle-flash + a ~2px screen-nudge
+   * (≤1.1s, once — the only danger-red here), then a DESATURATED slump (the figure's own colour drained
+   * ~50%, never rival-red on a player) over a near-black pool (#1A0A09 @60%), a dimmed faction-memory
+   * glint, fading to a faint stain decal (culled). The "X is down" line rides THE WIRE, not floating text. */
+  private playKill(wx: number, wy: number, faction: 'player' | 'rival' | 'civilian'): void {
+    if (!this.onScreen(wx, wy)) return;
+    // the one danger-red flash + the 2px nudge (once).
+    const flash = this.add.image(wx, wy - 14, TEX.glow).setTint(hexNum(SPEC.danger)).setScale(0.4).setDepth(100002);
+    this.worldFx(flash);
+    this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: MOTION.killFlash * 0.2, onComplete: () => flash.destroy() });
+    const nudge = killNudgePx();
+    const cam = this.cameras.main;
+    cam.shake(MOTION.killFlash * 0.18, nudge / 1000);
+    // the near-black pool (#1A0A09 @ 60%) — NOT danger-red.
+    const pool = this.add.ellipse(wx, wy + 2, 20, 9, hexNum('#1a0a09'), 0.6).setDepth(99998);
+    this.worldFx(pool);
+    pool.setScale(0.2);
+    this.tweens.add({ targets: pool, scaleX: 1, scaleY: 1, duration: 500, ease: 'Quad.Out' });
+    // the desaturated slump: a dimmed faction-memory glint that settles, then fades to a stain.
+    const memRole = corpseMemoryRole(faction);
+    const slump = this.add.ellipse(wx, wy, 22, 8, hexNum(SPEC[memRole]), 0.55).setDepth(99999);
+    this.worldFx(slump);
+    slump.setScale(0.5, 0.5);
+    this.tweens.add({ targets: slump, scaleX: 1.1, scaleY: 0.7, duration: 360, ease: 'Back.Out' });
+    // settle, then fade both to a faint stain (the pool lingers dimmer); culled object count stays bounded.
+    this.tweens.add({ targets: slump, alpha: 0, duration: 900, delay: MOTION.corpseStainFade, onComplete: () => slump.destroy() });
+    this.tweens.add({ targets: pool, alpha: 0.16, duration: 1400, delay: MOTION.corpseStainFade, onComplete: () => { this.tweens.add({ targets: pool, alpha: 0, duration: 2600, delay: 3000, onComplete: () => pool.destroy() }); } });
+  }
+
+  /** RTS-30e — a one-shot HUD edge flash when federal exposure CROSSES a ladder rung (50/70/85):
+   * amber at NOTICE/WATCH, danger-red at RAID — motion-only (it flashes and fades, never a static fill). */
+  private flashFederalCross(tier: number): void {
+    const color = federalBarColor(tier);
+    const w = this.scale.width, h = this.scale.height;
+    const g = this.add.graphics().setScrollFactor(0).setDepth(100052);
+    this.hudFx(g);
+    for (let i = 0; i < 4; i++) { g.lineStyle(26 - i * 5, hexNum(color), 0.5 - i * 0.1); g.strokeRect(i * 3, i * 3, w - i * 6, h - i * 6); }
+    g.setAlpha(0);
+    const label = tier >= 3 ? 'FEDERAL RAID LINE — 85' : tier >= 2 ? 'FEDERAL WATCH — 70' : 'FEDERAL NOTICE — 50';
+    const t = this.mkText(w / 2, 150, label, { fontFamily: NOIR_FONT, fontSize: '18px', color, fontStyle: 'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(100053).setAlpha(0);
+    this.hudFx(t);
+    this.tweens.add({ targets: [g, t], alpha: 1, duration: 160, yoyo: true, hold: 220, onComplete: () => { g.destroy(); t.destroy(); } });
+  }
+
   // ── the offensive (RTS-17) ───────────────────────────────────────────────────────────────
 
   /** [1] RAID the first rival-held/contested district by force. */
@@ -1793,7 +1968,12 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     this.flashTerritory(target.id, false);
     this.audio?.combat('raid'); this.audio?.confirm(); // RTS-27 tommy-gun + crew confirm
-    this.setStatus(res.repelled ? `raid on ${target.name} was REPELLED` : `RAID on ${target.name}!`);
+    // RTS-30e: the raiding unit recoils, a muzzle-clash lands on the block; a repelled raid downs a man.
+    const tc = this.world.districts.find((d) => d.id === target.id)?.centroid;
+    if (tc) { const p = gridToScreen(tc.gx, tc.gy); const actor = this.actingUnitView(p.x, p.y);
+      this.triggerAttackMotion(actor, actor?.unit.weapon, p.x); this.combatContact(p.x, p.y, combatVfxForVerb('raid'));
+      if (outcomeDownedAMan(res) && actor) { this.triggerHitReact(actor.unit.id); const s = unitScreenPos(actor.unit); this.playKill(s.x, s.y, 'player'); } }
+    this.setStatus(res.repelled ? `raid on ${target.name} was REPELLED — a man down` : `RAID on ${target.name}!`);
   }
 
   /** [2] SABOTAGE the first rival racket — interdict their economy. */
@@ -1805,6 +1985,11 @@ export class IsoScene extends Phaser.Scene {
     const res = resolveSabotage(this.state, biz.id);
     this.state = harvestIncidents(this.state);
     this.audio?.combat('sabotage'); this.audio?.confirm();
+    // RTS-30e: a window-shatter on the racket + the saboteur's recoil. A wreck = the heaviest dust beat.
+    const bt = businessTileOf(this.layout, biz.id);
+    if (bt) { const p = gridToScreen(bt.gx, bt.gy); const actor = this.actingUnitView(p.x, p.y);
+      this.triggerAttackMotion(actor, actor?.unit.weapon, p.x);
+      this.combatContact(p.x, p.y, res.destroyed ? combatVfxForVerb('demolish') : combatVfxForVerb('sabotage')); }
     this.setStatus(res.destroyed ? 'racket WRECKED' : 'rival racket sabotaged');
   }
 
@@ -1818,7 +2003,14 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     this.audio?.combat('assassinate'); this.audio?.confirm(); // RTS-27 single pistol report
     const hq = hqIntegrityOf(this.state.rivals.find((r) => r.id === w.familyId)!);
-    this.setStatus(res.success ? (res.eliminated ? `${w.name} ELIMINATED` : `struck ${w.name}'s HQ — integrity ${hq}`) : `the hit on ${w.name} failed`);
+    // RTS-30e: a pistol muzzle at the rival HQ + the hitman's recoil; an elimination plays the KILL on
+    // the rival Don; a botched hit downs one of YOUR men.
+    const ht = hqTileOf(this.layout, w.familyId);
+    if (ht) { const p = gridToScreen(ht.gx, ht.gy); const actor = this.actingUnitView(p.x, p.y);
+      this.triggerAttackMotion(actor, actor?.unit.weapon, p.x); this.combatContact(p.x, p.y, combatVfxForVerb('assassinate'));
+      if (res.eliminated) this.playKill(p.x, p.y, 'rival');
+      else if (outcomeDownedAMan(res) && actor) { this.triggerHitReact(actor.unit.id); const s = unitScreenPos(actor.unit); this.playKill(s.x, s.y, 'player'); } }
+    this.setStatus(res.success ? (res.eliminated ? `${w.name} ELIMINATED` : `struck ${w.name}'s HQ — integrity ${hq}`) : `the hit on ${w.name} failed — a man down`);
   }
 
   /** [4] LOCKOUT the weakest rival via The Bureau — freeze and bleed them. */
@@ -2757,6 +2949,11 @@ export class IsoScene extends Phaser.Scene {
       .setOrigin(0.5, 1).setDepth(100002);
     this.worldFx(t);
     this.tweens.add({ targets: t, y: t.y - 30, alpha: 0, duration: 1800, onComplete: () => t.destroy() });
+    // RTS-30e: a CONTROL-FLIP pulse — a ring rides out in the new holder's identity (rival-red on a loss,
+    // brass on a gain). Static identity colour expanding = a flip you can read at a glance.
+    const ring = this.add.circle(label.x, label.y - 4, 10).setStrokeStyle(3, hexNum(lostByPlayer ? SPEC.rival : SPEC.brass), 0.9).setDepth(100001);
+    this.worldFx(ring);
+    this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 700, ease: 'Quad.Out', onComplete: () => ring.destroy() });
     if (lostByPlayer) this.cameras.main.shake(160, 0.004);
   }
 
@@ -3186,8 +3383,9 @@ export class IsoScene extends Phaser.Scene {
       if (phase === 'CONTEST' || phase === 'FIRST BLOOD') this.fireTipOnce('war');
     }
     this.lastPhase = phase;
-    // RTS-27: the teletype escalation only when the federal tier CROSSES up (50/70/85).
-    if (p.federalTier > this.lastFederalTier) this.audio?.federal(p.federalTier);
+    // RTS-27/30e: the teletype escalation + a one-shot edge flash only when the federal tier CROSSES
+    // up a rung (50/70/85) — amber→danger by tier, motion-only.
+    if (p.federalTier > this.lastFederalTier) { this.audio?.federal(p.federalTier); this.flashFederalCross(p.federalTier); }
     this.lastFederalTier = p.federalTier;
   }
 

@@ -44,6 +44,15 @@ export const MOTION = {
   leanBeat: 800, // extort stamp + brick dust
   ambushBeat: 750, // muzzle flash + notes
   dayNight: 9000, // veil drift half-cycle
+  // RTS-30e action-motion vocabulary (locomotion idles ≥1300; combat beats are event-driven one-shots,
+  // and the KILL flash is the only thing that may move fast — ≤1100, fired ONCE, never a loop).
+  idleBreath: 1600, // ambient breath/sway on a still unit (an idle loop, ≥1300)
+  walkBob: 520, // footstep bob cadence while moving (event-driven locomotion, not an ambient loop)
+  runBob: 340, // faster footstep cadence for an urgent/charging unit
+  attackRecoil: 260, // wind-up→swing / aim→fire recoil (one-shot)
+  hitFlinch: 220, // struck-unit flinch nudge (one-shot)
+  killFlash: 900, // the kill muzzle-flash + screen-nudge — the ONE danger beat (≤1100, once)
+  corpseStainFade: 4200, // a corpse settles, then fades to a faint stain decal
 } as const;
 
 /** The one allowed fast-loop budget: a loop ≤ this reads as DANGER; calm idles are ≥1300ms. */
