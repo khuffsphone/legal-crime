@@ -2,7 +2,7 @@
 // enabled state) and the patrol presence bonus.
 import { describe, it, expect } from 'vitest';
 import { createInitialState } from '../src/sim/state';
-import { unitRepertoire, unitActionChips, type UnitActionContext } from '../src/sim/actionCard';
+import { unitRepertoire, unitActionChips, commonVerbs, multiSelectChips, type UnitActionContext } from '../src/sim/actionCard';
 import { isCommandableUnit } from '../src/sim/selection';
 import { unitMusclePresence, PATROL_PRESENCE_BONUS, enforcerPresenceWeight } from '../src/sim/enforcers';
 import type { GameState } from '../src/sim/types';
@@ -69,4 +69,26 @@ describe('patrol — the presence bonus', () => {
     expect(unitMusclePresence({ patrol: true })).toBeCloseTo(enforcerPresenceWeight(undefined) + PATROL_PRESENCE_BONUS);
     expect(unitMusclePresence({ role: 'collector', patrol: true })).toBe(0);
   });
+});
+
+describe('RTS-30d-3 — multi-select common verbs (intersection)', () => {
+  const s = big();
+  it('Move/Patrol/Collect/Recruit are common to a mixed muscle selection', () => {
+    const mix = [{ ...base, weapon: 'shotgun' as const }, { ...base, weapon: 'hitman' as const }, { ...base }];
+    const common = commonVerbs(mix);
+    for (const v of ['move', 'patrol', 'collect', 'recruit'] as const) expect(common).toContain(v);
+  });
+  it('a unit-specific verb (assassinate) is NOT common unless every unit has it', () => {
+    expect(commonVerbs([{ ...base, weapon: 'hitman' as const }, { ...base, weapon: 'shotgun' as const }])).not.toContain('assassinate');
+    expect(commonVerbs([{ ...base, weapon: 'hitman' as const }])).toContain('assassinate'); // a hitman alone
+    // a thug+shotgun share the street kit (attack/extort/raid/expand) but a hitman in the mix drops them
+    expect(commonVerbs([{ ...base, weapon: 'shotgun' as const }, { ...base }])).toContain('attack');
+    expect(commonVerbs([{ ...base, weapon: 'shotgun' as const }, { ...base, weapon: 'hitman' as const }])).not.toContain('attack');
+  });
+  it('multiSelectChips resolves the common verbs as enabled/locked chips', () => {
+    const chips = multiSelectChips(s, [{ ...base, weapon: 'shotgun' as const }, { ...base }], base);
+    expect(chips.find((c) => c.verb === 'move')!.enabled).toBe(true);
+    expect(chips.every((c) => commonVerbs([{ ...base, weapon: 'shotgun' as const }, { ...base }]).includes(c.verb))).toBe(true);
+  });
+  it('an empty selection has no common verbs', () => { expect(commonVerbs([])).toEqual([]); });
 });

@@ -309,6 +309,9 @@ export {
 export {
   unitRepertoire,
   unitActionChips,
+  resolveChip,
+  commonVerbs,
+  multiSelectChips,
   chipReady,
   VERB_HOTKEYS,
   type VerbId,

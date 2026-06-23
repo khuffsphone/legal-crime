@@ -57,28 +57,43 @@ function offenseGate(state: GameState, key: 'raid' | 'sabotage' | 'assassinate')
 }
 
 /** Resolve every chip for the selected unit: its repertoire + each verb's enabled/reason. Pure. */
+/** Resolve ONE verb's chip (enabled/reason) from the existing gates + the scene context. Pure. */
+export function resolveChip(state: GameState, verb: VerbId, ctx: UnitActionContext): ActionChip {
+  const chip = (ok: boolean, reason: string): ActionChip => ({ verb, hotkey: VERB_HOTKEYS[verb], enabled: ok, reason: ok ? 'ready' : reason });
+  switch (verb) {
+    case 'move': return chip(true, '');
+    case 'patrol': return chip(true, ''); // any muscle can hold a beat
+    case 'recruit': return chip(true, '');
+    case 'collect': return chip(canCollect(state), 'no takings waiting');
+    case 'extort': return chip(ctx.extortTarget, 'focus an un-shaken [%] front');
+    case 'attack': return chip(ctx.attackTarget, 'right-click a rival racket');
+    case 'demolish': { const g = offenseGate(state, 'sabotage'); return chip(g.ok && ctx.attackTarget, ctx.attackTarget ? g.reason : 'right-click a rival racket'); }
+    case 'sabotage': { const g = offenseGate(state, 'sabotage'); return chip(g.ok, g.reason); }
+    case 'assassinate': { const g = offenseGate(state, 'assassinate'); return chip(g.ok, g.reason); }
+    case 'raid': { const g = offenseGate(state, 'raid'); return chip(g.ok, g.reason); }
+    case 'expand': { const e = buildReadout(state).find((b) => b.key === 'expand'); return chip(!!e?.affordable, e ? 'save up / get a foothold' : 'nowhere to expand'); }
+    default: return chip(false, 'unavailable');
+  }
+}
+
+/** The action chips for ONE selected unit (its repertoire). Pure. */
 export function unitActionChips(state: GameState, ctx: UnitActionContext): ActionChip[] {
-  const expand = buildReadout(state).find((b) => b.key === 'expand');
-  const chip = (verb: VerbId, ok: boolean, reason: string): ActionChip => ({ verb, hotkey: VERB_HOTKEYS[verb], enabled: ok, reason: ok ? 'ready' : reason });
-  return unitRepertoire(ctx).map((verb): ActionChip => {
-    switch (verb) {
-      case 'move': return chip('move', true, '');
-      case 'patrol': return chip('patrol', true, ''); // any muscle can hold a beat
-      case 'recruit': return chip('recruit', true, '');
-      case 'collect': return chip('collect', canCollect(state), 'no takings waiting');
-      case 'extort': return chip('extort', ctx.extortTarget, 'focus an un-shaken [%] front');
-      case 'attack': return chip('attack', ctx.attackTarget, 'right-click a rival racket');
-      case 'demolish': {
-        const g = offenseGate(state, 'sabotage');
-        return chip('demolish', g.ok && ctx.attackTarget, ctx.attackTarget ? g.reason : 'right-click a rival racket');
-      }
-      case 'sabotage': { const g = offenseGate(state, 'sabotage'); return chip('sabotage', g.ok, g.reason); }
-      case 'assassinate': { const g = offenseGate(state, 'assassinate'); return chip('assassinate', g.ok, g.reason); }
-      case 'raid': { const g = offenseGate(state, 'raid'); return chip('raid', g.ok, g.reason); }
-      case 'expand': return chip('expand', !!expand?.affordable, expand ? 'save up / get a foothold' : 'nowhere to expand');
-      default: return chip(verb, false, 'unavailable');
-    }
-  });
+  return unitRepertoire(ctx).map((verb) => resolveChip(state, verb, ctx));
+}
+
+/** RTS-30d-3 — the verbs COMMON to a whole multi-selection: the INTERSECTION of each unit's repertoire
+ * (Move/Patrol/Collect/Recruit for everyone; a unit-specific verb like Assassinate appears only when that
+ * single unit is selected alone). Pure. */
+export function commonVerbs(units: ReadonlyArray<UnitActionContext>): VerbId[] {
+  if (units.length === 0) return [];
+  const reps = units.map(unitRepertoire);
+  return reps[0].filter((v) => reps.every((r) => r.includes(v)));
+}
+
+/** The action chips for a multi-selection: the common verbs, each resolved against the shared context.
+ * Issuing any of these applies to ALL selected (the scene fans the command out). Pure. */
+export function multiSelectChips(state: GameState, units: ReadonlyArray<UnitActionContext>, ctx: UnitActionContext): ActionChip[] {
+  return commonVerbs(units).map((verb) => resolveChip(state, verb, ctx));
 }
 
 /** Whether `verbChipState` reads READY for the chip (re-exported convenience for the scene). */

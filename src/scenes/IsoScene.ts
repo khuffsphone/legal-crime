@@ -26,6 +26,7 @@ import {
   collectorVulnerableInDistrict,
   emptySelection,
   selectOnly,
+  selectMany,
   toggleSelection,
   clearSelection,
   isSelected,
@@ -119,9 +120,11 @@ import {
   recruitableEnforcers,
   unitMusclePresence,
   unitActionChips,
+  multiSelectChips,
   type WeaponTier,
   type RecruitOption,
   type ActionChip,
+  type UnitActionContext,
   type VerbId,
   activateContests,
   resolveContestStep,
@@ -398,6 +401,9 @@ export class IsoScene extends Phaser.Scene {
   private actionTip?: Phaser.GameObjects.Text;
   private collectorInfo?: Phaser.GameObjects.Text; // RTS-30d-2 read-only collector popover (no control)
   private collectorInfoId?: string;
+  private marqueeGfx?: Phaser.GameObjects.Graphics; // RTS-30d-3 drag-box selection marquee (fixed UI cam)
+  private marqueeActive = false;
+  private selCountText?: Phaser.GameObjects.Text; // RTS-30d-3 "N selected" readout (fixed UI cam)
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
   private controlTitle?: Phaser.GameObjects.Text;
@@ -966,6 +972,9 @@ export class IsoScene extends Phaser.Scene {
       this.units.splice(idx, 1);
     }
     this.state.units = this.state.units.filter((u) => u.id !== id);
+    // RTS-30d-3: a dead/despawned unit drops out of the selection (the brass ring + its card vote go with it).
+    if (this.selection.ids.includes(id)) this.selection = selectMany(this.selection.ids.filter((x) => x !== id));
+    if (this.collectorInfoId === id) this.hideCollectorInfo();
   }
 
   private updateUnits(dt: number): void {
@@ -1255,12 +1264,14 @@ export class IsoScene extends Phaser.Scene {
 
   private setupSelectionInput(): void {
     this.input.mouse?.disableContextMenu();
-    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { this.pressX = p.x; this.pressY = p.y; });
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { this.pressX = p.x; this.pressY = p.y; this.marqueeActive = false; });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       // RTS-30b-ui: a toolbar button press already ran its verb — swallow the world-click so it doesn't
       // also box-select/deselect units beneath the HUD.
       if (this.toolbarClick) { this.toolbarClick = false; return; }
       if (this.legend?.visible) { this.hideLegend(); return; }
+      // RTS-30d-3: a left-drag marquee just finished — resolve the box-selection (NOT a click/pan).
+      if (this.marqueeActive) { const shift = !!(p.event as MouseEvent | undefined)?.shiftKey; this.resolveMarquee(p, shift); this.endMarquee(); return; }
       // A real drag panned the camera — not a click.
       if (Math.hypot(p.x - this.pressX, p.y - this.pressY) > CLICK_SLOP) return;
       // RTS-30a: a click on a CITY-roster row flies the camera to that district.
@@ -2106,11 +2117,12 @@ export class IsoScene extends Phaser.Scene {
     this.cursors = this.input.keyboard?.createCursorKeys();
     const K = Phaser.Input.Keyboard.KeyCodes;
     this.wasd = this.input.keyboard?.addKeys({ up: K.W, down: K.S, left: K.A, right: K.D }) as typeof this.wasd;
-    // Left-drag pans (a real drag, past CLICK_SLOP); a click selects/acts (handled in pointerup).
+    // RTS-30d-3: LEFT-drag = selection MARQUEE; MIDDLE-drag = pan the camera (a real drag past slop).
+    // (WASD / arrows / edge / wheel still pan/zoom; right-click still moves/commands.)
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (p.isDown && Math.hypot(p.x - this.pressX, p.y - this.pressY) > CLICK_SLOP) {
-        cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom; cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom;
-      }
+      if (!p.isDown || Math.hypot(p.x - this.pressX, p.y - this.pressY) <= CLICK_SLOP) return;
+      if (p.middleButtonDown()) { cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom; cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom; }
+      else if (p.leftButtonDown()) { this.marqueeActive = true; this.drawMarquee(this.pressX, this.pressY, p.x, p.y); }
     });
     // RTS-23: wheel zooms TO THE CURSOR — capture the world point under the cursor so the eased
     // zoom keeps it pinned (no more shoving the city into the left third).
@@ -2422,15 +2434,64 @@ export class IsoScene extends Phaser.Scene {
       .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100045).setPadding(8, 5, 8, 5).setVisible(false);
   }
 
-  /** The scene context (extort / attack target) the action card needs for the SELECTED unit. */
-  private selectedUnitView(): UnitView | undefined {
-    const id = this.selection.ids[0];
-    return id ? this.units.find((u) => u.unit.id === id) : undefined;
-  }
-
   /** The player's COMMANDABLE unit views (excludes the autonomous collectors). RTS-30d. */
   private commandableViews(): UnitView[] {
     return this.units.filter((v) => v.faction === 'player' && isCommandableUnit(v.unit));
+  }
+
+  /** RTS-30d-3 — paint the live drag-box marquee: a brass-line rectangle in SCREEN space (scrollFactor 0,
+   * so it never drifts with the camera). Corners may be given in any order. */
+  private drawMarquee(x0: number, y0: number, x1: number, y1: number): void {
+    if (!this.marqueeGfx) {
+      this.marqueeGfx = this.add.graphics().setScrollFactor(0).setDepth(100220);
+      this.hudFx(this.marqueeGfx);
+    }
+    const x = Math.min(x0, x1), y = Math.min(y0, y1), w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+    const brass = hexNum(SPEC.brass);
+    this.marqueeGfx.clear().setVisible(true)
+      .fillStyle(brass, 0.08).fillRect(x, y, w, h)
+      .lineStyle(1.5, brass, 0.9).strokeRect(x, y, w, h);
+  }
+
+  /** The on-screen position of a unit (world → screen, accounting for camera scroll + zoom). RTS-30d-3. */
+  private unitScreenXY(u: MovableUnit): { x: number; y: number } {
+    const sp = unitScreenPos(u);
+    const wv = this.cameras.main.worldView, z = this.cameras.main.zoom;
+    return { x: (sp.x - wv.x) * z, y: (sp.y - wv.y) * z };
+  }
+
+  /** RTS-30d-3 — finish a drag-box: select every COMMANDABLE player unit whose screen position falls inside
+   * the marquee rect. Shift ADDS to the current selection; otherwise it replaces. Collectors + non-units are
+   * excluded (they are not in commandableViews). */
+  private resolveMarquee(p: Phaser.Input.Pointer, shift: boolean): void {
+    const x0 = Math.min(this.pressX, p.x), x1 = Math.max(this.pressX, p.x);
+    const y0 = Math.min(this.pressY, p.y), y1 = Math.max(this.pressY, p.y);
+    const hits = this.commandableViews().filter((v) => {
+      const s = this.unitScreenXY(v.unit);
+      return s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1;
+    }).map((v) => v.unit.id);
+    this.focusBizId = undefined;
+    this.hideCollectorInfo();
+    if (shift) { this.selection = selectMany([...this.selection.ids, ...hits]); }
+    else { this.selection = selectMany(hits); }
+    this.setStatus(hits.length ? `${this.selection.ids.length} selected` : undefined);
+  }
+
+  /** Clear the live marquee graphics + flag (the drag is over). RTS-30d-3. */
+  private endMarquee(): void {
+    this.marqueeActive = false;
+    this.marqueeGfx?.clear().setVisible(false);
+  }
+
+  /** RTS-30d-3 — the "N selected" readout above the action card; only shown for a real (≥1) selection. */
+  private refreshSelCount(n: number): void {
+    if (!this.selCountText) {
+      this.selCountText = this.mkText(12, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold' })
+        .setOrigin(0, 1).setScrollFactor(0).setDepth(100052);
+      this.hudFx(this.selCountText);
+    }
+    this.selCountText.setPosition(12, this.scale.height - 162)
+      .setText(n > 1 ? `${n} SELECTED` : '').setVisible(n > 1);
   }
 
   /** RTS-30d-2 — the collector READ-ONLY popover: carrying $ · ETA to HQ · route SAFE/CONTESTED. No
@@ -2480,14 +2541,18 @@ export class IsoScene extends Phaser.Scene {
   private refreshActionCard(): void {
     this.refreshCollectorInfo();
     if (this.actionChips.length === 0) return;
-    const view = this.selectedUnitView();
-    // RTS-30d-2: never a card for a collector (autonomous, not commandable).
-    const show = !!view && view.faction === 'player' && isCommandableUnit(view.unit);
-    if (!show) { for (const s of this.actionChips) { s.icon.setVisible(false); s.tab.setVisible(false); s.hit.setVisible(false); s.verb = undefined; } return; }
+    // RTS-30d-3: gather EVERY selected COMMANDABLE view (collectors excluded — autonomous, not commandable).
+    const selViews = this.units.filter((v) => this.selection.ids.includes(v.unit.id) && v.faction === 'player' && isCommandableUnit(v.unit));
+    this.refreshSelCount(selViews.length);
+    if (selViews.length === 0) { for (const s of this.actionChips) { s.icon.setVisible(false); s.tab.setVisible(false); s.hit.setVisible(false); s.verb = undefined; } return; }
     const extortTarget = !!(this.focusBizId && extortProgress(this.state, this.focusBizId)?.extortable);
     const attackTarget = !!(this.focusBizId && businessActions(this.state, this.focusBizId, 'player')?.attack.ok);
-    const chips: ActionChip[] = unitActionChips(this.state, { weapon: view!.unit.weapon, role: view!.unit.role, extortTarget, attackTarget });
-    const patrolling = !!view!.unit.patrol; // RTS-30c-2b.1: the ACTIVE chip state (a stance that is ON)
+    const ctxs: UnitActionContext[] = selViews.map((v) => ({ weapon: v.unit.weapon, role: v.unit.role, extortTarget, attackTarget }));
+    // RTS-30d-3: one unit → its full repertoire; many → only the verbs COMMON to the whole selection.
+    const chips: ActionChip[] = selViews.length > 1
+      ? multiSelectChips(this.state, ctxs, ctxs[0])
+      : unitActionChips(this.state, ctxs[0]);
+    const patrolling = selViews.every((v) => !!v.unit.patrol); // ACTIVE stance = the WHOLE selection is on patrol
     const size = 44, gap = 6, x0 = 12, y = this.scale.height - 150;
     chips.forEach((ch, i) => {
       const s = this.actionChips[i];
@@ -3198,9 +3263,9 @@ export class IsoScene extends Phaser.Scene {
   private setStatus(action?: string): void {
     if (!this.statusText) return;
     const sel = this.selection.ids;
-    const base = sel.length === 0 ? 'Click a unit to select · right-click to move' : `selected: ${sel.join(', ')}`;
+    const base = sel.length === 0 ? 'Click a unit · left-drag to box-select · right-click to move' : `selected: ${sel.join(', ')}`;
     const sh = this.state.activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ');
-    const hint = '  ·  right-click a shop → EXTORT/ATTACK · [T] route · WASD/drag/wheel camera · [F] follow · [6] recruit · [5] expand';
+    const hint = '  ·  right-click a shop → EXTORT/ATTACK · [T] route · WASD/middle-drag/wheel camera · [F] follow · [6] recruit · [5] expand';
     this.statusText.setText((action ? `${base}  ·  ${action}` : base + hint) + (sh ? `   |  ${sh}` : ''));
   }
 
@@ -3270,7 +3335,7 @@ export class IsoScene extends Phaser.Scene {
       'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
       '',
       'CAMERA — move around and read the city',
-      '  WASD / arrows pan · drag to pan · wheel zoom-to-cursor · [F] follow selection · [Z] frame whole city',
+      '  WASD / arrows pan · left-drag box-select · middle-drag pan · wheel zoom-to-cursor · [F] follow selection · [Z] frame whole city',
       '',
       'MOUSE — drive your thugs',
       '  LEFT-CLICK a thug to select (SHIFT-click adds more)',
