@@ -15,6 +15,7 @@ import {
   ISO_TILE_HALF_HEIGHT,
   makeGrid,
   spawnUnit,
+  spawnEnforcer,
   issueMove,
   unitTile,
   unitScreenPos,
@@ -111,6 +112,13 @@ import {
   ensureBusinessCollector,
   cityRoster,
   citySummary,
+  rivalsDormant,
+  activateContests,
+  resolveContestStep,
+  contestedDistrictIds,
+  CONTEST_PULSE_SECONDS,
+  CONTEST_MUSCLE_PER_INVASION,
+  type Contest,
   generateWorld,
   tileKindAt,
   scatterProps,
@@ -222,6 +230,8 @@ interface ToolbarButton {
   label: Phaser.GameObjects.Text;
   state?: ToolbarVerbState; // last-rendered chip state (re-colour only on change)
 }
+const WAR_AMBER = 0xe0992e; // RTS-30c-1 CONTESTED district wash (amber — neither brass nor rival-red)
+const WAR_AMBER_HEX = '#e0992e';
 const SEAM = 0x15120e;  // dark lane / paving expansion seam
 const CURB = 0x4a443a;  // light curb edge on a sidewalk
 const PARK_TUFT = 0x3c4e36; // grass tuft fleck
@@ -671,8 +681,12 @@ export class IsoScene extends Phaser.Scene {
     const far = cam.zoom < 0.45;
     // district ownership wash colour per district (computed once per frame — ~9 entries)
     const wash = new Map<string, { c: number; a: number }>();
+    // RTS-30c-1: CONTESTED districts wash AMBER with a ~1.6s pulse (the war reads on the map at a glance);
+    // held = faint brass, rival-held = faint static blood-red.
+    const warPulse = 0.5 + 0.5 * Math.sin(this.time.now / 255); // ~1.6s period
     for (const row of cityRoster(this.state)) {
-      if (row.status === 'HELD') wash.set(row.id, { c: hexNum(SPEC.brass), a: 0.05 });
+      if (row.status === 'CONTESTED') wash.set(row.id, { c: WAR_AMBER, a: 0.06 + 0.07 * warPulse });
+      else if (row.status === 'HELD') wash.set(row.id, { c: hexNum(SPEC.brass), a: 0.05 });
       else if (row.status === 'RIVAL') wash.set(row.id, { c: hexNum(SPEC.rival), a: 0.07 });
     }
     if (far) {
@@ -812,7 +826,113 @@ export class IsoScene extends Phaser.Scene {
     for (const o of objs) if (o) this.cameras.main.ignore(o);
   }
 
+  // ── RTS-30c-1: TURF WAR (presence-based contest + collector interception switch-on) ────────────
+
+  private districtName(id: string): string { return this.state.districts.find((d) => d.id === id)?.name ?? id; }
+
+  /** Drive the turf war: steer the visible rival invaders each frame, and on the contest pulse open new
+   * border contests (spawning rival muscle), resolve the presence contest, and clean up ended ones. */
+  private tickWar(dt: number): void {
+    if (!this.world || rivalsDormant(this.state)) return;
+    this.steerWarMuscle();
+    this.state.contestElapsed = (this.state.contestElapsed ?? 0) + dt;
+    if ((this.state.contestElapsed ?? 0) < CONTEST_PULSE_SECONDS) return;
+    this.state.contestElapsed = (this.state.contestElapsed ?? 0) - CONTEST_PULSE_SECONDS;
+
+    for (const c of activateContests(this.state)) this.spawnContestMuscle(c); // new borders → muscle in
+    const res = resolveContestStep(this.state, this.contestPresence());
+    for (const o of res.outcomes) {
+      if (o.flipped) { this.flashTerritory(o.districtId, true); this.audio?.confirm(); } // a block fell to the rival
+      if (o.ended === 'held') this.setStatus(`you repelled the invasion of ${this.districtName(o.districtId)}`);
+      if (o.ended === 'lost') this.setStatus(`${this.districtName(o.districtId)} has fallen to the rival`);
+    }
+    for (const c of res.ended) this.despawnContestMuscle(c);
+    this.state = harvestIncidents(this.state);
+  }
+
+  /** Per-district muscle presence by UNIT POSITION (the contest's inputs): player thugs vs rival
+   * enforcers physically standing in each contested district. */
+  private contestPresence(): Map<string, { rival: number; player: number }> {
+    const size = this.world.size;
+    const m = new Map<string, { rival: number; player: number }>();
+    for (const c of this.state.contests ?? []) m.set(c.districtId, { rival: 0, player: 0 });
+    if (m.size === 0) return m;
+    for (const v of this.units) {
+      const t = unitTile(v.unit);
+      if (t.gx < 0 || t.gy < 0 || t.gx >= size || t.gy >= size) continue;
+      const cell = m.get(this.world.districtOfTile[t.gy * size + t.gx]);
+      if (!cell) continue;
+      if (v.faction === 'player' && v.unit.role !== 'collector') cell.player++;
+      else if (v.faction !== 'player' && v.unit.role === 'enforcer') cell.rival++;
+    }
+    return m;
+  }
+
+  /** Move rival muscle into a freshly contested district — visible blood-red invaders the player can
+   * see + fight. Tracked on the contest so they're despawned when it ends. */
+  private spawnContestMuscle(c: Contest): void {
+    const d = this.world.districts.find((x) => x.id === c.districtId);
+    if (!d) return;
+    const cl = (v: number) => Math.max(0, Math.min(this.world.size - 1, v));
+    for (let i = 0; i < CONTEST_MUSCLE_PER_INVASION; i++) {
+      const id = `war-${c.districtId}-${this.state.tick}-${i}`;
+      const u = spawnEnforcer(id, cl(d.centroid.gx + (i === 0 ? -1 : 1)), cl(d.centroid.gy), c.invaderId, STROLL_SPEED);
+      this.state.units.push(u);
+      this.attachView(u, 'rival');
+      c.muscleIds.push(id);
+    }
+    this.setStatus(`${this.districtName(c.districtId)} is under attack — rival muscle is moving in. Send thugs to defend.`);
+  }
+
+  private despawnContestMuscle(c: Contest): void {
+    for (const id of c.muscleIds) this.removeUnitById(id);
+    c.muscleIds = [];
+  }
+
+  /** Steer each contest's rival enforcers: chase the nearest player CARRIER inside the same district
+   * (so it gets robbed), else patrol the district centre. Targets stay in-district → robbing is scoped
+   * to contested districts (uncontested stays safe). */
+  private steerWarMuscle(): void {
+    const size = this.world.size;
+    const cl = (v: number) => Math.max(0, Math.min(size - 1, v));
+    for (const c of this.state.contests ?? []) {
+      const prey = this.nearestCarrierInDistrict(c.districtId);
+      const d = this.world.districts.find((x) => x.id === c.districtId);
+      for (const id of c.muscleIds) {
+        const e = this.state.units.find((u) => u.id === id);
+        if (!e) continue;
+        if (prey) issueMove(e, unitTile(prey), this.navGrid);
+        else if (e.path.length === 0 && d) issueMove(e, { gx: cl(d.centroid.gx + Phaser.Math.Between(-2, 2)), gy: cl(d.centroid.gy + Phaser.Math.Between(-2, 2)) }, this.navGrid);
+      }
+    }
+  }
+
+  private nearestCarrierInDistrict(districtId: string): MovableUnit | undefined {
+    const size = this.world.size;
+    for (const v of this.units) {
+      if (v.faction !== 'player' || v.unit.role !== 'collector' || (v.unit.carrying ?? 0) <= 0) continue;
+      const t = unitTile(v.unit);
+      if (t.gx < 0 || t.gy < 0 || t.gx >= size || t.gy >= size) continue;
+      if (this.world.districtOfTile[t.gy * size + t.gx] === districtId) return v.unit;
+    }
+    return undefined;
+  }
+
+  /** Remove a unit + its view (turf-war invaders that have been repelled/won). */
+  private removeUnitById(id: string): void {
+    const idx = this.units.findIndex((v) => v.unit.id === id);
+    if (idx >= 0) {
+      const v = this.units[idx];
+      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing]) o?.destroy();
+      this.units.splice(idx, 1);
+    }
+    this.state.units = this.state.units.filter((u) => u.id !== id);
+  }
+
   private updateUnits(dt: number): void {
+    // RTS-30c-1: advance the TURF WAR first (spawn/steer rival invaders, resolve contests) so the
+    // interception that observeWorld runs this frame sees fresh positions. Settles AROUND the tick.
+    this.tickWar(dt);
     // rival hunts whichever player collector is carrying cash
     const collector = this.playerCarrier();
     const gun = this.state.units.find((u) => u.id === 'rival-gun');
@@ -2226,10 +2346,12 @@ export class IsoScene extends Phaser.Scene {
     // recolour district nameplates by holder + RTS-25 zoom-gate: hide the small map labels when the
     // camera is pulled back far enough that they'd be an illegible speck (the §-legibility rule).
     const labelsLegible = this.cameras.main.zoom >= 0.5;
+    const contested = new Set(contestedDistrictIds(this.state)); // RTS-30c-1: war nameplates read amber
     for (const [id, label] of this.districtLabels) {
       const d = this.state.districts.find((x) => x.id === id);
       const holder = d ? districtHolder(d) : null;
-      this.setC(label, holder === 'player' ? SPEC.brass : holder && holder.startsWith('rival') ? SPEC.rival : NOIR_PALETTE.fog);
+      this.setC(label, contested.has(id) ? WAR_AMBER_HEX
+        : holder === 'player' ? SPEC.brass : holder && holder.startsWith('rival') ? SPEC.rival : NOIR_PALETTE.fog);
       label.setVisible(labelsLegible);
     }
 

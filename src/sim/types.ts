@@ -234,7 +234,25 @@ export interface GameState {
   incidentSeq: number;
   /** How far into `log` the ledger harvester has already projected (RTS-9). */
   incidentLogCursor: number;
+  /** RTS-30c-1 — active turf-war CONTESTS (a rival invading a border district). Additive; absent ⇒
+   * no war yet, so prior states/tests are byte-identical. Drives the CONTESTED status + the per-
+   * district collector vulnerability. */
+  contests?: Contest[];
+  /** Real-time seconds accumulated toward the next turf-war pulse (RTS-30c-1). Additive, default 0. */
+  contestElapsed?: number;
   log: GameEvent[];
+}
+
+/** RTS-30c-1 — one active turf war: `invaderId` is pressing the player out of `districtId`. `pressure`
+ * ∈ [-100,100] shifts by MUSCLE PRESENCE (rival minus player) over time; crossing +flip flips a player
+ * business to the rival (eroding hold %), crossing -pushout repels the invader (the player held). The
+ * spawned rival muscle unit ids are tracked so the scene can despawn them when the contest ends. */
+export interface Contest {
+  districtId: string;
+  invaderId: string;
+  pressure: number;
+  /** Scene-spawned rival muscle unit ids fighting this contest (despawned when it ends). */
+  muscleIds: string[];
 }
 
 /** Convenience: iterate the player + all rivals. */

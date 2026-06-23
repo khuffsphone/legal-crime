@@ -53,8 +53,19 @@ export function districtStatusOf(state: GameState, districtId: string): District
   const rival = rivalShare(state, d);
   const rivalPct = total > 0 ? rival.held / total : 0;
 
+  // RTS-30c-1: an active turf-war contest overrides the at-rest status — the district reads CONTESTED
+  // (amber) so the player sees the war at a glance; bizHeld/pct stay the inspectable truth underneath.
+  const contested = !!state.contests?.some((c) => c.districtId === d.id);
+
   let status: DistrictHoldStatus, owner: string | null = null, ownerName: string | null = null, tag: string, pip: DistrictRow['pip'];
-  if (total > 0 && pct >= HOLD_THRESHOLD) {
+  if (contested) {
+    const leadByPlayer = held >= rival.held;
+    status = 'CONTESTED';
+    owner = leadByPlayer ? state.player.id : (rival.id || null);
+    ownerName = leadByPlayer ? state.player.name : (rival.name || null);
+    tag = `⚔ contested ${Math.round(pct * 100)}%`;
+    pip = '◐';
+  } else if (total > 0 && pct >= HOLD_THRESHOLD) {
     status = 'HELD'; owner = state.player.id; ownerName = state.player.name; tag = '✓ secure'; pip = '●';
   } else if (total > 0 && rivalPct >= HOLD_THRESHOLD && rival.held > held) {
     status = 'RIVAL'; owner = rival.id; ownerName = rival.name; tag = rival.name.replace('The ', ''); pip = '●';

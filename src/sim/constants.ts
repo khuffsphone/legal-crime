@@ -329,3 +329,13 @@ export const FOG_REVEAL_RADIUS = 3.2; // tiles
 export const WORLD_SIZE = 96;
 // DISTRICT STATUS (the reworked control): you HOLD a district at ≥ this share of its businesses.
 export const HOLD_THRESHOLD = 0.6;
+
+// ── RTS-30c-1 — Turf war CORE (presence-based contest + collector interception switch-on) ──────────
+export const CONTEST_PULSE_SECONDS = 6;   // real-time cadence of a turf-war presence pulse
+export const CONTEST_PRESSURE_STEP = 9;   // pressure shift per pulse, per net muscle (rival − player)
+export const CONTEST_FLIP = 100;          // pressure at which one player business flips to the invader
+export const CONTEST_PUSHOUT = -60;       // pressure at which the player repels the invader (held)
+export const CONTEST_PRESSURE_MAX = 130;  // clamp magnitude
+export const CONTEST_MAX = 3;             // most simultaneous contests (gradual escalation)
+export const CONTEST_ESCALATE_WEEKS = 3;  // a new contest can open every N weeks after the rivals wake
+export const CONTEST_MUSCLE_PER_INVASION = 2; // rival muscle units moved into a freshly contested block

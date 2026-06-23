@@ -307,6 +307,19 @@ export {
   type CitySummary,
 } from './districtStatus';
 export {
+  familyShare,
+  borderContestTargets,
+  desiredContestCount,
+  activateContests,
+  resolveContestStep,
+  contestOf,
+  districtContested,
+  contestedDistrictIds,
+  collectorVulnerableInDistrict,
+  type ContestOutcome,
+  type ContestResult,
+} from './turfWar';
+export {
   dominationProgress,
   goStraightProgress,
   mayorProgress,

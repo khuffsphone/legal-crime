@@ -154,9 +154,12 @@ describe('district status — the reworked control read', () => {
     expect(sum.held).toBe(0); // nothing held at the start
   });
 
-  it('CONTESTED is reserved for RTS-30c — never produced by this slice', () => {
+  // RTS-30c-1 UPDATED: CONTESTED is no longer "never produced" — the turf-war slice now emits it for a
+  // district with an active contest. Premise changed (war went live); the contest-driven behaviour is
+  // covered in tests/turfContest.test.ts. Here we assert the AT-REST default still isn't CONTESTED.
+  it('CONTESTED is not produced at rest (only while a turf-war contest is active)', () => {
     const s = big();
     s.districts[0].businesses.forEach((b, i) => { if (i % 2 === 0) b.extortedBy = 'player'; });
-    for (const r of cityRoster(s)) expect(r.status).not.toBe('CONTESTED');
+    for (const r of cityRoster(s)) expect(r.status).not.toBe('CONTESTED'); // no contests ⇒ no CONTESTED
   });
 });

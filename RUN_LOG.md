@@ -2719,3 +2719,67 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   I'll add them to /docs so RTS-30c's spec can live there instead of a paste.
 - Gate: typecheck ✅  build ✅  test ✅ (667).
 - Commit: rts30b-ui: HUD declutter + clickable hotkey toolbar — green
+
+## RTS-30c-1 (Turf war core + collector interception switched on) — GREEN  (2026-06-23)
+- Summary: The mid-game depth — rival activation, contested districts, the presence-based contest,
+  attack/defend, and the per-district interception switch-on. CORE ONLY (no raids-as-content,
+  demolitions, specializations, scripted events, or arc tuning — those are 30c-2/3). LAW held:
+  tick/applyCommand untouched (the war settles AROUND the tick in the real-time wrapper / scene);
+  /src/sim PURE & Phaser-free; war UI on the fixed HUD camera / worldFx(); 50/70/85 ladder + four
+  channels unchanged. 667 → 674 green (+7 pure turf-war tests; +1 premise-changed test updated).
+- 1) RIVAL ACTIVATION — once dormancy lifts (wk3, RIVAL_DORMANT_WEEKS), `activateContests` opens a
+  contest on a BORDER district (a district the player has a stake in, adjacent to a rival foothold —
+  foothold = legacy control presence OR an earned business, so it triggers as a rival expands toward
+  you). Escalates gradually: 1 contest at the wake, +1 every CONTEST_ESCALATE_WEEKS, capped at
+  CONTEST_MAX (3). The scene moves VISIBLE blood-red rival muscle (enforcer units) into the block.
+- 2) CONTESTED STATUS — new pure `state.contests`; `districtStatusOf` now emits CONTESTED while a
+  contest is active (the status reserved since RTS-30a). Reads on the MAP — an AMBER district wash with
+  a ~1.6s pulse in the culled drawGround + an amber nameplate — AND in the "THE CITY — WHAT'S YOURS"
+  roster (status + `⚔ contested NN%`). Amber is neither brass nor rival-red (red discipline held).
+- 3) THE CONTEST MECHANIC (presence-based, READABLE) — pure `resolveContestStep(state, presence)`:
+  each pulse shifts a per-district pressure meter by NET MUSCLE (rival enforcers minus player thugs
+  physically IN the district, counted by unit position). Cross +CONTEST_FLIP → one player business
+  FLIPS to the invader (extortedBy/ownerFamily → rival) so the roster hold % visibly drops (the
+  inspectable truth — no dice mystery). Bleed-back after a flip means each block must be re-earned.
+- 4) ATTACK / DEFEND — DEFEND: send thugs into your contested district (right-click move) → player
+  presence rises → net goes negative → pressure falls; cross −CONTEST_PUSHOUT and you REPEL the invader
+  (contest ends "held") AND claw one block back. ATTACK: flooding muscle into a contested block is what
+  drives the pushout. A stalemate (equal muscle) holds the line (pressure parks at 0). Reuses the
+  positional muscle the player already commands; no parallel system invented.
+- 5) ⭐ COLLECTOR INTERCEPTION SWITCHED ON, PER DISTRICT — `collectorVulnerableInDistrict(state, id)
+  === districtContested(...)`. Mechanically: rival enforcers exist ONLY inside contested districts and
+  are steered to chase player CARRIERS within that district (targets clamped in-district), so the
+  EXISTING interception (resolveInterceptions, already running in updateAndObserve) robs a collector
+  that routes through a war zone → its cash transfers to the rival; UNCONTESTED districts have no
+  enforcers → stay SAFE (early game unaffected). The endangered collector reads via the existing
+  DANGER-RED pulsing threat ring (threatenedCollectors) + the ROBBED ambush beat (flashAmbush). The
+  global `collectorsVulnerable === !rivalsDormant` is kept as the "is the war on at all" flag (the
+  reshape test premise stands); the NEW per-district flag is the actual gate.
+- 6) READABILITY — CONTESTED amber (map wash pulse + nameplate + roster), rival invaders static
+  blood-red identity, the active rob threat pulsing danger-red, the player always brass; hold % in the
+  roster says who's winning.
+- TESTS: +7 pure (tests/turfContest.test.ts) — border activation + escalation (dormant→1→cap); the
+  presence contest (more rival muscle erodes hold % then flips a business; out-mustering repels "held";
+  stalemate holds); per-district vulnerability (contested robbable, uncontested + undefined safe);
+  districtStatusOf emits CONTESTED only while contested. CHANGED: tests/world.test.ts "CONTESTED never
+  produced" → "not produced AT REST" (premise legitimately changed — the war slice now produces it; the
+  contest-driven behaviour moved to turfContest.test.ts). The legacy tests/turfWar.test.ts (RTS-16
+  engine) is untouched + green.
+- PLAY-THROUGH (exercisable, what a human/Cowork will see): extort a couple of fronts so you hold a
+  border district → around wk3 a rival's expansion reaches your border → a CONTEST opens: the district
+  flashes AMBER (map + nameplate + roster CONTESTED) and 2 blood-red rival enforcers march in → a
+  collector whose route crosses that block lights up DANGER-RED and, if it gets close to an enforcer,
+  is ROBBED (cash to the rival, the "ROBBED" beat) → you right-click your thugs into the district;
+  once your muscle outnumbers theirs the pressure falls, you REPEL the invasion (it clears amber, you
+  claw a block back); if you ignore it, the pressure climbs and your blocks flip to the rival (roster
+  hold % drops) until the district falls.
+- HOUSEKEEPING: (b) push is now rebase-safe — `git pull --rebase` before every push (degrades a
+  LegalCrimeSync race to a rebase, not a reject). (c) CANON via Drive — SUCCEEDED: read file id
+  18R37GKeapj9scGnFvR6ABIox4yUGMlhF, un-escaped it, and OVERWROTE the repo's stale /CANON.md (the repo
+  copy was the original "Phases 11–17 / five mechanics" canon; replaced with the 2026-06-23 rewrite —
+  four channels Beat/Bench/City Hall/Bureau, re-timed collector, control = district status, sparse 96²
+  world, three win paths). The new canon's own §2 CONFIRMS the RUN_LOG concurrency bug: RUN_LOG.md is
+  in BOTH the LegalCrimeSync scope AND written by Code — so the rebase-safe push (b) is the mitigation
+  on Code's side. (d) committed the embedded spec to docs/RTS30C_WAR_SPEC.md for 30c-2/3.
+- Gate: typecheck ✅  build ✅  test ✅ (674).
+- Commit: rts30c-1: turf war core + collector interception switched on — green
