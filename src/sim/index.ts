@@ -291,6 +291,14 @@ export {
   type LifeCaps,
 } from './cityGraph';
 export {
+  canCollect,
+  canReinvest,
+  coreVerbState,
+  type VerbState as ToolbarVerbState,
+  type CoreVerbId,
+  type CoreVerbContext,
+} from './toolbar';
+export {
   districtStatusOf,
   cityRoster,
   citySummary,

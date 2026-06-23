@@ -2657,3 +2657,65 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   culled at FAR; measured agent CPU ~3 µs/frame at the MED cap (≈0.018% of a frame) so the baseline FPS
   holds. No moving entity can be mistaken for a unit; no animals/buses/buildings added (later passes).
 - Commit: living-pass1: pedestrians + cars — green
+
+## RTS-30b-ui (HUD declutter + clickable hotkey toolbar) — GREEN  (2026-06-23)
+- Summary: Make the HUD mouse-first + less cluttered (the human playtest flagged: too many options eating
+  screen, keyboard forced). UI-ONLY — no economy/content/logic/balance change; tick/applyCommand
+  untouched; /src/sim Phaser-free; the camera world/HUD split preserved (HUD on the fixed UI camera).
+  661 → 667 green (+6 pure toolbar-state tests).
+- ⭐ CLICKABLE HOTKEY TOOLBAR — every key verb is now a mouse button. A centred bottom strip of buttons,
+  each `icon NAME [hotkey]`, clicking runs EXACTLY what the key does (verified: all 12 run() targets are
+  real methods, pointerdown-wired):
+  • CORE: ⊕ EXTORT [E]→commandExtort · $ COLLECT [C]→commandCollect · ▲ REINVEST [R]→commandReinvest ·
+    ✦ GREASE [G]→commandGrease · ♣ VICE [U]→commandViceUpgrade · ☷ KREW [K]→toggleCrew.
+  • OFFENSE: ⚔ RAID [1] · ✷ SABOTAGE [2] · ☠ HIT [3] · ⛒ LOCKOUT [4] (→commandRaid/Sabotage/Assassinate/
+    Lockout). • BUILD: ⬢ EXPAND [5]→commandExpand · ＋ RECRUIT [6]→commandRecruit.
+  Each button shows its hotkey (teaches the shortcut, doesn't require it) + a READY/CONDITIONAL/LOCKED
+  chip (brass / bone / dim) reusing the verb-chip treatment, and a plain-English hover TOOLTIP (what it
+  does + how/cost). Keyboard still works as an accelerator. A toolbar press swallows the next world-click
+  so it never box-selects/deselects beneath the HUD.
+- ⭐ DECLUTTER / PROGRESSIVE DISCLOSURE — the text "⚔ ACTIONS [1-6]" board is RETIRED (its actionTitle/
+  actionBody are no longer created; refreshActionBoard early-returns) and fully replaced by the more
+  compact, clickable toolbar — a net reduction in always-on text + a mouse surface. The OFFENSE group
+  (Raid/Sabotage/Hit/Lockout) is HIDDEN until at least one unlocks (early game shows only the relevant
+  core + build verbs, not four locked war verbs). The whole bar tucks while the Market is open. Hotkey
+  hints that cluttered panel titles now live on the buttons. Legibility held — declutter is by HIDING/
+  GROUPING, not shrinking text (button labels are the 12px display face; chips re-colour ONLY on state
+  change to protect the rts25 raster budget).
+- INTUITIVENESS — the chip makes the primary action obvious (an idle thug + a focused [%] front ⇒ EXTORT
+  goes brass/READY; nothing to bank ⇒ COLLECT dims/LOCKED). Mouse-first throughout; tooltips on every
+  button.
+- HUD-ANCHOR PRESERVED — the toolbar + tooltip are scrollFactor-0 objects built in drawHud BEFORE
+  setupUiCamera, so the world/HUD camera snapshot puts them on the FIXED UI camera (main.ignore'd). They
+  do not drift/reflow on zoom or pan (same split as every other panel). ?reveal / ?life / ?market flags +
+  all existing functionality intact.
+- TESTS (+6 pure, tests/toolbar.test.ts): the core-verb chip states — KREW always READY; COLLECT
+  LOCKED→READY on pending takings; REINVEST gated on affordable racket; GREASE on cash; EXTORT/VICE the
+  LOCKED→CONDITIONAL→READY context ladder. New pure src/sim/toolbar.ts (canCollect/canReinvest/
+  coreVerbState). 661 + 6 = 667.
+
+### STEP 0 housekeeping
+- ⚠ CANON.md repo-fix — NOT done, BLOCKED: the prompt's "CANON.md (overwrite …)" section was an empty
+  placeholder (`[paste the full rewritten CANON.md text here …]`) — no actual replacement text was
+  provided. I did NOT overwrite the repo's CANON.md (overwriting canon from a placeholder would destroy
+  it). NOTE: the staleness markers the prompt cites (Army/Savings bribery sliders, "156 tests") are NOT
+  present in the current repo CANON.md (it's the original Fedora-Noir canon, brass #c79a4b, Phases
+  11–17) — so the "stale copy" being auto-committed may be a DIFFERENT artifact than what's in the repo
+  now. → Please paste the rewritten CANON.md content next turn and I'll overwrite + commit it.
+- ⚠ RUN_LOG concurrency finding — YES, the LegalCrimeSync scheduler and I CAN collide on RUN_LOG.md (and
+  CANON.md), two ways: (1) both append to RUN_LOG.md on the same branch → near-tail `git merge`/pull
+  CONFLICTS + push races (a scheduler commit landing between my pull and push makes my push a
+  non-fast-forward REJECT — my retry logic only re-tries NETWORK errors, so it wouldn't auto-resolve a
+  reject; it needs a pull --rebase). (2) CANON.md: the scheduler re-committing its stale copy would
+  REVERT any CANON fix I push (the fix won't stick). RECOMMENDED FIX (reported, NOT implemented — no
+  scheduler change made): remove RUN_LOG.md AND CANON.md from the scheduler's scoped file list (both are
+  engineer-owned artifacts) — this resolves both the revert-war and the RUN_LOG conflict; secondarily,
+  give the scheduler (and my push) a pull --rebase-before-push so a race degrades to a rebase, not a
+  reject.
+- /docs MOVE — created docs/HUD_SPEC.md (the only one of the five specs whose content exists in the repo,
+  copied from the root HUD_SPEC.md). docs/VISUAL_DIRECTION.md already present (left intact). COULD NOT
+  populate (content not pasted + not in repo): WORLD_REWORK_SPEC.md, LIVING_CITY_SPEC.md,
+  RTS29_RESHAPE_SPEC.md, PROCEDURAL_ART_SPEC.md, and the new CANON.md — please paste these next turn and
+  I'll add them to /docs so RTS-30c's spec can live there instead of a paste.
+- Gate: typecheck ✅  build ✅  test ✅ (667).
+- Commit: rts30b-ui: HUD declutter + clickable hotkey toolbar — green

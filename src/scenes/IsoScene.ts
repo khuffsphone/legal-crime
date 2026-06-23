@@ -78,6 +78,10 @@ import {
   playerWeeklyNet,
   buildReadout,
   expandTargetDistrictId,
+  coreVerbState,
+  type ToolbarVerbState,
+  type CoreVerbId,
+  type CoreVerbContext,
   districtHolder,
   controlOf,
   districtsHeld,
@@ -206,6 +210,18 @@ const PROP_SPECS: Record<string, PropSpec> = {
   car: { tex: TEX.car, ox: 0.5, oy: 0.72, dx: 0, dy: 2, dz: 4, alpha: 0.85 },
   fence: { tex: TEX.fence, ox: 0.5, oy: 0.82, dx: 0, dy: 4, dz: 1, alpha: 0.8 },
 };
+// RTS-30b-ui — a clickable toolbar button: the verb config + its live Phaser objects.
+interface ToolbarButton {
+  id: string;
+  group: 'core' | 'offense' | 'build';
+  icon: string;
+  name: string;
+  hotkey: string;
+  run: () => void;       // exactly what the hotkey does
+  tip: string;           // plain-English hover tooltip (what it does + how to use)
+  label: Phaser.GameObjects.Text;
+  state?: ToolbarVerbState; // last-rendered chip state (re-colour only on change)
+}
 const SEAM = 0x15120e;  // dark lane / paving expansion seam
 const CURB = 0x4a443a;  // light curb edge on a sidewalk
 const PARK_TUFT = 0x3c4e36; // grass tuft fleck
@@ -336,8 +352,13 @@ export class IsoScene extends Phaser.Scene {
   // normal play keeps the fog). Parsed by the pure revealAllRequested helper.
   private debugRevealAll = typeof window !== 'undefined' && revealAllRequested(window.location?.search ?? '');
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
-  private actionTitle?: Phaser.GameObjects.Text; // RTS-28 the separated ACTION BOARD
+  private actionTitle?: Phaser.GameObjects.Text; // RTS-28 ACTION BOARD (retired by the rts30b-ui toolbar)
   private actionBody?: Phaser.GameObjects.Text;
+  // RTS-30b-ui — the clickable hotkey TOOLBAR: every key verb as a mouse-clickable button with its
+  // icon + name + hotkey + READY/CONDITIONAL/LOCKED chip. Replaces the text ACTIONS board.
+  private toolbarBtns: ToolbarButton[] = [];
+  private toolbarTip?: Phaser.GameObjects.Text;
+  private toolbarClick = false; // a toolbar press swallows the next world-click (no deselect)
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
   private controlTitle?: Phaser.GameObjects.Text;
@@ -1072,6 +1093,9 @@ export class IsoScene extends Phaser.Scene {
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { this.pressX = p.x; this.pressY = p.y; });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      // RTS-30b-ui: a toolbar button press already ran its verb — swallow the world-click so it doesn't
+      // also box-select/deselect units beneath the HUD.
+      if (this.toolbarClick) { this.toolbarClick = false; return; }
       if (this.legend?.visible) { this.hideLegend(); return; }
       // A real drag panned the camera — not a click.
       if (Math.hypot(p.x - this.pressX, p.y - this.pressY) > CLICK_SLOP) return;
@@ -1919,6 +1943,7 @@ export class IsoScene extends Phaser.Scene {
     this.refreshFeed();
     this.refreshCrew();
     this.refreshStrategy();
+    this.refreshToolbar(); // RTS-30b-ui: clickable hotkey toolbar (states + progressive disclosure)
     this.refreshNight();
     this.refreshFastForward();
     this.samplePerf(delta);
@@ -2024,10 +2049,9 @@ export class IsoScene extends Phaser.Scene {
     this.strategyPanel = this.mkText(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
     this.pressureBanner = this.mkText(this.scale.width / 2, 84, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
-    // RTS-28 §4 — the ACTION BOARD: the [1]–[6] verbs in their OWN scannable, framed panel (bottom-
-    // right), separated from THE CITY standings/ledger. Solid plate so the chips read at a glance.
-    this.actionTitle = this.mkText(0, 0, '⚔ ACTIONS  [1-6]', { fontFamily: NOIR_DISPLAY, fontSize: '14px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807ee' }).setOrigin(1, 1).setScrollFactor(0).setDepth(100001).setPadding(8, 4, 8, 4);
-    this.actionBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left', backgroundColor: '#0a0807e6' }).setOrigin(1, 1).setScrollFactor(0).setDepth(100001).setPadding(8, 6, 8, 6);
+    // RTS-30b-ui — the clickable hotkey TOOLBAR replaces the text ACTION BOARD (actionTitle/actionBody
+    // are intentionally NOT created now; refreshActionBoard early-returns). Every verb is a mouse button.
+    this.buildToolbar();
 
     // RTS-28 §1 — the fast-forward + skip-week controls (always visible, clickable). Bottom-centre.
     this.ffButton = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807ee' })
@@ -2041,6 +2065,96 @@ export class IsoScene extends Phaser.Scene {
     this.perfText = this.mkText(this.scale.width / 2, 6, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: '#7CFC8A', backgroundColor: '#000000cc' })
       .setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002).setPadding(6, 3, 6, 3).setVisible(false);
     this.refreshFastForward(); // initial label + placement
+  }
+
+  // ── RTS-30b-ui: the clickable hotkey TOOLBAR ───────────────────────────────────────────────────
+
+  /** Build the toolbar buttons once (in drawHud, before setupUiCamera → fixed HUD camera). Each verb is
+   * a single interactive HUD Text (icon + NAME + [hotkey]); clicking runs EXACTLY what the hotkey does. */
+  private buildToolbar(): void {
+    const defs: Array<Omit<ToolbarButton, 'label'>> = [
+      { id: 'extort', group: 'core', icon: '⊕', name: 'EXTORT', hotkey: 'E', run: () => this.commandExtort(), tip: 'Send a free thug to lean on the focused [%] front. Repeated visits fold it into a paying earner — no cash cost, just walking time + a spare thug.' },
+      { id: 'collect', group: 'core', icon: '$', name: 'COLLECT', hotkey: 'C', run: () => this.commandCollect(), tip: 'Dispatch a collector to bank the takings waiting in a district you hold.' },
+      { id: 'reinvest', group: 'core', icon: '▲', name: 'REINVEST', hotkey: 'R', run: () => this.commandReinvest(), tip: 'Open the priciest racket you can afford in your strongest district.' },
+      { id: 'grease', group: 'core', icon: '✦', name: 'GREASE', hotkey: 'G', run: () => this.commandGrease(), tip: 'Bump the next bribe channel by $10/wk — buys down heat / raises the raid bar against you.' },
+      { id: 'vice', group: 'core', icon: '♣', name: 'VICE', hotkey: 'U', run: () => this.commandViceUpgrade(), tip: 'Climb the vice ladder on the racket under your cursor — more yield, more heat. Hover one of YOUR rackets first.' },
+      { id: 'krew', group: 'core', icon: '☷', name: 'KREW', hotkey: 'K', run: () => this.toggleCrew(), tip: 'Show / hide your crew roster + loyalty.' },
+      { id: 'raid', group: 'offense', icon: '⚔', name: 'RAID', hotkey: '1', run: () => this.commandRaid(), tip: 'Raid a reachable rival front — shuts it down for weeks. Costs cash + heat.' },
+      { id: 'sabotage', group: 'offense', icon: '✷', name: 'SABOTAGE', hotkey: '2', run: () => this.commandSabotage(), tip: 'Sabotage a rival operation. Costs cash + heat.' },
+      { id: 'assassinate', group: 'offense', icon: '☠', name: 'HIT', hotkey: '3', run: () => this.commandAssassinate(), tip: 'Order a hit on a weakened rival — needs the muscle (crew strength). Costs cash + heat.' },
+      { id: 'lockout', group: 'offense', icon: '⛒', name: 'LOCKOUT', hotkey: '4', run: () => this.commandLockout(), tip: 'Lock a rival out through The Bureau. Costs cash.' },
+      { id: 'expand', group: 'build', icon: '⬢', name: 'EXPAND', hotkey: '5', run: () => this.commandExpand(), tip: 'Push your hold deeper into a district you already have a foothold in.' },
+      { id: 'recruit', group: 'build', icon: '＋', name: 'RECRUIT', hotkey: '6', run: () => this.commandRecruit(), tip: 'Hire muscle — defense, collection, and (at strength) hits.' },
+    ];
+    for (const d of defs) {
+      const label = this.mkText(0, this.scale.height - 44, `${d.icon} ${d.name} [${d.hotkey}]`, {
+        fontFamily: NOIR_DISPLAY, fontSize: '12px', color: NOIR_PALETTE.bone, fontStyle: 'bold', backgroundColor: '#0a0807ee',
+      }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(100002).setPadding(7, 5, 7, 5).setInteractive({ useHandCursor: true });
+      const btn: ToolbarButton = { ...d, label };
+      label.on('pointerdown', () => { this.toolbarClick = true; d.run(); });
+      label.on('pointerover', () => this.showToolbarTip(btn));
+      label.on('pointerout', () => this.toolbarTip?.setVisible(false));
+      this.toolbarBtns.push(btn);
+    }
+    this.toolbarTip = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807f4', wordWrap: { width: 320 } })
+      .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100006).setPadding(9, 6, 9, 6).setVisible(false);
+  }
+
+  /** Scene context the core-verb chip states depend on (resolved view-side). */
+  private toolbarContext(): CoreVerbContext {
+    let extortTarget = !!(this.focusBizId && extortProgress(this.state, this.focusBizId)?.extortable);
+    if (!extortTarget) {
+      const o = firstObjective(this.state);
+      if (o.step === 'extort' && o.targetBusinessId && extortProgress(this.state, o.targetBusinessId)?.extortable) extortTarget = true;
+    }
+    const ladder = this.ctxBizId ? viceLadder(this.state, this.ctxBizId) : null;
+    return {
+      idleThug: !!this.idlePlayerThug(),
+      extortTarget,
+      viceCtx: !!(ladder && ladder.next),
+      viceAfford: !!(ladder && ladder.next && ladder.next.state === 'READY'),
+    };
+  }
+
+  /** Per-frame: recompute each button's READY/CONDITIONAL/LOCKED chip (colour only on change — no per-
+   * frame re-raster), apply progressive disclosure (offense group hidden until any unlocks; whole bar
+   * tucked while the Market is open), and centre the visible row along the bottom. */
+  private refreshToolbar(): void {
+    if (this.toolbarBtns.length === 0) return;
+    const ctx = this.toolbarContext();
+    const offense = offenseReadout(this.state);
+    const build = buildReadout(this.state);
+    const anyOffense = offense.some((o) => verbChipState(o.available, o.reason) !== 'LOCKED');
+    const tucked = this.marketOpen; // the Market takes the screen — tuck the toolbar (progressive disclosure)
+    const visible: ToolbarButton[] = [];
+    for (const b of this.toolbarBtns) {
+      let st: ToolbarVerbState;
+      if (b.group === 'core') st = coreVerbState(b.id as CoreVerbId, this.state, ctx);
+      else if (b.group === 'offense') { const o = offense.find((x) => x.key === b.id); st = o ? verbChipState(o.available, o.reason) : 'LOCKED'; }
+      else { const bo = build.find((x) => x.key === b.id); st = bo ? (bo.affordable ? 'READY' : 'CONDITIONAL') : 'LOCKED'; }
+      const show = !tucked && (b.group !== 'offense' || anyOffense);
+      b.label.setVisible(show);
+      if (!show) continue;
+      if (b.state !== st) { // only re-colour on a state change (protect the rts25 raster budget)
+        b.state = st;
+        this.setC(b.label, st === 'READY' ? SPEC.brass : st === 'CONDITIONAL' ? NOIR_PALETTE.bone : '#6a6253');
+        b.label.setAlpha(st === 'LOCKED' ? 0.5 : 1);
+      }
+      visible.push(b);
+    }
+    // centre the visible row along the bottom (positions only — no raster)
+    const gap = 6;
+    let total = 0; for (const b of visible) total += b.label.width + gap; total = Math.max(0, total - gap);
+    let x = this.scale.width / 2 - total / 2;
+    const y = this.scale.height - 44;
+    for (const b of visible) { b.label.setPosition(x + b.label.width / 2, y); x += b.label.width + gap; }
+  }
+
+  private showToolbarTip(b: ToolbarButton): void {
+    if (!this.toolbarTip) return;
+    this.setT(this.toolbarTip, `${b.name} [${b.hotkey}] — ${b.tip}`);
+    const tx = Phaser.Math.Clamp(b.label.x, 170, this.scale.width - 170);
+    this.toolbarTip.setPosition(tx, b.label.y - b.label.height - 8).setVisible(true);
   }
 
   /** RTS-25 — sample FPS / frame-time / text-rasterisations once per second for the [P] overlay. */
