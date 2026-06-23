@@ -158,7 +158,7 @@ const TITLES: Partial<Record<InspectableActionId, { title: string; summary: stri
   move: { title: 'MOVE', summary: 'Send the selected crew to a tile.' },
   patrol: { title: 'PATROL', summary: 'Hold a beat — adds defensive presence in the district.' },
   recruit: { title: 'RECRUIT', summary: 'Hire more crew and specialists.' },
-  collect: { title: 'COLLECT', summary: 'Gather the takings waiting on your fronts.' },
+  collect: { title: 'RUSH COLLECTION', summary: 'Send for the accrued takings NOW — expedite the autonomous collectors instead of waiting for their next run.' },
   extort: { title: 'EXTORT', summary: 'Put a neighbourhood front on your payroll.' },
   attack: { title: 'ATTACK', summary: 'Hit the rival racket under your sights.' },
   raid: { title: 'RAID', summary: 'Force into rival turf — softens their hold (one raid won’t seize).' },
@@ -192,7 +192,7 @@ function rowsFor(state: GameState, verb: InspectableActionId, ctx: InspectorCont
     case 'recruit':
       return [cashRow(state, RECRUIT_COST)];
     case 'collect':
-      return [targetRow('target', canCollect(state), null, 'Takings waiting', 'No takings to collect', 'wait for protected fronts to bank a take')];
+      return [targetRow('target', canCollect(state), null, 'Takings to rush', 'Nothing to rush yet', 'wait for your fronts to bank a take, then rush it home early')];
     case 'extort':
       return [targetRow('target', !!ctx.extortTarget, null, 'Front in sights', 'No front focused', 'click an un-shaken [%] front first')];
     case 'attack':

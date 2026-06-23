@@ -18,6 +18,7 @@ import {
   collectibleBusinesses,
   collectionFraction,
   collectionSafety,
+  pendingCollection,
   uncollectedOf,
 } from './collection';
 import { applyCommand, muscleInDistrict } from './commands';
@@ -174,6 +175,48 @@ export function startCollectorRun(
     data: { familyId, districtId, carrying: pending, unitId },
   });
   return { unit: collector, carrying: pending };
+}
+
+/**
+ * RTS-30d-fix — whether a manual RUSH collector is already on its way home: a one-shot collector
+ * (no routeId) carrying a take to HQ. The perpetual per-business ROUTE collectors (routeId set) do
+ * NOT count — they always run; only a rush you dispatched blocks another rush. Pure.
+ */
+export function rushCollectorInFlight(state: GameState, familyId: string): boolean {
+  return state.units.some(
+    (u) => u.role === 'collector' && u.factionId === familyId && u.routeId === undefined && (u.carrying ?? 0) > 0,
+  );
+}
+
+export type RushOutcome =
+  | { ok: true; unit: MovableUnit; districtId: string; carrying: number }
+  /** 'nothing' = no takings have accrued to rush; 'in-flight' = a rushed collector is already banking. */
+  | { ok: false; reason: 'nothing' | 'in-flight' };
+
+/**
+ * RTS-30d-fix — manually RUSH (expedite) the autonomous collection: dispatch a collector NOW to pull
+ * the accrued takings home early instead of waiting for the next auto-run. This is NOT a second money
+ * path — it reuses startCollectorRun, draining the same `uncollected` accrual and banking via the same
+ * deposit rules; it only changes the TIMING. Rushes the district with the largest waiting take first.
+ * A no-op (with a reason) when nothing has accrued, or a rushed collector is already on its way.
+ */
+export function rushCollection(
+  state: GameState,
+  layout: MapLayout,
+  familyId: string,
+  grid: NavGrid = navGridForLayout(layout),
+): RushOutcome {
+  if (rushCollectorInFlight(state, familyId)) return { ok: false, reason: 'in-flight' };
+  let best: string | null = null;
+  let bestPending = 0;
+  for (const d of state.districts) {
+    const p = pendingCollection(state, familyId, d.id);
+    if (p > bestPending) { bestPending = p; best = d.id; }
+  }
+  if (!best || bestPending <= 0) return { ok: false, reason: 'nothing' };
+  const run = startCollectorRun(state, layout, familyId, best, grid);
+  if (!run.unit) return { ok: false, reason: 'nothing' };
+  return { ok: true, unit: run.unit, districtId: best, carrying: run.carrying };
 }
 
 /**

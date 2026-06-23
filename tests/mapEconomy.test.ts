@@ -6,6 +6,8 @@ import {
   businessAtTile,
   hasFootholdForExtort,
   startCollectorRun,
+  rushCollection,
+  rushCollectorInFlight,
   depositCollector,
   processCollectorArrivals,
   extortAtTile,
@@ -97,6 +99,62 @@ describe('startCollectorRun — collector spawns at a business and paths to HQ',
     expect(ra.carrying).toBe(rb.carrying);
     expect(ra.unit!.pos).toEqual(rb.unit!.pos);
     expect(ra.unit!.path).toEqual(rb.unit!.path);
+  });
+});
+
+describe('RTS-30d-fix — rushCollection EXPEDITES the autonomous flow (no second money path)', () => {
+  it('rushes the accrued take home via the existing collector machinery (take goes in transit)', () => {
+    const s = seeded(300);
+    const layout = buildMapLayout(s);
+    const front = s.districts[0].businesses[0];
+
+    const out = rushCollection(s, layout, 'player');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.carrying).toBe(300);
+    expect(out.districtId).toBe('district-0');
+    expect(out.unit.role).toBe('collector');
+    expect(unitDestination(out.unit)).toEqual({ gx: 15, gy: 15 }); // routed to HQ — the SAME path startCollectorRun uses
+    expect(front.uncollected).toBe(0); // drained the SAME accrual — not a parallel take
+    expect(s.units).toContain(out.unit);
+  });
+
+  it('rushes the district with the LARGEST waiting take first', () => {
+    const s = createInitialState(1);
+    s.districts[0].businesses[0].extortedBy = 'player';
+    s.districts[0].businesses[0].uncollected = 100;
+    const d1 = s.districts[1];
+    d1.businesses[0].extortedBy = 'player';
+    d1.businesses[0].uncollected = 900; // the bigger take
+    const out = rushCollection(s, buildMapLayout(s), 'player');
+    expect(out.ok).toBe(true);
+    if (out.ok) { expect(out.districtId).toBe(d1.id); expect(out.carrying).toBe(900); }
+  });
+
+  it('is a no-op with reason "nothing" when no takings have accrued', () => {
+    const s = createInitialState(1); // nothing extorted yet
+    expect(rushCollection(s, buildMapLayout(s), 'player')).toEqual({ ok: false, reason: 'nothing' });
+  });
+
+  it('is a no-op with reason "in-flight" when a rushed collector is already on its way', () => {
+    const s = seeded(300);
+    const layout = buildMapLayout(s);
+    const first = rushCollection(s, layout, 'player');
+    expect(first.ok).toBe(true);
+    expect(rushCollectorInFlight(s, 'player')).toBe(true);
+    // even with fresh takings, a second rush refuses until the first banks.
+    s.districts[1].businesses[0].extortedBy = 'player';
+    s.districts[1].businesses[0].uncollected = 500;
+    expect(rushCollection(s, layout, 'player')).toEqual({ ok: false, reason: 'in-flight' });
+  });
+
+  it('a perpetual ROUTE collector (routeId set) does NOT block a rush — only a dispatched rush does', () => {
+    const s = seeded(300);
+    const layout = buildMapLayout(s);
+    // simulate an autonomous per-front route collector carrying a take on its rounds.
+    s.units.push({ ...startCollectorRun(seeded(300), buildMapLayout(seeded(300)), 'player', 'district-0').unit!, routeId: 'route-x' });
+    expect(rushCollectorInFlight(s, 'player')).toBe(false); // route collectors are autonomous, not a manual rush
+    expect(rushCollection(s, layout, 'player').ok).toBe(true);
   });
 });
 

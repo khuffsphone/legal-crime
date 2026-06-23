@@ -34,10 +34,9 @@ import {
   updateAndObserve as observeWorld,
   harvestIncidents,
   recentIncidents,
-  startCollectorRun,
+  rushCollection,
   processCollectorArrivals,
   dispatchThreat,
-  pendingCollection,
   applyCommand,
   affordableOperation,
   strongholdDistrict,
@@ -1362,6 +1361,7 @@ export class IsoScene extends Phaser.Scene {
     });
     this.ctxRect = { x, y, w: W, h: H };
     this.ctxMenu = this.add.container(x, y, objs).setScrollFactor(0).setDepth(100200);
+    this.hudFx(this.ctxMenu); // RTS-30d-fix: a runtime HUD object — the MAIN camera must ignore it, or it double-renders in world space
   }
 
   /** EXTORT a specific building: send a selected thug toward it and attempt the shakedown. */
@@ -1536,29 +1536,32 @@ export class IsoScene extends Phaser.Scene {
     this.tweens.add({ targets: stamp, alpha: 0, y: y - 54, delay: 900, duration: 500, onComplete: () => stamp.destroy() });
   }
 
-  /** [C] — send a collector from the first district that has player takings waiting. */
+  /** [C] RUSH COLLECTION — collectors are autonomous (one per front, banking on their own rounds); this
+   * EXPEDITES that flow: send a collector for the accrued takings NOW instead of waiting for the next
+   * auto-run. Reuses the existing collector/route/bank machinery (rushCollection) — NOT a second money
+   * path, only earlier timing. A clear no-op when nothing has accrued or a rushed collector is already
+   * on its way. (Rushing into a contested district is a real risk — collectors are robbable there.) */
   private commandCollect(): void {
     const hotBefore = dispatchThreat(this.state, this.layout, 'player').hot; // before the source empties
-    for (const d of this.state.districts) {
-      if (pendingCollection(this.state, 'player', d.id) > 0) {
-        const run = startCollectorRun(this.state, this.layout, 'player', d.id, this.navGrid);
-        if (run.unit) {
-          this.attachView(run.unit, 'player');
-          this.audio?.confirm(); // RTS-27 crew-order confirm on dispatch
-          if (run.unit.protectedRun) {
-            this.setStatus(`collector dispatched from ${d.name} — first run rides home SAFE`);
-          } else if (hotBefore) {
-            const c = gridToScreen(run.unit.pos.gx, run.unit.pos.gy);
-            this.floatText(c.x, c.y - 30, 'SENT INTO DANGER!', NOIR_PALETTE.blood);
-            this.setStatus(`collector sent into a HOT route from ${d.name} — keep it clear of the enforcer!`);
-          } else {
-            this.setStatus(`collector dispatched from ${d.name} — coast was clear, walk it home`);
-          }
-          return;
-        }
-      }
+    const out = rushCollection(this.state, this.layout, 'player', this.navGrid);
+    if (!out.ok) {
+      this.setStatus(out.reason === 'in-flight'
+        ? 'a rushed collector is already on its way — let it bank before sending another'
+        : 'nothing to rush yet — takings build each week after a shakedown');
+      return;
     }
-    this.setStatus('nothing to collect yet — takings build each week after a shakedown');
+    this.attachView(out.unit, 'player');
+    this.audio?.confirm(); // RTS-27 crew-order confirm on dispatch
+    const dName = this.districtName(out.districtId);
+    if (out.unit.protectedRun) {
+      this.setStatus(`RUSHED a collector from ${dName} for $${out.carrying} — first run rides home SAFE`);
+    } else if (hotBefore) {
+      const c = gridToScreen(out.unit.pos.gx, out.unit.pos.gy);
+      this.floatText(c.x, c.y - 30, 'RUSHED INTO DANGER!', NOIR_PALETTE.blood);
+      this.setStatus(`RUSHED a collector from ${dName} into a HOT route — keep it clear of the enforcer!`);
+    } else {
+      this.setStatus(`RUSHED a collector from ${dName} for $${out.carrying} — pulling the take home early`);
+    }
   }
 
   /** [R] — reinvest: open the priciest racket you can afford in your strongest district. */
@@ -1691,6 +1694,7 @@ export class IsoScene extends Phaser.Scene {
     });
     this.ctxRect = { x, y, w: W, h: H };
     this.ctxMenu = this.add.container(x, y, objs).setScrollFactor(0).setDepth(100200);
+    this.hudFx(this.ctxMenu); // RTS-30d-fix: a runtime HUD object — the MAIN camera must ignore it, or it double-renders in world space
   }
 
   // ── RTS-24 vice upgrades + THE MARKET ────────────────────────────────────────────────────
@@ -2327,7 +2331,7 @@ export class IsoScene extends Phaser.Scene {
   private buildToolbar(): void {
     const defs: Array<Omit<ToolbarButton, 'label'>> = [
       { id: 'extort', group: 'core', icon: '⊕', name: 'EXTORT', hotkey: 'E', run: () => this.commandExtort(), tip: 'Send a free thug to lean on the focused [%] front. Repeated visits fold it into a paying earner — no cash cost, just walking time + a spare thug.' },
-      { id: 'collect', group: 'core', icon: '$', name: 'COLLECT', hotkey: 'C', run: () => this.commandCollect(), tip: 'Dispatch a collector to bank the takings waiting in a district you hold.' },
+      { id: 'collect', group: 'core', icon: '$', name: 'RUSH', hotkey: 'C', run: () => this.commandCollect(), tip: 'RUSH COLLECTION — collectors run themselves; this sends one for the accrued takings NOW instead of waiting for its next auto-run. No-op if nothing has accrued or a rushed collector is already on its way.' },
       { id: 'reinvest', group: 'core', icon: '▲', name: 'REINVEST', hotkey: 'R', run: () => this.commandReinvest(), tip: 'Open the priciest racket you can afford in your strongest district.' },
       { id: 'grease', group: 'core', icon: '✦', name: 'GREASE', hotkey: 'G', run: () => this.commandGrease(), tip: 'Bump the next bribe channel by $10/wk — buys down heat / raises the raid bar against you.' },
       { id: 'vice', group: 'core', icon: '♣', name: 'VICE', hotkey: 'U', run: () => this.commandViceUpgrade(), tip: 'Climb the vice ladder on the racket under your cursor — more yield, more heat. Hover one of YOUR rackets first.' },

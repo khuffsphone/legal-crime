@@ -64,7 +64,7 @@ export function resolveChip(state: GameState, verb: VerbId, ctx: UnitActionConte
     case 'move': return chip(true, '');
     case 'patrol': return chip(true, ''); // any muscle can hold a beat
     case 'recruit': return chip(true, '');
-    case 'collect': return chip(canCollect(state), 'no takings waiting');
+    case 'collect': return chip(canCollect(state), 'no takings to rush yet'); // RTS-30d-fix: [C] now RUSHES the accrued take home early
     case 'extort': return chip(ctx.extortTarget, 'focus an un-shaken [%] front');
     case 'attack': return chip(ctx.attackTarget, 'right-click a rival racket');
     case 'demolish': { const g = offenseGate(state, 'sabotage'); return chip(g.ok && ctx.attackTarget, ctx.attackTarget ? g.reason : 'right-click a rival racket'); }
