@@ -21,6 +21,10 @@ const HW = ISO_TILE_HALF_WIDTH;  // 64
 const HH = ISO_TILE_HALF_HEIGHT; // 32
 const PED_SPEED = 0.42; // tiles/sec — ~⅓ the unit stroll (calm ambient pace)
 const CAR_SPEED = 0.95; // tiles/sec — a touch faster than peds, still calm
+// RTS-30c-scale: grow ambient life to real proportion against the ~56px unit (KEEP the unit, GROW the
+// world). Ped ≈ 0.85× the unit (subordinate ~46px); ambient car ≈ a real car next to the man.
+const PED_SCALE = 2.3;  // ~20px bake → ~46px
+const CAR_SCALE = 2.8;  // ~14px bake → ~39px
 const PED_FRAME_MS = 0.2; // walk-frame toggle cadence (seconds)
 const OFFSCREEN_RETIRE = 2; // seconds offscreen before an agent is returned to the pool
 const CULL_MARGIN = 160; // world px (~1 tile + a margin) around the viewport
@@ -81,7 +85,7 @@ export class AmbientLife {
 
   private makeAgent(isCar: boolean): Agent {
     const sprite = this.scene.add.image(0, 0, isCar ? TEX.carLite : pedTexKey(0, false))
-      .setOrigin(0.5, isCar ? 0.72 : 0.95).setVisible(false);
+      .setOrigin(0.5, isCar ? 0.72 : 0.95).setScale(isCar ? CAR_SCALE : PED_SCALE).setVisible(false);
     return { sprite, isCar, gx: 0, gy: 0, tx: 0, ty: 0, dir: -1, speed: 0, pauseT: 0, offT: 0, frameT: 0, frameB: false, coat: 0 };
   }
 

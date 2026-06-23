@@ -2949,3 +2949,35 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   disabled chip + its plain reason from offenseReadout.)
 - Gate: typecheck ✅  build ✅  test ✅ (692). No new tests (render-only).
 - Commit: rts30c-2b.1: action-chip ACTIVE (patrol) state — green
+
+## RTS-30c-scale (Unit-to-world proportion fix) — GREEN  (2026-06-23)
+- Summary: A focused ART/SCALE fix — units rendered far too large vs the environment (a gangster towered
+  over lampposts and buildings). Applied Design's "KEEP the unit (~56px anchor), GROW the world" spec.
+  Visual/render-tuning ONLY — no gameplay/economy/logic change; tick/applyCommand untouched; /src/sim
+  pure. 692 green held (render-side; no pure scale logic to test).
+- BUILDINGS (the most-broken, tuned first) — a single tunable `ENV_HEIGHT_SCALE = 3.4` (cityArt)
+  multiplies a building's VERTICAL MASSING (`h = style.height * ENV_HEIGHT_SCALE` in drawIsoBuilding);
+  the iso FOOTPRINT (hw/hh) is unchanged, so each building still sits on its parcel — it just rises to
+  real-street proportion. The whole facade (walls/windows/cornice/trim) derives from `h`, so it scales
+  together. Resulting total heights vs the 56px man:
+  • storefront ~190px (3.4× the man) · speakeasy ~170px (3.0×) · warehouse ~162px (2.9×) ·
+    casino ~231px (4.1×) · HQ ~278px (5.0×, the man = 20% of it). Hits the headline: a man reads ≈18–20%
+    of a 2-story (HQ ~5×) and ~⅓ of a 1-story (~3×).
+- PROPS — per-class `scale` added to PROP_SPECS (tunable), applied in drawSetDressing:
+  lamppost ×3.1 → ~149px (≈2.7× the man) · tree ×2.6 → ~88px canopy · parked car ×1.7 → ~51px tall
+  (roof ≈ the man's shoulder, 0.91×) · hydrant ×1.9 → ~27px · mailbox ×1.9 → ~30px · bench/fence ×1.8.
+  The HQ hero Cadillac also ×1.7 to match.
+- AMBIENT LIFE — `PED_SCALE 2.3` / `CAR_SCALE 2.8` (ambientLife) so the living city stays subordinate to
+  the bigger world: pedestrian ~46px (0.82× the man — still clearly smaller, per the rule) · ambient car
+  ~39px tall.
+- Units UNTOUCHED — the ~56px baked silhouettes stay the anchor (they carry the brass faction read + the
+  8-silhouette recognition; FAR-LOD unchanged). Canon intact: brass-only player read, red discipline,
+  and the FAR-zoom behaviour are all unchanged (geometry-only edits).
+- Occlusion note: taller buildings now occlude a unit standing directly "behind" them (south side) — the
+  existing depth-sort keeps units in FRONT reading, and the brass faction base-ring reads at the foot;
+  this is correct iso behaviour. No z-lift added (out of scope for a tuning pass).
+- Deferred (NOT bundled, per instruction): there is no separate `PLAYER_UNIT_SCALE` shrink in this pass —
+  the kaiju fix is "grow the world," and any unit-scale *= 0.7–0.85 tweak remains a separate later art
+  item. The `fedoraNoirSpriteGenerator.ts` package is still absent (no sprite swap this pass).
+- Gate: typecheck ✅  build ✅  test ✅ (692).
+- Commit: rts30c-scale: unit-to-world proportion fix — green

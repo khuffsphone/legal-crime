@@ -751,6 +751,13 @@ export interface BuildingStyle {
   footHalfH?: number;
 }
 
+// RTS-30c-scale — unit-to-world proportion fix (Design): KEEP the ~56px unit as the anchor, GROW the
+// world. This multiplies a building's VERTICAL MASSING (height) only — the iso FOOTPRINT (hw/hh) is
+// unchanged, so a building still sits on its parcel; it just rises to a real-street proportion. At MID:
+// a 1-story storefront ≈ 190px (~3× the man), the HQ/casino ≈ 230–280px (~4–5×) — a man reads ~20–30%
+// of a building, not a giant over a model village. Single tunable lever (re-tune on playtest).
+export const ENV_HEIGHT_SCALE = 3.4;
+
 export const BUILDING_STYLES: Record<string, BuildingStyle> = {
   storefront: { kind: 'storefront', wall: PAL.brickBase, wallDark: PAL.brickDark, roof: PAL.charcoal, trim: PAL.brass, height: 40, windows: 2 },
   speakeasy: { kind: 'speakeasy', wall: PAL.charcoal, wallDark: PAL.soot, roof: PAL.ink, trim: PAL.bloodDim, height: 34, windows: 1 },
@@ -778,7 +785,9 @@ export function drawIsoBuilding(
   const lit = opts.lit ?? true;
   const hw = style.footHalfW ?? 54;
   const hh = style.footHalfH ?? 27;
-  const h = style.height;
+  // RTS-30c-scale: grow the VERTICAL massing (the whole facade — walls/windows/cornice/trim derive from
+  // `h`, so they scale together); the footprint hw/hh stays so the building keeps its parcel.
+  const h = style.height * ENV_HEIGHT_SCALE;
   const g = scene.add.graphics().setDepth(depth);
 
   // base corners

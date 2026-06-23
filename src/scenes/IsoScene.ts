@@ -218,15 +218,18 @@ const GROUND_TONES: Record<string, [number, number]> = {
 };
 // RTS-30b-ground — per-prop render spec: baked texture + base-anchor origin + a sub-tile pixel nudge
 // + depth bias (props sort UNDER the building massing but over the ground) + a recede alpha.
-interface PropSpec { tex: string; ox: number; oy: number; dx: number; dy: number; dz: number; alpha: number; }
+// RTS-30c-scale: each prop carries a `scale` to restore real proportion against the ~56px unit (KEEP
+// the unit, GROW the world). Targets at MID: lamppost ~150px (≈2.5–3× the man), tree a tall canopy,
+// parked-car roof ≈ the man's shoulder, hydrant/mailbox ~26px. Per-class so it re-tunes easily.
+interface PropSpec { tex: string; ox: number; oy: number; dx: number; dy: number; dz: number; alpha: number; scale: number; }
 const PROP_SPECS: Record<string, PropSpec> = {
-  lamppost: { tex: TEX.lamppost, ox: 0.5, oy: 0.96, dx: 0, dy: 6, dz: 3, alpha: 0.92 },
-  tree: { tex: TEX.tree, ox: 0.5, oy: 0.94, dx: 0, dy: 6, dz: 3, alpha: 0.95 },
-  hydrant: { tex: TEX.hydrant, ox: 0.5, oy: 0.92, dx: -10, dy: 6, dz: 2, alpha: 0.9 },
-  mailbox: { tex: TEX.mailbox, ox: 0.5, oy: 0.92, dx: 10, dy: 6, dz: 2, alpha: 0.9 },
-  bench: { tex: TEX.bench, ox: 0.5, oy: 0.85, dx: 0, dy: 4, dz: 2, alpha: 0.9 },
-  car: { tex: TEX.car, ox: 0.5, oy: 0.72, dx: 0, dy: 2, dz: 4, alpha: 0.85 },
-  fence: { tex: TEX.fence, ox: 0.5, oy: 0.82, dx: 0, dy: 4, dz: 1, alpha: 0.8 },
+  lamppost: { tex: TEX.lamppost, ox: 0.5, oy: 0.96, dx: 0, dy: 6, dz: 3, alpha: 0.92, scale: 3.1 }, // 48→~150px
+  tree: { tex: TEX.tree, ox: 0.5, oy: 0.94, dx: 0, dy: 6, dz: 3, alpha: 0.95, scale: 2.6 },         // 34→~88px canopy
+  hydrant: { tex: TEX.hydrant, ox: 0.5, oy: 0.92, dx: -14, dy: 6, dz: 2, alpha: 0.9, scale: 1.9 },  // 14→~26px
+  mailbox: { tex: TEX.mailbox, ox: 0.5, oy: 0.92, dx: 14, dy: 6, dz: 2, alpha: 0.9, scale: 1.9 },
+  bench: { tex: TEX.bench, ox: 0.5, oy: 0.85, dx: 0, dy: 4, dz: 2, alpha: 0.9, scale: 1.8 },
+  car: { tex: TEX.car, ox: 0.5, oy: 0.72, dx: 0, dy: 2, dz: 4, alpha: 0.85, scale: 1.7 },            // roof ≈ shoulder
+  fence: { tex: TEX.fence, ox: 0.5, oy: 0.82, dx: 0, dy: 4, dz: 1, alpha: 0.8, scale: 1.8 },
 };
 // RTS-30b-ui — a clickable toolbar button: the verb config + its live Phaser objects.
 interface ToolbarButton {
@@ -622,7 +625,7 @@ export class IsoScene extends Phaser.Scene {
       const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.hq, depthValue(hq.gx, hq.gy) * 10 + 5, { faction: hqFaction });
       // RTS-26: the boss's signature ride parked at the seat — a hero Cadillac whose coachline +
       // wheel hubs carry the faction accent (baked in, not a body-wide tint per the accent law).
-      if (richArt()) this.add.image(c.x - 34, c.y + 20, fid === 'player' ? TEX.carPlayer : TEX.carRival).setOrigin(0.5, 0.7).setDepth(depthValue(hq.gx, hq.gy) * 10 + 4);
+      if (richArt()) this.add.image(c.x - 48, c.y + 22, fid === 'player' ? TEX.carPlayer : TEX.carRival).setOrigin(0.5, 0.7).setScale(1.7).setDepth(depthValue(hq.gx, hq.gy) * 10 + 4); // RTS-30c-scale: hero car to real proportion
       const flagCol = fid === 'player' ? PAL.brass : PAL.blood;
       this.add.rectangle(roof.roofX, roof.roofY - 10, 3, 20, PAL.ink).setDepth(depthValue(hq.gx, hq.gy) * 10 + 7);
       this.add.triangle(roof.roofX + 9, roof.roofY - 16, 0, 0, 16, 4, 0, 8, flagCol).setDepth(depthValue(hq.gx, hq.gy) * 10 + 7);
@@ -648,6 +651,7 @@ export class IsoScene extends Phaser.Scene {
       const c = gridToScreen(p.gx, p.gy);
       const img = this.add.image(c.x + spec.dx, c.y + spec.dy, spec.tex)
         .setOrigin(spec.ox, spec.oy)
+        .setScale(spec.scale) // RTS-30c-scale: grow props to real proportion vs the ~56px unit
         .setAlpha(spec.alpha)
         .setDepth(depthValue(p.gx, p.gy) * 10 + spec.dz)
         .setVisible(false); // shown when its tile is fog-revealed (update)
