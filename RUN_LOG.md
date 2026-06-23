@@ -2835,3 +2835,56 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   ROB + recruit-and-REPEL paths are the human-playtest items this headless gate structurally can't force.)
 - Gate: typecheck ✅  build ✅  test ✅ (676).
 - Commit: rts30c-1.1: reconcile turf-war authority + resolve stuck state — green
+
+## RTS-30c-2a (Weapon-tier enforcers + demolitions specialist, channel-gated) — GREEN  (2026-06-23)
+- Summary: Add the CANON REV-b roster's combat/specialist units as channel-gated, ABSTRACT mechanics
+  plugging into the validated turf war. NOT building the patrol behavior, the contextual action-icon UI,
+  or deeper demolition visuals (that's 30c-2b — needs Design's icons). tick/applyCommand untouched;
+  /src/sim pure; balance CANDIDATE + centralized. 676 → 684 green (+8 pure enforcer tests).
+- ⭐ ABSTRACTION RULE HELD: each unit is a costed, channel-gated, heat-bearing strategy ROLE — cost /
+  eligibility / gate / heat / presence / outcome ONLY. NO procedural depiction of violence/weapons/
+  evasion; the "weapon" is a stat + a readable silhouette (the Thompson Man already carries a gun shape
+  in canon), never an instruction.
+- THE FIVE UNITS (CANDIDATE balance, centralized in src/sim/enforcers.ts ENFORCER_SPECS — tune on data):
+  • PISTOL MAN — The Beat (police) ≥ $10/wk · $350 · +2🔥 · skill 4 · presence 1.4 (light early pressure).
+  • SHOTGUN MAN — The Beat ≥ $25/wk · $500 · +3🔥 · skill 5 · presence 2.2 (STRONG in-district presence).
+    Bandolier silhouette is BRASS-DARK, never rival-red (red discipline).
+  • RIFLE MAN — The Beat ≥ $40/wk · $650 · +4🔥 · skill 6 · presence 1.8 (district-edge; a readable
+    strategy unit, not a sniper sim — a long gun across the body, gunmetal).
+  • HITMAN — The Bench (judges) ≥ $30/wk · $1500 · +10🔥 (very high) · skill 8 · presence 1.6 → powers
+    [3] Assassinate (its skill feeds familyStrength → the ASSASSINATE_MIN_STRENGTH gate). Its ONLY accent
+    is BONE-WHITE (motion-discipline — no static danger colour).
+  • DEMOLITIONS — City Hall (politicians) ≥ $30/wk · $900 · +8🔥 (very high) · skill 5 · presence 1.5 →
+    powers the wreck ([2] Sabotage). Dynamite-cluster silhouette is BRASS-DARK, never rival-red.
+- CHANNEL GATE: pure `enforcerGate(state, tier)` — LOCKED below the channel's grease level with a clear
+  reason ("needs The Beat ≥ $N/wk"), reusing the locked-affordance treatment; then a cash gate. Modelled
+  exactly on the existing canLockout `bribes.feds ≥ REQ` pattern.
+- RECRUIT (pure `recruitEnforcer`): checks the gate, deducts the cost, adds the heat, and adds a skilled
+  crew member (joins the krew roster + feeds familyStrength). The scene then spawns the on-map unit.
+- TURF-WAR PARTICIPATION: a new `weapon?: WeaponTier` on MovableUnit; the contest's player presence is
+  now a WEIGHTED sum (`enforcerPresenceWeight`: thug 1, pistol 1.4, rifle 1.8, shotgun 2.2…) instead of
+  a head-count — so fielding a Shotgun Man in a contested district pushes the meter harder. Pure
+  `totalMusclePresence` is unit-tested; the scene's contestPresence uses the same weights.
+- DISTINCT SILHOUETTES (cityArt `bakeEnforcer`): each tier reuses the period rich body (player BRASS)
+  with one readable "tell" — pistol sidearm, shotgun bandolier+stub, rifle long-gun, hitman bone-white
+  hat + long coat, demolitions dynamite pack — all tellable apart at unit scale. Verified: NO rival-red
+  / danger colour anywhere in the player enforcer art (red discipline: player = brass; danger = motion).
+- SURFACED + EXERCISABLE: [6] / the toolbar RECRUIT button now opens a RECRUIT MENU (mouse-first, reuses
+  the context-menu infra) listing a plain Thug + the 5 specialists, each with its $cost + channel + heat
+  and a READY (brass) / LOCKED (fog + "needs The Beat ≥ $N/wk") chip. Clicking a ready row recruits it:
+  it joins the crew AND spawns a fieldable, selectable on-map unit at HQ (so you can march it into a
+  contested district to defend). Wiring verified end-to-end (key + toolbar → commandRecruit →
+  openRecruitMenu → recruitThug/recruitSpecialist → recruitEnforcer + spawnPlayerMuscle → addUnit →
+  attachView w/ the baked silhouette).
+- TESTS (+8 pure, tests/enforcers.test.ts): the channel gate (locked under threshold w/ the channel name
+  in the reason, unlocked at/above), the cash gate, recruit cost deduction + heat contribution + crew/
+  strength gain, a locked recruit is a no-op, the Hitman's high-heat, the presence-weight ordering +
+  totalMusclePresence (ignores collectors), and recruitableEnforcers lists all five. 676 + 8 = 684.
+- PLAY-THROUGH: grease The Beat to $25/wk → in the RECRUIT menu the SHOTGUN MAN flips from LOCKED ("needs
+  The Beat ≥ $25/wk") to READY → click it: $500 spent, heat +3, a Shotgun Man joins the crew and appears
+  on the map at HQ with its distinct bandolier silhouette (brass, no red) → select it, march it into your
+  CONTESTED district → it adds 2.2 to your muscle presence (more than a thug), helping the visible meter
+  fall toward "held." Grease The Bench → the HITMAN unlocks; recruiting it (very high heat) pushes crew
+  strength toward the [3] Assassinate gate.
+- Gate: typecheck ✅  build ✅  test ✅ (684).
+- Commit: rts30c-2a: weapon-tier enforcers + demolitions specialist (channel-gated) — green

@@ -7,6 +7,7 @@
 
 import { MOVE_SPEED, ARRIVE_EPSILON } from './constants';
 import type { GridPos, Vec2 } from './iso';
+import type { WeaponTier } from './types';
 import { gridToScreen } from './iso';
 import { findPath, type NavGrid } from './pathfinding';
 
@@ -27,6 +28,9 @@ export interface MovableUnit {
   factionId?: string;
   /** Map role (RTS-4/5). Undefined for plain RTS-2/3 movers. */
   role?: UnitRole;
+  /** RTS-30c-2a — weapon-tier specialist (channel-gated enforcer). Absent ⇒ a plain thug. Drives the
+   * silhouette + the turf-war muscle-presence weight. Additive, default-safe. */
+  weapon?: WeaponTier;
   /** Dirty cash physically carried by a collector in transit (RTS-4/5). Absent ⇒ 0. */
   carrying?: number;
   /** District a collector's take was gathered from (RTS-5) — governs the deposit skim. */

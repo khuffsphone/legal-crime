@@ -307,6 +307,19 @@ export {
   type CitySummary,
 } from './districtStatus';
 export {
+  ENFORCER_SPECS,
+  ENFORCER_TIERS,
+  enforcerPresenceWeight,
+  totalMusclePresence,
+  enforcerGate,
+  recruitEnforcer,
+  recruitableEnforcers,
+  type EnforcerSpec,
+  type RecruitGate,
+  type RecruitResult,
+  type RecruitOption,
+} from './enforcers';
+export {
   familyShare,
   borderContestTargets,
   desiredContestCount,

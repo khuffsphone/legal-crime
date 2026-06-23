@@ -297,6 +297,45 @@ function drawFigureRich(
   if (role === 'thompson') { g.fillStyle(accent, 1); g.fillCircle(cx - 3.5, 22 + hunch, 1.3); } // lapel pin (small — gun stays the read)
 }
 
+/** RTS-30c-2a — the baked texture key for a weapon-tier enforcer silhouette. */
+export function enforcerTexKey(tier: string): string { return `lcr_enf_${tier}`; }
+
+const ENFORCER_FIG_TIERS = ['pistol', 'shotgun', 'rifle', 'hitman', 'demolitions'] as const;
+
+/**
+ * RTS-30c-2a — a distinct PLAYER enforcer silhouette per weapon tier. Reuses the period rich body
+ * (brass accents) and adds ONE readable "tell" per tier. ⭐ RED DISCIPLINE: every weapon/bandolier/
+ * dynamite tell is GUNMETAL or BRASS-DARK — never rival-red (no rival-red on a player unit, cargo
+ * included); the HITMAN's only accent is BONE-WHITE (motion-discipline — no static danger colour). This
+ * is a silhouette, not a depiction of violence (the Thompson Man already carries a gun shape in canon).
+ */
+function bakeEnforcer(scene: Phaser.Scene, tier: (typeof ENFORCER_FIG_TIERS)[number]): void {
+  const key = enforcerTexKey(tier);
+  if (scene.textures.exists(key)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const cx = FIG_CX;
+  // base body — player BRASS; the HITMAN's ONLY accent is BONE-WHITE (unique among the brass crew).
+  if (tier === 'hitman') drawFigureRich(g, 'thug', PAL.bone, PAL.bone);
+  else drawFigureRich(g, 'thug', PAL.brass, PAL.brassDim);
+  if (tier === 'pistol') {
+    g.fillStyle(PAL.gunmetal, 1); g.fillRect(cx + 6, 31, 8, 2.2); g.fillRect(cx + 12, 30, 2.4, 3); // a short sidearm
+  } else if (tier === 'shotgun') {
+    g.lineStyle(3, PAL.brassDark, 1); g.beginPath(); g.moveTo(cx - 7, 19); g.lineTo(cx + 8, 34); g.strokePath(); // bandolier (brass-dark, NOT red)
+    g.fillStyle(PAL.gunmetal, 1); g.fillRect(cx + 2, 30, 15, 2.8); g.fillRect(cx + 15, 29, 3, 4.4); // stubby barrel
+  } else if (tier === 'rifle') {
+    g.fillStyle(PAL.suitBrown, 1); g.fillRect(cx - 10, 23.4, 6, 3); // wooden stock
+    g.fillStyle(PAL.gunmetal, 1); g.fillRect(cx - 8, 24, 26, 2); g.fillRect(cx + 16, 23.2, 4, 1.6); // a long gun across the body
+  } else if (tier === 'hitman') {
+    g.fillStyle(PAL.bone, 1); g.fillRect(cx - 5, 6.4, 10, 1.6); // bone-white hatband (the only accent)
+    g.fillStyle(PAL.suitCharcoal, 1); g.fillRect(cx - 4, 38, 8, 12); // long slim coat tail
+  } else { // demolitions
+    g.fillStyle(PAL.gunmetal, 1); g.fillRect(cx - 13, 25, 9, 1.8); // pack strap
+    g.fillStyle(PAL.brassDark, 1); for (let i = 0; i < 3; i++) g.fillRoundedRect(cx - 12 + i * 3, 26, 2.4, 9, 1); // dynamite cluster (brass-dark, NOT red)
+  }
+  g.generateTexture(key, FIG_W, FIG_H);
+  g.destroy();
+}
+
 interface FigSpec { role: FigRole; accent: number; accentDim: number; tier?: number; lean: Parameters<typeof drawFigureLean>[1]; }
 
 function bakeFigureVariant(scene: Phaser.Scene, key: string, rich: boolean, spec: FigSpec): void {
@@ -635,6 +674,7 @@ export function buildCityTextures(scene: Phaser.Scene): void {
   for (let c = 0; c < PED_COATS.length; c++) { bakePed(scene, c, false); bakePed(scene, c, true); }
   bakeCarLite(scene, TEX.carLite, false);
   bakeCarLite(scene, TEX.taxi, true);
+  for (const t of ENFORCER_FIG_TIERS) bakeEnforcer(scene, t); // RTS-30c-2a weapon-tier silhouettes
   bakeCoin(scene);
   bakeTile(scene, TEX.tileStreet, PAL.charcoal, PAL.slate, PAL.soot);
   bakeTile(scene, TEX.tileLot, 0x221d18, PAL.charcoal, PAL.ink);

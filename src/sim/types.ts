@@ -19,6 +19,11 @@ export type OperationKind = 'numbers' | 'smuggling' | 'speakeasy' | 'protection'
 /** A business is either a legitimate `front` (extortable) or an illegal operation. */
 export type BusinessKind = 'front' | OperationKind;
 
+/** RTS-30c-2a — the channel-gated weapon-tier ENFORCER / specialist roles (abstract strategy units; a
+ * plain thug has none). Drives the recruit gate/cost/heat, the procedural silhouette, and the turf-war
+ * muscle-presence weight. NOT a depiction — a stat + a readable silhouette. */
+export type WeaponTier = 'pistol' | 'shotgun' | 'rifle' | 'hitman' | 'demolitions';
+
 /** Where a gangster is assigned: idle, guarding a district, or running an operation. */
 export type GangsterAssignment =
   | { type: 'idle' }

@@ -113,6 +113,11 @@ import {
   cityRoster,
   citySummary,
   rivalsDormant,
+  recruitEnforcer,
+  recruitableEnforcers,
+  enforcerPresenceWeight,
+  type WeaponTier,
+  type RecruitOption,
   activateContests,
   resolveContestStep,
   contestedDistrictIds,
@@ -155,6 +160,7 @@ import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, heatLabel, shockFlavor, bribeCha
 import {
   buildCityTextures,
   figureKeyFor,
+  enforcerTexKey,
   richArt,
   drawIsoBuilding,
   BUILDING_STYLES,
@@ -801,7 +807,9 @@ export class IsoScene extends Phaser.Scene {
     const shadow = this.add.ellipse(0, 0, 22, 11, PAL.soot, 0.5);
     const factionRing = this.add.ellipse(0, 0, 26, 13).setStrokeStyle(2, ringColor, 0.9);
     const selRing = this.add.ellipse(0, 0, 38, 20).setStrokeStyle(3, PAL.brass, 1).setVisible(false);
-    const sprite = this.add.image(0, 0, figureKeyFor(unit.role, faction, 1)).setOrigin(0.5, 0.93);
+    // RTS-30c-2a: a weapon-tier enforcer renders its distinct silhouette (player brass; red discipline).
+    const figKey = faction === 'player' && unit.weapon ? enforcerTexKey(unit.weapon) : figureKeyFor(unit.role, faction, 1);
+    const sprite = this.add.image(0, 0, figKey).setOrigin(0.5, 0.93);
     const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing };
     if (unit.role === 'collector') {
       view.dangerRing = this.add.ellipse(0, 0, 40, 22).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
@@ -868,7 +876,8 @@ export class IsoScene extends Phaser.Scene {
       if (t.gx < 0 || t.gy < 0 || t.gx >= size || t.gy >= size) continue;
       const cell = m.get(this.world.districtOfTile[t.gy * size + t.gx]);
       if (!cell) continue;
-      if (v.faction === 'player' && v.unit.role !== 'collector') cell.player++;
+      // RTS-30c-2a: weight player muscle by weapon tier (a Shotgun Man counts more than a Thug).
+      if (v.faction === 'player' && v.unit.role !== 'collector') cell.player += enforcerPresenceWeight(v.unit.weapon);
       else if (v.faction !== 'player' && v.unit.role === 'enforcer') cell.rival++;
     }
     return m;
@@ -1563,17 +1572,80 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** [6] RECRUIT a gangster — muscle for defense, collection, and (at strength ≥ 12) ASSASSINATION. */
-  private commandRecruit(): void {
+  /** [6] / toolbar RECRUIT — open the recruit MENU (a plain Thug + the RTS-30c-2a weapon-tier specialists,
+   * each with its cost + channel-gate state). Mouse-first; reuses the context-menu infra. */
+  private commandRecruit(): void { this.openRecruitMenu(); }
+
+  /** Spawn an on-map player muscle unit at HQ (so it's fieldable in the war + counts toward muscle
+   * presence). `weapon` set ⇒ a weapon-tier silhouette; absent ⇒ a plain thug. */
+  private spawnPlayerMuscle(weapon?: WeaponTier): void {
+    const hq = hqTileOf(this.layout, 'player');
+    if (!hq) return;
+    const u = spawnUnit(`muscle-${weapon ?? 'thug'}-${this.state.tick}-${this.units.length}`, hq.gx, hq.gy, STROLL_SPEED);
+    u.weapon = weapon;
+    this.addUnit(u, 'player');
+    const c = gridToScreen(hq.gx, hq.gy);
+    this.floatText(c.x, c.y - 30, weapon ? `NEW ${weapon.toUpperCase()}` : 'NEW MUSCLE', NOIR_PALETTE.brass);
+  }
+
+  /** Recruit a plain Thug (the original [6] behaviour) + field it on the map. */
+  private recruitThug(): void {
     if (this.state.player.cash < RECRUIT_COST) { this.setStatus(`can't afford to recruit (need $${RECRUIT_COST})`); return; }
     const before = this.state.player.gangsters.length;
     applyCommand(this.state, { type: 'recruitGangster', familyId: 'player' });
     this.state = harvestIncidents(this.state);
-    const added = this.state.player.gangsters.length > before;
-    const strength = familyStrength(this.state.player);
-    const hq = hqTileOf(this.layout, 'player');
-    if (added && hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, 'NEW MUSCLE', NOIR_PALETTE.brass); }
-    const toward = strength >= ASSASSINATE_MIN_STRENGTH ? 'hit-ready' : `${strength}/${ASSASSINATE_MIN_STRENGTH} toward a hit`;
-    this.setStatus(added ? `recruited muscle — crew ${this.state.player.gangsters.length}, strength ${toward}` : 'no one to recruit right now');
+    if (this.state.player.gangsters.length > before) {
+      this.spawnPlayerMuscle(); this.audio?.confirm();
+      const strength = familyStrength(this.state.player);
+      const toward = strength >= ASSASSINATE_MIN_STRENGTH ? 'hit-ready' : `${strength}/${ASSASSINATE_MIN_STRENGTH} toward a hit`;
+      this.setStatus(`recruited muscle — crew ${this.state.player.gangsters.length}, strength ${toward}`);
+    } else this.setStatus('no one to recruit right now');
+  }
+
+  /** Recruit a channel-gated weapon-tier specialist (pure recruitEnforcer) + field it on the map. */
+  private recruitSpecialist(tier: WeaponTier): void {
+    const res = recruitEnforcer(this.state, tier);
+    if (!res.ok) { this.setStatus(`can't recruit that — ${res.reason}`); return; }
+    this.state = harvestIncidents(this.state);
+    this.spawnPlayerMuscle(tier); this.audio?.confirm();
+    this.setStatus(`recruited a ${res.gangster?.name ?? tier} — crew ${this.state.player.gangsters.length}, heat is up`);
+  }
+
+  /** The RECRUIT menu: a Thug + each weapon-tier specialist with its cost + locked/ready channel-gate. */
+  private openRecruitMenu(): void {
+    this.closeBizMenu();
+    const p = this.input.activePointer;
+    const thugReady = this.state.player.cash >= RECRUIT_COST;
+    const rows: { label: string; sub: string; color: string; enabled: boolean; hint: string; act: () => void }[] = [
+      { label: `THUG  $${RECRUIT_COST}`, sub: 'street muscle', color: thugReady ? SPEC.brass : NOIR_PALETTE.fog, enabled: thugReady, hint: thugReady ? '▸' : `need $${RECRUIT_COST}`, act: () => this.recruitThug() },
+    ];
+    for (const o of recruitableEnforcers(this.state) as RecruitOption[]) {
+      rows.push({
+        label: `${o.spec.label}  $${o.spec.cost}`,
+        sub: `${o.spec.channelLabel} · +${o.spec.heat}🔥`,
+        color: o.gate.ok ? SPEC.brass : NOIR_PALETTE.fog,
+        enabled: o.gate.ok,
+        hint: o.gate.ok ? '▸' : o.gate.reason, // "needs The Beat ≥ $N/wk"
+        act: () => this.recruitSpecialist(o.tier),
+      });
+    }
+    const W = 264, rowH = 30, headH = 26, H = headH + rows.length * rowH + 6;
+    const x = Math.min(p.x, this.scale.width - W - 6), y = Math.min(Math.max(8, p.y - H), this.scale.height - H - 6);
+    const bg = this.add.rectangle(0, 0, W, H, PAL.ink, 0.97).setOrigin(0, 0).setStrokeStyle(2, PAL.brass, 0.9);
+    const head = this.mkText(8, 5, 'RECRUIT — crew + specialists', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0);
+    const objs: Phaser.GameObjects.GameObject[] = [bg, head];
+    this.ctxRows = [];
+    rows.forEach((r, i) => {
+      const ry = headH + i * rowH;
+      const rowBg = this.add.rectangle(3, ry, W - 6, rowH - 2, PAL.charcoal, r.enabled ? 0.55 : 0.18).setOrigin(0, 0);
+      const lbl = this.mkText(10, ry + 3, r.label, { fontFamily: NOIR_FONT, fontSize: '13px', color: r.color, fontStyle: 'bold' }).setOrigin(0, 0);
+      const sub = this.mkText(10, ry + 17, r.sub, { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setOrigin(0, 0);
+      const hint = this.mkText(W - 8, ry + 9, r.hint, { fontFamily: NOIR_FONT, fontSize: '10px', color: r.enabled ? NOIR_PALETTE.brass : NOIR_PALETTE.fog }).setOrigin(1, 0);
+      objs.push(rowBg, lbl, sub, hint);
+      if (r.enabled) this.ctxRows.push({ y0: y + ry, y1: y + ry + rowH - 2, act: r.act });
+    });
+    this.ctxRect = { x, y, w: W, h: H };
+    this.ctxMenu = this.add.container(x, y, objs).setScrollFactor(0).setDepth(100200);
   }
 
   // ── RTS-24 vice upgrades + THE MARKET ────────────────────────────────────────────────────
