@@ -2936,3 +2936,16 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   [3]); select a Demolitions man → DEMOLISH ([V]) + SABOTAGE show.
 - Gate: typecheck ✅  build ✅  test ✅ (692).
 - Commit: rts30c-2b: contextual action-icon UI + patrol behavior — green
+
+## RTS-30c-2b.1 (Action-chip ACTIVE state — patrol read) — GREEN  (2026-06-23)
+- Context: RTS-30c-2b (the contextual action-icon card + patrol + silhouette tells) already shipped at
+  29aacc7, 692 green — the re-sent task carried the full Design spec, which the slice already builds to.
+  Verified all ⭐ deliverables present (11 deco glyphs, per-unit action card, patrol + presence bonus +
+  [Q], demolish [V], hitman bone-white ember + demolitions tool-case, red discipline; +8 pure tests).
+- Gap closed: item 1's chip-state list (ready/hover/ACTIVE/disabled/cooldown-sweep) was only ready/hover/
+  disabled. Added the ACTIVE state — the PATROL chip now lights brass (#E3C36A tint) while the selected
+  unit is actually on patrol, so you can see at a glance which units hold a beat. Visual-only; no logic
+  change. (The animated cooldown sweep-arc stays deferred — cooldown is already reflected as the
+  disabled chip + its plain reason from offenseReadout.)
+- Gate: typecheck ✅  build ✅  test ✅ (692). No new tests (render-only).
+- Commit: rts30c-2b.1: action-chip ACTIVE (patrol) state — green

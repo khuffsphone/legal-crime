@@ -2424,12 +2424,15 @@ export class IsoScene extends Phaser.Scene {
     const extortTarget = !!(this.focusBizId && extortProgress(this.state, this.focusBizId)?.extortable);
     const attackTarget = !!(this.focusBizId && businessActions(this.state, this.focusBizId, 'player')?.attack.ok);
     const chips: ActionChip[] = unitActionChips(this.state, { weapon: view!.unit.weapon, role: view!.unit.role, extortTarget, attackTarget });
+    const patrolling = !!view!.unit.patrol; // RTS-30c-2b.1: the ACTIVE chip state (a stance that is ON)
     const size = 44, gap = 6, x0 = 12, y = this.scale.height - 150;
     chips.forEach((ch, i) => {
       const s = this.actionChips[i];
       const cx = x0 + i * (size + gap);
       s.verb = ch.verb; s.enabled = ch.enabled; s.reason = ch.reason;
+      const active = ch.verb === 'patrol' && patrolling; // brass-fill highlight = stance engaged
       s.icon.setTexture(actionIconKey(ch.verb)).setPosition(cx, y).setAlpha(ch.enabled ? 1 : 0.4).setVisible(true);
+      if (active) s.icon.setTint(0xe3c36a); else s.icon.clearTint();
       s.tab.setText(ch.hotkey).setPosition(cx + size - 2, y + size - 2).setVisible(true);
       s.hit.setPosition(cx, y).setVisible(true);
     });
