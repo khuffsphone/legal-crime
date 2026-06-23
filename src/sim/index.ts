@@ -307,9 +307,20 @@ export {
   type CitySummary,
 } from './districtStatus';
 export {
+  unitRepertoire,
+  unitActionChips,
+  chipReady,
+  VERB_HOTKEYS,
+  type VerbId,
+  type ActionChip,
+  type UnitActionContext,
+} from './actionCard';
+export {
   ENFORCER_SPECS,
   ENFORCER_TIERS,
   enforcerPresenceWeight,
+  unitMusclePresence,
+  PATROL_PRESENCE_BONUS,
   totalMusclePresence,
   enforcerGate,
   recruitEnforcer,

@@ -328,9 +328,12 @@ function bakeEnforcer(scene: Phaser.Scene, tier: (typeof ENFORCER_FIG_TIERS)[num
   } else if (tier === 'hitman') {
     g.fillStyle(PAL.bone, 1); g.fillRect(cx - 5, 6.4, 10, 1.6); // bone-white hatband (the only accent)
     g.fillStyle(PAL.suitCharcoal, 1); g.fillRect(cx - 4, 38, 8, 12); // long slim coat tail
+    g.fillStyle(PAL.bone, 1); g.fillCircle(cx + 3.4, 12.6, 1.3); // ⭐ the bone-white EMBER (static; a fast pulse only when working — never a static danger dot)
   } else { // demolitions
     g.fillStyle(PAL.gunmetal, 1); g.fillRect(cx - 13, 25, 9, 1.8); // pack strap
     g.fillStyle(PAL.brassDark, 1); for (let i = 0; i < 3; i++) g.fillRoundedRect(cx - 12 + i * 3, 26, 2.4, 9, 1); // dynamite cluster (brass-dark, NOT red)
+    g.fillStyle(PAL.gunmetal, 1); g.fillRect(cx + 5, 33, 9, 7); // ⭐ the TOOL-CASE (Design's unique tell) in the off hand
+    g.fillStyle(PAL.brassDark, 1); g.fillRect(cx + 7.5, 31.4, 4, 2); // brass-dark case handle
   }
   g.generateTexture(key, FIG_W, FIG_H);
   g.destroy();
@@ -546,6 +549,42 @@ function bakeCarLite(scene: Phaser.Scene, key: string, taxi: boolean): void {
   g.destroy();
 }
 
+// ── RTS-30c-2b: contextual ACTION ICONS (art-deco brass-line glyph on an aged-paper chip) ──────────
+// ⭐ KEY DISCIPLINE: the violent verbs (attack/sabotage/demolish/assassinate) stay CALM brass-line — the
+// danger lives in the motion beat on the board, NEVER in the static icon. No red, no gore in any glyph.
+const ICON_PAPER = 0xe8e1ce; // aged paper field
+export function actionIconKey(verb: string): string { return `lcr_icon_${verb}`; }
+export const ACTION_ICON_VERBS = ['move', 'attack', 'extort', 'collect', 'patrol', 'sabotage', 'demolish', 'assassinate', 'raid', 'expand', 'recruit'] as const;
+
+function bakeActionIcon(scene: Phaser.Scene, verb: (typeof ACTION_ICON_VERBS)[number]): void {
+  const key = actionIconKey(verb);
+  if (scene.textures.exists(key)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const S = 44, c = S / 2;
+  // aged-paper chip with a 2px brass frame + stepped-deco corner notches + inner bevel
+  g.fillStyle(ICON_PAPER, 1); g.fillRect(2, 2, S - 4, S - 4);
+  g.lineStyle(2, PAL.brass, 1); g.strokeRect(2.5, 2.5, S - 5, S - 5);
+  g.lineStyle(1, PAL.brassDark, 0.8); g.strokeRect(5.5, 5.5, S - 11, S - 11);
+  g.fillStyle(PAL.brass, 1); // stepped corner ticks
+  for (const [cx, cy] of [[3, 3], [S - 3, 3], [3, S - 3], [S - 3, S - 3]] as const) g.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+  // the brass-line glyph (deco primitives) — drawn centred ~24px
+  g.lineStyle(2, PAL.brass, 1);
+  const line = (x1: number, y1: number, x2: number, y2: number) => { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath(); };
+  if (verb === 'move') { line(c - 8, c + 6, c + 6, c - 6); g.fillStyle(PAL.brass, 1); g.fillTriangle(c + 6, c - 8, c + 9, c - 3, c + 2, c - 4); g.fillCircle(c - 9, c + 8, 1.8); }
+  else if (verb === 'attack') { line(c - 7, c - 7, c + 7, c + 7); line(c + 7, c - 7, c - 7, c + 7); g.fillStyle(PAL.brassHi, 1); g.fillCircle(c, c, 2); } // crossed chevrons (X strike)
+  else if (verb === 'extort') { g.strokeCircle(c, c, 8); g.fillStyle(PAL.brass, 1); g.fillCircle(c - 3, c - 3, 1.6); g.fillCircle(c + 3, c + 3, 1.6); line(c + 4, c - 4, c - 4, c + 4); } // % coin
+  else if (verb === 'collect') { g.strokeRect(c - 7, c - 2, 14, 9); line(c - 7, c + 1, c + 7, c + 1); g.fillStyle(PAL.brass, 1); g.fillTriangle(c, c - 10, c - 3, c - 5, c + 3, c - 5); } // satchel + down-arrow
+  else if (verb === 'patrol') { g.strokeCircle(c, c, 8); g.fillStyle(PAL.brass, 1); g.fillTriangle(c + 8, c - 2, c + 11, c + 2, c + 5, c + 2); } // looping circuit arrow
+  else if (verb === 'sabotage') { g.strokeCircle(c, c, 7); for (let a = 0; a < 6; a++) { const an = a * Math.PI / 3; line(c + Math.cos(an) * 7, c + Math.sin(an) * 7, c + Math.cos(an) * 10, c + Math.sin(an) * 10); } line(c - 4, c - 4, c + 4, c + 5); } // cracked gear
+  else if (verb === 'demolish') { line(c, c - 9, c, c + 1); g.strokeRect(c - 5, c - 11, 10, 3); for (const a of [-1, 0, 1]) line(c, c + 1, c + a * 7, c + 9); } // plunger + deco shards
+  else if (verb === 'assassinate') { g.strokeCircle(c, c, 7); line(c - 11, c, c - 4, c); line(c + 4, c, c + 11, c); line(c, c - 11, c, c - 4); line(c, c + 4, c, c + 11); g.fillStyle(PAL.brass, 1); g.fillCircle(c, c, 1.6); } // reticle
+  else if (verb === 'raid') { line(c - 9, c, c + 5, c); g.fillStyle(PAL.brass, 1); g.fillTriangle(c + 5, c - 4, c + 9, c, c + 5, c + 4); g.lineStyle(2, PAL.brassDark, 1); line(c + 8, c - 9, c + 8, c + 9); } // arrow through a gate
+  else if (verb === 'expand') { for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) { line(c, c, c + dx * 9, c + dy * 9); g.fillStyle(PAL.brass, 1); g.fillCircle(c + dx * 10, c + dy * 10, 1.8); } } // outward compass
+  else { g.strokeCircle(c - 3, c - 4, 3.5); line(c - 3, c - 1, c - 3, c + 7); line(c - 7, c + 2, c + 1, c + 2); g.lineStyle(2, PAL.brassHi, 1); line(c + 6, c - 3, c + 6, c + 3); line(c + 3, c, c + 9, c); } // recruit: figure + '+'
+  g.generateTexture(key, S, S);
+  g.destroy();
+}
+
 /** The rotating brass "protection" coin (a % badge) that floats over an extorted front. */
 function bakeCoin(scene: Phaser.Scene): void {
   if (scene.textures.exists(TEX.coin)) return;
@@ -675,6 +714,7 @@ export function buildCityTextures(scene: Phaser.Scene): void {
   bakeCarLite(scene, TEX.carLite, false);
   bakeCarLite(scene, TEX.taxi, true);
   for (const t of ENFORCER_FIG_TIERS) bakeEnforcer(scene, t); // RTS-30c-2a weapon-tier silhouettes
+  for (const v of ACTION_ICON_VERBS) bakeActionIcon(scene, v); // RTS-30c-2b deco action icons
   bakeCoin(scene);
   bakeTile(scene, TEX.tileStreet, PAL.charcoal, PAL.slate, PAL.soot);
   bakeTile(scene, TEX.tileLot, 0x221d18, PAL.charcoal, PAL.ink);

@@ -2888,3 +2888,51 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   strength toward the [3] Assassinate gate.
 - Gate: typecheck ✅  build ✅  test ✅ (684).
 - Commit: rts30c-2a: weapon-tier enforcers + demolitions specialist (channel-gated) — green
+
+## RTS-30c-2b (Contextual action-icon UI + patrol behavior) — GREEN  (2026-06-23)
+- Summary: The selected-unit action-icon CARD + the PATROL stance + folding in two of Design's signature
+  silhouette tells. No deferred living-city hooks / no new combat systems. tick/applyCommand untouched;
+  /src/sim pure; render Phaser-side; HUD on the fixed UI camera. 684 → 692 green (+8 pure tests).
+- ⭐ CONTEXTUAL ACTION-ICON CARD — select a player unit and a row of clickable DECO ICON CHIPS appears
+  (bottom-left, above the context card, on the fixed HUD camera — no drift). It shows ONLY the verbs in
+  THAT unit's repertoire (pure `unitRepertoire`/`unitActionChips`):
+  • combat muscle (thug/pistol/shotgun/rifle): move · attack · extort · patrol · collect · raid · expand · recruit
+  • HITMAN: move · assassinate · patrol · collect · recruit   • DEMOLITIONS: move · demolish · sabotage · patrol · collect · recruit
+  • COLLECTOR: move · collect (near-passive).
+  Each chip is a brass-line deco glyph on an aged-paper chip (stepped-deco corners + a soot hotkey tab),
+  ENABLED when valid or GREYED (alpha 0.4) with a why-LOCKED hover tooltip (reusing the action-chip
+  treatment). Clicking a chip runs EXACTLY what its hotkey runs — verified end-to-end: chip pointerdown →
+  runVerb(verb) → the real command (commandExtort/Collect/Sabotage/Assassinate/Raid/Expand/Recruit/
+  AttackBusiness/Patrol). Supplements the global toolbar; does not replace it.
+- ⭐ KEY DISCIPLINE HELD IN THE UI — the violent-verb glyphs (attack = crossed chevrons, sabotage =
+  cracked gear, demolish = plunger + deco shards, assassinate = reticle) are all CALM BRASS-LINE on
+  paper. NO red, no danger colour, no gore in any static icon (grep-verified) — the danger lives only in
+  the motion beat on the board when the action fires. Danger stays motion-only, even in the UI.
+- ⭐ PATROL (the approved small mechanic) — a guard STANCE: [Q] (or the Patrol chip) toggles `patrol` on
+  the selected muscle; a patrolling unit LOOPS its current district (steerPatrols) and contributes a
+  flat `PATROL_PRESENCE_BONUS` (0.8, CANDIDATE) ON TOP of its weapon weight to the turf-war contest in
+  that district (pure `unitMusclePresence`; contestPresence now sums it). So setting a Shotgun Man to
+  patrol a CONTESTED block pushes the visible meter harder toward "held". Canon-neutral — no economy/
+  channel touch; a collector contributes nothing (patrol or not).
+- ASSIGNED HOTKEYS — the two glyphs that shipped with an empty "·" tab now have keys: PATROL = [Q],
+  DEMOLISH = [V] (the wreck of a rival income node → commandSabotage). Shown on the chips + added to the
+  help legend. (Move/Attack remain right-click; their chips show "·" and a hint.)
+- SILHOUETTE REFINEMENTS (folded from Design) — the 30c-2a tiers already obeyed the red rules; added the
+  two missing UNIQUE TELLS from Design's matrix: the HITMAN's bone-white EMBER dot (static bone-white —
+  the fast pulse "when working" is motion-only, not a static danger dot) and the DEMOLITIONS man's
+  TOOL-CASE (gunmetal box + brass-dark handle) in the off hand. Bandolier + dynamite stay brass-dark
+  (#7A5A1E)/gunmetal — never rival-red. Verified: no red/danger colour token in any player silhouette or
+  any action icon (the only "danger" string is a code comment).
+- TESTS (+8 pure): the per-unit repertoire (collector = move+collect; hitman leads assassinate, no
+  extort/raid; demolitions has demolish+sabotage; muscle gets the street kit); per-verb enabled/locked
+  (move/patrol/recruit always; collect locks with no takings; extort/attack reflect the target context;
+  the hitman chip carries the real [3] hotkey); and the patrol presence bonus (patrol > idle by the
+  bonus; a collector contributes 0). tests/actionCard.test.ts. 684 + 8 = 692.
+- PLAY-THROUGH: select a Shotgun Man → its valid action icons appear (move/attack/extort/patrol/collect/
+  raid/expand/recruit), greyed where not applicable with a why-tooltip → click the PATROL chip (or [Q]):
+  it starts looping its district and its muscle presence rises by +0.8 on top of its 2.2 weapon weight,
+  so if that block is CONTESTED the visible contest meter falls faster toward "held". Click EXTORT with a
+  [%] front focused → it runs exactly the [E] command. Select a Hitman → the ASSASSINATE icon leads (real
+  [3]); select a Demolitions man → DEMOLISH ([V]) + SABOTAGE show.
+- Gate: typecheck ✅  build ✅  test ✅ (692).
+- Commit: rts30c-2b: contextual action-icon UI + patrol behavior — green

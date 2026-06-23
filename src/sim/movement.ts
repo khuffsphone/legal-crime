@@ -31,6 +31,9 @@ export interface MovableUnit {
   /** RTS-30c-2a — weapon-tier specialist (channel-gated enforcer). Absent ⇒ a plain thug. Drives the
    * silhouette + the turf-war muscle-presence weight. Additive, default-safe. */
   weapon?: WeaponTier;
+  /** RTS-30c-2b — PATROL stance: the unit holds/loops its zone for a defensive presence bonus. Absent
+   * ⇒ a free mover. Additive, default-safe. */
+  patrol?: boolean;
   /** Dirty cash physically carried by a collector in transit (RTS-4/5). Absent ⇒ 0. */
   carrying?: number;
   /** District a collector's take was gathered from (RTS-5) — governs the deposit skim. */

@@ -44,11 +44,21 @@ export function enforcerPresenceWeight(weapon: WeaponTier | undefined): number {
   return weapon ? ENFORCER_SPECS[weapon].presence : 1;
 }
 
-/** Sum the presence weight of a set of muscle units (role !== collector). The scene filters to a
- * faction + district first and passes those units. Pure. */
-export function totalMusclePresence(units: ReadonlyArray<{ role?: string; weapon?: WeaponTier }>): number {
+/** RTS-30c-2b — a PATROLLING unit holds its zone: it contributes EXTRA muscle presence (a defensive/
+ * control stance). Flat bonus on top of its weapon weight. CANDIDATE/tunable. */
+export const PATROL_PRESENCE_BONUS = 0.8;
+
+/** A single unit's turf-war muscle presence: 0 for a collector, else its weapon weight + a patrol
+ * bonus when it is holding the zone. Pure. */
+export function unitMusclePresence(u: { role?: string; weapon?: WeaponTier; patrol?: boolean }): number {
+  if (u.role === 'collector') return 0;
+  return enforcerPresenceWeight(u.weapon) + (u.patrol ? PATROL_PRESENCE_BONUS : 0);
+}
+
+/** Sum the muscle presence of a set of units (the scene filters to a faction + district first). Pure. */
+export function totalMusclePresence(units: ReadonlyArray<{ role?: string; weapon?: WeaponTier; patrol?: boolean }>): number {
   let w = 0;
-  for (const u of units) if (u.role !== 'collector') w += enforcerPresenceWeight(u.weapon);
+  for (const u of units) w += unitMusclePresence(u);
   return w;
 }
 

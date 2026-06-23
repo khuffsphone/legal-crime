@@ -115,9 +115,12 @@ import {
   rivalsDormant,
   recruitEnforcer,
   recruitableEnforcers,
-  enforcerPresenceWeight,
+  unitMusclePresence,
+  unitActionChips,
   type WeaponTier,
   type RecruitOption,
+  type ActionChip,
+  type VerbId,
   activateContests,
   resolveContestStep,
   contestedDistrictIds,
@@ -161,6 +164,7 @@ import {
   buildCityTextures,
   figureKeyFor,
   enforcerTexKey,
+  actionIconKey,
   richArt,
   drawIsoBuilding,
   BUILDING_STYLES,
@@ -235,6 +239,15 @@ interface ToolbarButton {
   tip: string;           // plain-English hover tooltip (what it does + how to use)
   label: Phaser.GameObjects.Text;
   state?: ToolbarVerbState; // last-rendered chip state (re-colour only on change)
+}
+// RTS-30c-2b — a contextual action-card chip slot (pooled): the deco icon + a hotkey tab + a hit zone.
+interface ActionChipSlot {
+  icon: Phaser.GameObjects.Image;
+  tab: Phaser.GameObjects.Text;
+  hit: Phaser.GameObjects.Rectangle;
+  verb?: VerbId;
+  enabled: boolean;
+  reason: string;
 }
 const WAR_AMBER = 0xe8a53a; // RTS-30c-1 CONTESTED district wash (amber — neither brass nor rival-red)
 const WAR_AMBER_HEX = '#e8a53a';
@@ -375,6 +388,9 @@ export class IsoScene extends Phaser.Scene {
   private toolbarBtns: ToolbarButton[] = [];
   private toolbarTip?: Phaser.GameObjects.Text;
   private toolbarClick = false; // a toolbar press swallows the next world-click (no deselect)
+  // RTS-30c-2b — the contextual action-icon CARD (a pool of clickable deco-glyph chips for the selected unit).
+  private actionChips: ActionChipSlot[] = [];
+  private actionTip?: Phaser.GameObjects.Text;
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
   private controlTitle?: Phaser.GameObjects.Text;
@@ -876,8 +892,8 @@ export class IsoScene extends Phaser.Scene {
       if (t.gx < 0 || t.gy < 0 || t.gx >= size || t.gy >= size) continue;
       const cell = m.get(this.world.districtOfTile[t.gy * size + t.gx]);
       if (!cell) continue;
-      // RTS-30c-2a: weight player muscle by weapon tier (a Shotgun Man counts more than a Thug).
-      if (v.faction === 'player' && v.unit.role !== 'collector') cell.player += enforcerPresenceWeight(v.unit.weapon);
+      // RTS-30c-2a/2b: weight player muscle by weapon tier + a PATROL bonus (unitMusclePresence).
+      if (v.faction === 'player' && v.unit.role !== 'collector') cell.player += unitMusclePresence(v.unit);
       else if (v.faction !== 'player' && v.unit.role === 'enforcer') cell.rival++;
     }
     return m;
@@ -956,6 +972,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30c-1: advance the TURF WAR first (spawn/steer rival invaders, resolve contests) so the
     // interception that observeWorld runs this frame sees fresh positions. Settles AROUND the tick.
     this.tickWar(stepDt);
+    this.steerPatrols(); // RTS-30c-2b: patrolling units loop their district (defensive stance)
     // rival hunts whichever player collector is carrying cash
     const collector = this.playerCarrier();
     const gun = this.state.units.find((u) => u.id === 'rival-gun');
@@ -2116,6 +2133,9 @@ export class IsoScene extends Phaser.Scene {
     // RTS-20 — the build verbs (leave ESTABLISH).
     this.input.keyboard?.on('keydown-FIVE', () => this.audioPanelOpen ? this.cycleAudioBus(4) : this.commandExpand());
     this.input.keyboard?.on('keydown-SIX', () => this.commandRecruit());
+    // RTS-30c-2b — the two glyphs that shipped without a canon key: PATROL [Q], DEMOLISH [V].
+    this.input.keyboard?.on('keydown-Q', () => this.commandPatrol());
+    this.input.keyboard?.on('keydown-V', () => this.commandSabotage()); // DEMOLISH = the wreck of a rival node
     // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
     this.input.keyboard?.on('keydown-O', () => this.toggleAudioPanel());
     this.input.keyboard?.on('keydown-ZERO', () => { this.audio?.toggleMute(); this.refreshAudioPanel(); });
@@ -2146,6 +2166,7 @@ export class IsoScene extends Phaser.Scene {
     this.refreshCrew();
     this.refreshStrategy();
     this.refreshToolbar(); // RTS-30b-ui: clickable hotkey toolbar (states + progressive disclosure)
+    this.refreshActionCard(); // RTS-30c-2b: the selected-unit action-icon chips
     this.refreshNight();
     this.refreshFastForward();
     this.samplePerf(delta);
@@ -2254,6 +2275,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30b-ui — the clickable hotkey TOOLBAR replaces the text ACTION BOARD (actionTitle/actionBody
     // are intentionally NOT created now; refreshActionBoard early-returns). Every verb is a mouse button.
     this.buildToolbar();
+    this.buildActionCard(); // RTS-30c-2b: the selected-unit action-icon chips
 
     // RTS-28 §1 — the fast-forward + skip-week controls (always visible, clickable). Bottom-centre.
     this.ffButton = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807ee' })
@@ -2357,6 +2379,103 @@ export class IsoScene extends Phaser.Scene {
     this.setT(this.toolbarTip, `${b.name} [${b.hotkey}] — ${b.tip}`);
     const tx = Phaser.Math.Clamp(b.label.x, 170, this.scale.width - 170);
     this.toolbarTip.setPosition(tx, b.label.y - b.label.height - 8).setVisible(true);
+  }
+
+  // ── RTS-30c-2b: the contextual ACTION-ICON CARD ────────────────────────────────────────────────
+
+  private static readonly VERB_TIP: Record<string, string> = {
+    move: 'MOVE — right-click a tile to walk there', attack: 'ATTACK — right-click a rival racket to shut it down',
+    extort: 'EXTORT [E] — lean on the focused [%] front', collect: 'COLLECT [C] — bank a district’s takings',
+    patrol: 'PATROL [Q] — hold this beat: loops the district + adds muscle presence', sabotage: 'SABOTAGE [2] — wreck a rival racket',
+    demolish: 'DEMOLISH [V] — the demolitions wreck of a rival income node', assassinate: 'ASSASSINATE [3] — a hit on a weakened rival Don',
+    raid: 'RAID [1] — force into rival turf', expand: 'EXPAND [5] — push your hold deeper', recruit: 'RECRUIT [6] — hire crew + specialists',
+  };
+
+  /** Build the pooled action-icon chips once (in drawHud, before setupUiCamera → fixed HUD camera). */
+  private buildActionCard(): void {
+    for (let i = 0; i < 11; i++) {
+      const icon = this.add.image(0, 0, actionIconKey('move')).setOrigin(0, 0).setScrollFactor(0).setDepth(100040).setVisible(false);
+      const tab = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '10px', color: '#e3c36a', backgroundColor: '#16130f' })
+        .setOrigin(1, 1).setScrollFactor(0).setDepth(100042).setPadding(2, 1, 2, 1).setVisible(false);
+      const hit = this.add.rectangle(0, 0, 44, 44, 0x000000, 0.001).setOrigin(0, 0).setScrollFactor(0).setDepth(100043).setVisible(false).setInteractive({ useHandCursor: true });
+      const slot: ActionChipSlot = { icon, tab, hit, enabled: false, reason: '' };
+      hit.on('pointerdown', () => { this.toolbarClick = true; if (slot.verb && slot.enabled) this.runVerb(slot.verb); else if (slot.verb) this.setStatus(IsoScene.VERB_TIP[slot.verb]?.split('—')[0].trim() + ' — ' + slot.reason); });
+      hit.on('pointerover', () => { if (slot.verb && this.actionTip) this.setT(this.actionTip, slot.enabled ? IsoScene.VERB_TIP[slot.verb] : `${IsoScene.VERB_TIP[slot.verb]} · LOCKED: ${slot.reason}`).setPosition(Phaser.Math.Clamp(icon.x + 22, 150, this.scale.width - 150), icon.y - 8).setVisible(true); });
+      hit.on('pointerout', () => this.actionTip?.setVisible(false));
+      this.actionChips.push(slot);
+    }
+    this.actionTip = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807f4', wordWrap: { width: 300 } })
+      .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100045).setPadding(8, 5, 8, 5).setVisible(false);
+  }
+
+  /** The scene context (extort / attack target) the action card needs for the SELECTED unit. */
+  private selectedUnitView(): UnitView | undefined {
+    const id = this.selection.ids[0];
+    return id ? this.units.find((u) => u.unit.id === id) : undefined;
+  }
+
+  /** Per-frame: show the action-icon chips for the selected player unit (only its valid verbs; locked
+   * ones greyed with a why-tooltip). Hidden when nothing relevant is selected. */
+  private refreshActionCard(): void {
+    if (this.actionChips.length === 0) return;
+    const view = this.selectedUnitView();
+    const show = !!view && view.faction === 'player';
+    if (!show) { for (const s of this.actionChips) { s.icon.setVisible(false); s.tab.setVisible(false); s.hit.setVisible(false); s.verb = undefined; } return; }
+    const extortTarget = !!(this.focusBizId && extortProgress(this.state, this.focusBizId)?.extortable);
+    const attackTarget = !!(this.focusBizId && businessActions(this.state, this.focusBizId, 'player')?.attack.ok);
+    const chips: ActionChip[] = unitActionChips(this.state, { weapon: view!.unit.weapon, role: view!.unit.role, extortTarget, attackTarget });
+    const size = 44, gap = 6, x0 = 12, y = this.scale.height - 150;
+    chips.forEach((ch, i) => {
+      const s = this.actionChips[i];
+      const cx = x0 + i * (size + gap);
+      s.verb = ch.verb; s.enabled = ch.enabled; s.reason = ch.reason;
+      s.icon.setTexture(actionIconKey(ch.verb)).setPosition(cx, y).setAlpha(ch.enabled ? 1 : 0.4).setVisible(true);
+      s.tab.setText(ch.hotkey).setPosition(cx + size - 2, y + size - 2).setVisible(true);
+      s.hit.setPosition(cx, y).setVisible(true);
+    });
+    for (let i = chips.length; i < this.actionChips.length; i++) { const s = this.actionChips[i]; s.icon.setVisible(false); s.tab.setVisible(false); s.hit.setVisible(false); s.verb = undefined; }
+  }
+
+  /** Run a verb chip — EXACTLY what its hotkey does (the dead-button discipline). */
+  private runVerb(verb: VerbId): void {
+    switch (verb) {
+      case 'move': this.setStatus('right-click a tile to move the selected unit there'); break;
+      case 'attack': if (this.focusBizId) this.commandAttackBusiness(this.focusBizId); else this.setStatus('right-click a rival racket to attack it'); break;
+      case 'extort': this.commandExtort(); break;
+      case 'collect': this.commandCollect(); break;
+      case 'patrol': this.commandPatrol(); break;
+      case 'sabotage': case 'demolish': this.commandSabotage(); break;
+      case 'assassinate': this.commandAssassinate(); break;
+      case 'raid': this.commandRaid(); break;
+      case 'expand': this.commandExpand(); break;
+      case 'recruit': this.commandRecruit(); break;
+    }
+  }
+
+  /** [Q] PATROL — toggle the guard stance on every selected player muscle unit. A patrolling unit loops
+   * its current district (steerPatrols) and adds a defensive presence bonus in the contest. */
+  private commandPatrol(): void {
+    const sel = this.units.filter((v) => this.selection.ids.includes(v.unit.id) && v.faction === 'player' && v.unit.role !== 'collector');
+    if (sel.length === 0) { this.setStatus('select a thug, then [Q] to set it on patrol'); return; }
+    const turningOn = sel.some((v) => !v.unit.patrol);
+    for (const v of sel) v.unit.patrol = turningOn;
+    this.setStatus(turningOn ? `${sel.length} on PATROL — holding the beat (adds muscle presence in their district)` : `${sel.length} stood down from patrol`);
+  }
+
+  /** Keep patrolling units looping inside their current district (a defensive beat). */
+  private steerPatrols(): void {
+    if (!this.world) return;
+    const size = this.world.size;
+    const cl = (v: number) => Math.max(0, Math.min(size - 1, v));
+    for (const v of this.units) {
+      const u = v.unit;
+      if (!u.patrol || v.faction !== 'player' || u.path.length > 0) continue;
+      const t = unitTile(u);
+      if (t.gx < 0 || t.gy < 0 || t.gx >= size || t.gy >= size) continue;
+      const did = this.world.districtOfTile[t.gy * size + t.gx];
+      const d = this.world.districts.find((x) => x.id === did);
+      if (d) issueMove(u, { gx: cl(d.centroid.gx + Phaser.Math.Between(-3, 3)), gy: cl(d.centroid.gy + Phaser.Math.Between(-3, 3)) }, this.navGrid);
+    }
   }
 
   /** RTS-25 — sample FPS / frame-time / text-rasterisations once per second for the [P] overlay. */
@@ -3098,7 +3217,8 @@ export class IsoScene extends Phaser.Scene {
       '  • [T] set an automated COLLECTION ROUTE so the take banks itself — but GUARD it,',
       '    a rival enforcer who catches the collector still robs you.',
       '  • [6] recruit more thugs · [5] expand to the next block · [G] grease The Beat.',
-      '  • War comes later: [1] raid · [2] sabotage · [3] assassinate · [4] lockout.',
+      '  • War comes later: [1] raid · [2] sabotage · [3] assassinate · [4] lockout · [V] demolish.',
+      '  • Select a thug → its ACTION ICONS show; [Q] set PATROL (hold a block, adds muscle presence).',
       '',
       '  [K] crew · [L] the wire · [H] help · [B] card view',
     ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
