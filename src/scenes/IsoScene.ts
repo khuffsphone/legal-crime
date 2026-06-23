@@ -121,6 +121,9 @@ import {
   unitMusclePresence,
   unitActionChips,
   multiSelectChips,
+  buildActionInspector,
+  rowSymbol,
+  type InspectorContext,
   type WeaponTier,
   type RecruitOption,
   type ActionChip,
@@ -2407,15 +2410,7 @@ export class IsoScene extends Phaser.Scene {
     this.toolbarTip.setPosition(tx, b.label.y - b.label.height - 8).setVisible(true);
   }
 
-  // ── RTS-30c-2b: the contextual ACTION-ICON CARD ────────────────────────────────────────────────
-
-  private static readonly VERB_TIP: Record<string, string> = {
-    move: 'MOVE — right-click a tile to walk there', attack: 'ATTACK — right-click a rival racket to shut it down',
-    extort: 'EXTORT [E] — lean on the focused [%] front', collect: 'COLLECT [C] — bank a district’s takings',
-    patrol: 'PATROL [Q] — hold this beat: loops the district + adds muscle presence', sabotage: 'SABOTAGE [2] — wreck a rival racket',
-    demolish: 'DEMOLISH [V] — the demolitions wreck of a rival income node', assassinate: 'ASSASSINATE [3] — a hit on a weakened rival Don',
-    raid: 'RAID [1] — force into rival turf', expand: 'EXPAND [5] — push your hold deeper', recruit: 'RECRUIT [6] — hire crew + specialists',
-  };
+  // ── RTS-30c-2b: the contextual ACTION-ICON CARD (RTS-30d-4: chip hover → requirement inspector) ──
 
   /** Build the pooled action-icon chips once (in drawHud, before setupUiCamera → fixed HUD camera). */
   private buildActionCard(): void {
@@ -2425,13 +2420,36 @@ export class IsoScene extends Phaser.Scene {
         .setOrigin(1, 1).setScrollFactor(0).setDepth(100042).setPadding(2, 1, 2, 1).setVisible(false);
       const hit = this.add.rectangle(0, 0, 44, 44, 0x000000, 0.001).setOrigin(0, 0).setScrollFactor(0).setDepth(100043).setVisible(false).setInteractive({ useHandCursor: true });
       const slot: ActionChipSlot = { icon, tab, hit, enabled: false, reason: '' };
-      hit.on('pointerdown', () => { this.toolbarClick = true; if (slot.verb && slot.enabled) this.runVerb(slot.verb); else if (slot.verb) this.setStatus(IsoScene.VERB_TIP[slot.verb]?.split('—')[0].trim() + ' — ' + slot.reason); });
-      hit.on('pointerover', () => { if (slot.verb && this.actionTip) this.setT(this.actionTip, slot.enabled ? IsoScene.VERB_TIP[slot.verb] : `${IsoScene.VERB_TIP[slot.verb]} · LOCKED: ${slot.reason}`).setPosition(Phaser.Math.Clamp(icon.x + 22, 150, this.scale.width - 150), icon.y - 8).setVisible(true); });
+      hit.on('pointerdown', () => { this.toolbarClick = true; if (slot.verb && slot.enabled) this.runVerb(slot.verb); else if (slot.verb) { const insp = buildActionInspector(this.state, slot.verb, this.inspectorCtx()); this.setStatus(`${insp.title} — ${insp.nextStep ?? slot.reason}`); } });
+      hit.on('pointerover', () => { if (slot.verb && this.actionTip) this.setT(this.actionTip, this.inspectorTipText(slot.verb)).setPosition(Phaser.Math.Clamp(icon.x + 22, 170, this.scale.width - 170), icon.y - 8).setVisible(true); });
       hit.on('pointerout', () => this.actionTip?.setVisible(false));
       this.actionChips.push(slot);
     }
-    this.actionTip = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807f4', wordWrap: { width: 300 } })
-      .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100045).setPadding(8, 5, 8, 5).setVisible(false);
+    this.actionTip = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807f6', lineSpacing: 3, wordWrap: { width: 340 } })
+      .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100045).setPadding(9, 7, 9, 7).setVisible(false);
+  }
+
+  /** The scene-side context the inspector can't read off the sim (a focused front / rival racket). RTS-30d-4. */
+  private inspectorCtx(): InspectorContext {
+    return {
+      extortTarget: !!(this.focusBizId && extortProgress(this.state, this.focusBizId)?.extortable),
+      attackTarget: !!(this.focusBizId && businessActions(this.state, this.focusBizId, 'player')?.attack.ok),
+    };
+  }
+
+  /** RTS-30d-4 — the EXPANDED requirement breakdown shown on chip hover: a state badge, one row per
+   * requirement (✓ met / ✗ missing / ! risk — symbol PLUS text, never colour alone), then the next step.
+   * Built from the PURE inspector; the scene only formats. */
+  private inspectorTipText(verb: VerbId): string {
+    const insp = buildActionInspector(this.state, verb, this.inspectorCtx());
+    const badge = insp.state === 'ready' ? '→ READY' : insp.state === 'conditional' ? '! CONDITIONAL' : '✗ LOCKED';
+    const lines = [`${insp.title} — ${insp.summary}`, badge];
+    for (const r of insp.rows) {
+      const nums = r.current && r.required ? `  ${r.current} / ${r.required}` : r.current ? `  ${r.current}` : '';
+      lines.push(`${rowSymbol(r.state)} ${r.label}${nums}${r.detail ? `  — ${r.detail}` : ''}`);
+    }
+    if (insp.nextStep) lines.push(`→ next: ${insp.nextStep}`);
+    return lines.join('\n');
   }
 
   /** The player's COMMANDABLE unit views (excludes the autonomous collectors). RTS-30d. */

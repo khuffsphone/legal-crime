@@ -319,6 +319,18 @@ export {
   type UnitActionContext,
 } from './actionCard';
 export {
+  buildActionInspector,
+  multiSelectInspectors,
+  rowSymbol,
+  type ActionRequirementInspector,
+  type ActionRequirementRow,
+  type RequirementCategory,
+  type RequirementState,
+  type InspectorState,
+  type InspectorContext,
+  type InspectableActionId,
+} from './actionInspector';
+export {
   ENFORCER_SPECS,
   ENFORCER_TIERS,
   enforcerPresenceWeight,
