@@ -428,6 +428,7 @@ export {
   unitsInBox,
   resolveMoveCommand,
   isCommandableTile,
+  isCommandableUnit,
   type Selection,
   type MoveResolution,
 } from './selection';

@@ -41,7 +41,9 @@ export interface UnitActionContext {
 /** The verbs a unit TYPE offers, in display order. A collector is near-passive; a hitman/demolitions
  * man lead with their specialty; plain muscle gets the full street kit. Pure. */
 export function unitRepertoire(ctx: UnitActionContext): VerbId[] {
-  if (ctx.role === 'collector') return ['move', 'collect'];
+  // RTS-30d-2: a COLLECTOR is autonomous — it accepts NO orders, so it exposes NO action verbs (it is
+  // inspectable, not commandable). The old [move, collect] for a collector was the bug.
+  if (ctx.role === 'collector') return [];
   if (ctx.weapon === 'hitman') return ['move', 'assassinate', 'patrol', 'collect', 'recruit'];
   if (ctx.weapon === 'demolitions') return ['move', 'demolish', 'sabotage', 'patrol', 'collect', 'recruit'];
   // plain muscle (thug) + the combat enforcers (pistol/shotgun/rifle)

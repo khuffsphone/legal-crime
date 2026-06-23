@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { createInitialState } from '../src/sim/state';
 import { unitRepertoire, unitActionChips, type UnitActionContext } from '../src/sim/actionCard';
+import { isCommandableUnit } from '../src/sim/selection';
 import { unitMusclePresence, PATROL_PRESENCE_BONUS, enforcerPresenceWeight } from '../src/sim/enforcers';
 import type { GameState } from '../src/sim/types';
 
@@ -10,8 +11,12 @@ function big(seed = 1): GameState { return createInitialState(seed, { startingCr
 const base: UnitActionContext = { extortTarget: false, attackTarget: false };
 
 describe('action card — per-unit repertoire', () => {
-  it('a collector is near-passive (move + collect only)', () => {
-    expect(unitRepertoire({ ...base, role: 'collector' })).toEqual(['move', 'collect']);
+  it('RTS-30d-2: a collector is AUTONOMOUS — it exposes NO action verbs (not commandable)', () => {
+    expect(unitRepertoire({ ...base, role: 'collector' })).toEqual([]);
+    expect(unitActionChips(big(), { ...base, role: 'collector' })).toEqual([]);
+    expect(isCommandableUnit({ role: 'collector' })).toBe(false);
+    expect(isCommandableUnit({ role: undefined })).toBe(true); // a thug is commandable
+    expect(isCommandableUnit({ role: 'enforcer' })).toBe(true);
   });
   it('a HITMAN leads with assassinate; a DEMOLITIONS man leads with demolish; neither shows extort/raid', () => {
     expect(unitRepertoire({ ...base, weapon: 'hitman' })).toContain('assassinate');

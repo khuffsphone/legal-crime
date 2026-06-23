@@ -22,6 +22,8 @@ import {
   pickUnit,
   resolveMoveCommand,
   isCommandableTile,
+  isCommandableUnit,
+  collectorVulnerableInDistrict,
   emptySelection,
   selectOnly,
   toggleSelection,
@@ -394,6 +396,8 @@ export class IsoScene extends Phaser.Scene {
   // RTS-30c-2b — the contextual action-icon CARD (a pool of clickable deco-glyph chips for the selected unit).
   private actionChips: ActionChipSlot[] = [];
   private actionTip?: Phaser.GameObjects.Text;
+  private collectorInfo?: Phaser.GameObjects.Text; // RTS-30d-2 read-only collector popover (no control)
+  private collectorInfoId?: string;
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
   private controlTitle?: Phaser.GameObjects.Text;
@@ -1437,13 +1441,19 @@ export class IsoScene extends Phaser.Scene {
   /** [T] — set up (or refresh) the automated collection route over your protected businesses. */
   private commandSelect(p: Phaser.Input.Pointer, shift: boolean): void {
     const point = screenToGrid(p.worldX, p.worldY);
-    const hit = pickUnit(this.units.map((v) => v.unit), point);
+    // RTS-30d-2: only COMMANDABLE units are selectable (collectors are autonomous — not orderable).
+    const hit = pickUnit(this.commandableViews().map((v) => v.unit), point);
     if (hit) {
       this.focusBizId = undefined;
+      this.hideCollectorInfo();
       this.selection = shift ? toggleSelection(this.selection, hit.id) : selectOnly(hit.id);
       this.setStatus();
       return;
     }
+    // RTS-30d-2: a click ON a collector opens its READ-ONLY popover (visibility, no control).
+    const col = pickUnit(this.units.filter((v) => v.faction === 'player' && v.unit.role === 'collector').map((v) => v.unit), point);
+    if (col) { this.focusBizId = undefined; if (!shift) this.selection = clearSelection(); this.showCollectorInfo(col); return; }
+    this.hideCollectorInfo();
     // RTS-28: no unit under the cursor → try a BUILDING (height-aware hit-test). A click selects the
     // building under the cursor (its card sticks in the context panel; [E]/[U] target it).
     const bizId = this.businessAtScreen(p.worldX, p.worldY);
@@ -2418,12 +2428,61 @@ export class IsoScene extends Phaser.Scene {
     return id ? this.units.find((u) => u.unit.id === id) : undefined;
   }
 
+  /** The player's COMMANDABLE unit views (excludes the autonomous collectors). RTS-30d. */
+  private commandableViews(): UnitView[] {
+    return this.units.filter((v) => v.faction === 'player' && isCommandableUnit(v.unit));
+  }
+
+  /** RTS-30d-2 — the collector READ-ONLY popover: carrying $ · ETA to HQ · route SAFE/CONTESTED. No
+   * verbs, no control (collectors are autonomous). Builds on a fixed-camera HUD text. */
+  private showCollectorInfo(u: MovableUnit): void {
+    if (!this.collectorInfo) {
+      this.collectorInfo = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807f2', align: 'left' })
+        .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100210).setPadding(9, 6, 9, 6);
+      this.hudFx(this.collectorInfo);
+    }
+    this.collectorInfoId = u.id;
+    const sp = unitScreenPos(u);
+    const wv = this.cameras.main.worldView, z = this.cameras.main.zoom;
+    const sx = (sp.x - wv.x) * z, sy = (sp.y - wv.y) * z;
+    this.collectorInfo.setPosition(Phaser.Math.Clamp(sx, 120, this.scale.width - 120), Phaser.Math.Clamp(sy - 22, 60, this.scale.height - 12))
+      .setText(this.collectorInfoText(u)).setVisible(true);
+  }
+
+  private collectorInfoText(u: MovableUnit): string {
+    const carrying = u.carrying ?? 0;
+    const t = unitTile(u);
+    const did = this.world ? this.world.districtOfTile[t.gy * this.world.size + t.gx] : undefined;
+    const contested = collectorVulnerableInDistrict(this.state, did);
+    const hq = hqTileOf(this.layout, 'player');
+    const etaTiles = hq && u.routePhase === 'toBank' ? Math.round(Math.hypot(hq.gx - u.pos.gx, hq.gy - u.pos.gy)) : null;
+    const eta = etaTiles != null && u.speed > 0 ? `~${Math.max(1, Math.round(etaTiles / u.speed))}s to HQ` : (u.routePhase === 'toStop' ? 'gathering the take' : 'on route');
+    const route = contested ? '⚔ route CONTESTED — robbable' : '✓ route SAFE';
+    return `COLLECTOR (runs itself)\ncarrying $${carrying} · ${eta}\n${route}`;
+  }
+
+  private hideCollectorInfo(): void { this.collectorInfo?.setVisible(false); this.collectorInfoId = undefined; }
+
+  /** Keep the open collector popover tracking its (moving) collector; hide it if the collector banked +
+   * despawned. Read-only — never issues a command. */
+  private refreshCollectorInfo(): void {
+    if (!this.collectorInfoId || !this.collectorInfo) return;
+    const u = this.state.units.find((x) => x.id === this.collectorInfoId);
+    if (!u) { this.hideCollectorInfo(); return; }
+    const sp = unitScreenPos(u);
+    const wv = this.cameras.main.worldView, z = this.cameras.main.zoom;
+    this.collectorInfo.setPosition(Phaser.Math.Clamp((sp.x - wv.x) * z, 120, this.scale.width - 120), Phaser.Math.Clamp((sp.y - wv.y) * z - 22, 60, this.scale.height - 12))
+      .setText(this.collectorInfoText(u));
+  }
+
   /** Per-frame: show the action-icon chips for the selected player unit (only its valid verbs; locked
    * ones greyed with a why-tooltip). Hidden when nothing relevant is selected. */
   private refreshActionCard(): void {
+    this.refreshCollectorInfo();
     if (this.actionChips.length === 0) return;
     const view = this.selectedUnitView();
-    const show = !!view && view.faction === 'player';
+    // RTS-30d-2: never a card for a collector (autonomous, not commandable).
+    const show = !!view && view.faction === 'player' && isCommandableUnit(view.unit);
     if (!show) { for (const s of this.actionChips) { s.icon.setVisible(false); s.tab.setVisible(false); s.hit.setVisible(false); s.verb = undefined; } return; }
     const extortTarget = !!(this.focusBizId && extortProgress(this.state, this.focusBizId)?.extortable);
     const attackTarget = !!(this.focusBizId && businessActions(this.state, this.focusBizId, 'player')?.attack.ok);

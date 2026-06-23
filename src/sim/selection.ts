@@ -64,6 +64,13 @@ function dedupe(ids: readonly string[]): string[] {
   return out;
 }
 
+/** RTS-30d — whether a unit is PLAYER-COMMANDABLE: a collector is AUTONOMOUS (auto-spawns, runs its
+ * fixed route, despawns on return) and accepts no orders, so it is NOT selectable/orderable — only
+ * inspectable. Every other player unit (thug + the weapon-tier enforcers) is commandable. Pure. */
+export function isCommandableUnit(unit: { role?: string }): boolean {
+  return unit.role !== 'collector';
+}
+
 // ── hit-testing ─────────────────────────────────────────────────────────────────────────────
 
 /**
