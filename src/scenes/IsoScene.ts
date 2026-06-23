@@ -230,8 +230,8 @@ interface ToolbarButton {
   label: Phaser.GameObjects.Text;
   state?: ToolbarVerbState; // last-rendered chip state (re-colour only on change)
 }
-const WAR_AMBER = 0xe0992e; // RTS-30c-1 CONTESTED district wash (amber — neither brass nor rival-red)
-const WAR_AMBER_HEX = '#e0992e';
+const WAR_AMBER = 0xe8a53a; // RTS-30c-1 CONTESTED district wash (amber — neither brass nor rival-red)
+const WAR_AMBER_HEX = '#e8a53a';
 const SEAM = 0x15120e;  // dark lane / paving expansion seam
 const CURB = 0x4a443a;  // light curb edge on a sidewalk
 const PARK_TUFT = 0x3c4e36; // grass tuft fleck
@@ -685,7 +685,10 @@ export class IsoScene extends Phaser.Scene {
     // held = faint brass, rival-held = faint static blood-red.
     const warPulse = 0.5 + 0.5 * Math.sin(this.time.now / 255); // ~1.6s period
     for (const row of cityRoster(this.state)) {
-      if (row.status === 'CONTESTED') wash.set(row.id, { c: WAR_AMBER, a: 0.06 + 0.07 * warPulse });
+      // RTS-30c-1.1: the CONTESTED wash is much stronger now (was 0.06–0.13, too faint — the HUD carried
+      // the read) so the war reads on the MAP at the resting zoom; still soot-friendly amber, never
+      // brass, never rival-red (red discipline held).
+      if (row.status === 'CONTESTED') wash.set(row.id, { c: WAR_AMBER, a: 0.20 + 0.14 * warPulse });
       else if (row.status === 'HELD') wash.set(row.id, { c: hexNum(SPEC.brass), a: 0.05 });
       else if (row.status === 'RIVAL') wash.set(row.id, { c: hexNum(SPEC.rival), a: 0.07 });
     }
@@ -831,23 +834,26 @@ export class IsoScene extends Phaser.Scene {
   private districtName(id: string): string { return this.state.districts.find((d) => d.id === id)?.name ?? id; }
 
   /** Drive the turf war: steer the visible rival invaders each frame, and on the contest pulse open new
-   * border contests (spawning rival muscle), resolve the presence contest, and clean up ended ones. */
-  private tickWar(dt: number): void {
+   * border contests (spawning rival muscle), resolve the presence contest, and clean up ended ones.
+   * RTS-30c-1.1: the pulse runs on the SIMULATED stepDt (a while-loop, so a skipped/fast week fires the
+   * pulses it should) — the meter is the visible authority and it KEEPS PACE with the economy clock. */
+  private tickWar(stepDt: number): void {
     if (!this.world || rivalsDormant(this.state)) return;
     this.steerWarMuscle();
-    this.state.contestElapsed = (this.state.contestElapsed ?? 0) + dt;
-    if ((this.state.contestElapsed ?? 0) < CONTEST_PULSE_SECONDS) return;
-    this.state.contestElapsed = (this.state.contestElapsed ?? 0) - CONTEST_PULSE_SECONDS;
-
-    for (const c of activateContests(this.state)) this.spawnContestMuscle(c); // new borders → muscle in
-    const res = resolveContestStep(this.state, this.contestPresence());
-    for (const o of res.outcomes) {
-      if (o.flipped) { this.flashTerritory(o.districtId, true); this.audio?.confirm(); } // a block fell to the rival
-      if (o.ended === 'held') this.setStatus(`you repelled the invasion of ${this.districtName(o.districtId)}`);
-      if (o.ended === 'lost') this.setStatus(`${this.districtName(o.districtId)} has fallen to the rival`);
+    this.state.contestElapsed = (this.state.contestElapsed ?? 0) + stepDt;
+    let guard = 0;
+    while ((this.state.contestElapsed ?? 0) >= CONTEST_PULSE_SECONDS && guard++ < 64) {
+      this.state.contestElapsed = (this.state.contestElapsed ?? 0) - CONTEST_PULSE_SECONDS;
+      for (const c of activateContests(this.state)) this.spawnContestMuscle(c); // new borders → muscle in
+      const res = resolveContestStep(this.state, this.contestPresence());
+      for (const o of res.outcomes) {
+        if (o.flipped) { this.flashTerritory(o.districtId, true); this.audio?.confirm(); } // a block fell to the rival
+        if (o.ended === 'held') this.setStatus(`you repelled the invasion of ${this.districtName(o.districtId)}`);
+        if (o.ended === 'lost') this.setStatus(`${this.districtName(o.districtId)} has fallen to the rival`);
+      }
+      for (const c of res.ended) this.despawnContestMuscle(c);
+      this.state = harvestIncidents(this.state);
     }
-    for (const c of res.ended) this.despawnContestMuscle(c);
-    this.state = harvestIncidents(this.state);
   }
 
   /** Per-district muscle presence by UNIT POSITION (the contest's inputs): player thugs vs rival
@@ -930,18 +936,22 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private updateUnits(dt: number): void {
+    // RTS-28 PACING: feed the sim a tighter real-time week + the fast-forward multiplier; a pending
+    // SKIP-WEEK jumps straight to the next settlement (exactly one). Economy math is untouched.
+    // RTS-30c-1.1: compute the simulated step FIRST and drive the turf war with the SAME stepDt as the
+    // economy/strategy — so the contest meter keeps pace with skipped/fast-forwarded weeks (it used to
+    // run on raw real-time dt, so a skipped week advanced the background capture but froze the meter).
+    let stepDt = scaledDt(dt, this.timeScale);
+    if (this.skipWeekPending) { stepDt = skipWeekDt(this.state.weekElapsed ?? 0, SCENE_WEEK_SECONDS); this.skipWeekPending = false; }
+
     // RTS-30c-1: advance the TURF WAR first (spawn/steer rival invaders, resolve contests) so the
     // interception that observeWorld runs this frame sees fresh positions. Settles AROUND the tick.
-    this.tickWar(dt);
+    this.tickWar(stepDt);
     // rival hunts whichever player collector is carrying cash
     const collector = this.playerCarrier();
     const gun = this.state.units.find((u) => u.id === 'rival-gun');
     if (collector && gun) issueMove(gun, unitTile(collector), this.navGrid);
 
-    // RTS-28 PACING: feed the sim a tighter real-time week + the fast-forward multiplier; a pending
-    // SKIP-WEEK jumps straight to the next settlement (exactly one). Economy math is untouched.
-    let stepDt = scaledDt(dt, this.timeScale);
-    if (this.skipWeekPending) { stepDt = skipWeekDt(this.state.weekElapsed ?? 0, SCENE_WEEK_SECONDS); this.skipWeekPending = false; }
     const obs = observeWorld(this.state, stepDt, SCENE_WEEK_SECONDS, SCENE_PULSE_SECONDS);
     this.state = obs.state;
     // RTS-24: on each settled week, run the content beat — civic INFLUENCE accrual (Mayor path),

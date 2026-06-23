@@ -339,3 +339,8 @@ export const CONTEST_PRESSURE_MAX = 130;  // clamp magnitude
 export const CONTEST_MAX = 3;             // most simultaneous contests (gradual escalation)
 export const CONTEST_ESCALATE_WEEKS = 3;  // a new contest can open every N weeks after the rivals wake
 export const CONTEST_MUSCLE_PER_INVASION = 2; // rival muscle units moved into a freshly contested block
+// RTS-30c-1.1: the invader's INITIATIVE — added to net presence each pulse so a contest always trends
+// toward a resolution (it can never sit at a dead 0). To REPEL, the player must OUT-muster the invader
+// by more than this; an even match still slowly falls (the rival is on the offensive). The meter is the
+// single visible authority for a contested district's block flips (the background capture is suspended).
+export const CONTEST_INVADER_DRIFT = 1;

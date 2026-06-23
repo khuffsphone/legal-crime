@@ -69,9 +69,13 @@ export function targetScore(state: GameState, rival: Family, d: District): numbe
 }
 
 /** The single district `rival` will push next (its highest-scoring reachable target), or null.
- * Deterministic — ties break by district id — so it doubles as the telegraph. */
+ * Deterministic — ties break by district id — so it doubles as the telegraph.
+ * RTS-30c-1.1: CONTESTED districts are EXCLUDED — a district under an active presence-contest is
+ * governed solely by the visible pressure meter (the player's authority), so the background strategic-
+ * capture pulse must not flip its blocks off-board. The rival expands elsewhere instead. */
 export function rivalStrategicTarget(state: GameState, rival: Family): District | null {
-  const candidates = reachableTargets(state, rival);
+  const contested = new Set((state.contests ?? []).map((c) => c.districtId));
+  const candidates = reachableTargets(state, rival).filter((d) => !contested.has(d.id));
   let best: District | null = null;
   let bestScore = -Infinity;
   for (const d of candidates) {

@@ -12,8 +12,8 @@
 // on per-district; uncontested districts stay safe).
 
 import {
-  CONTEST_ESCALATE_WEEKS, CONTEST_FLIP, CONTEST_MAX, CONTEST_PRESSURE_MAX, CONTEST_PRESSURE_STEP,
-  CONTEST_PUSHOUT,
+  CONTEST_ESCALATE_WEEKS, CONTEST_FLIP, CONTEST_INVADER_DRIFT, CONTEST_MAX, CONTEST_PRESSURE_MAX,
+  CONTEST_PRESSURE_STEP, CONTEST_PUSHOUT,
 } from './constants';
 import { businessEarner } from './economy';
 import { districtNeighbors } from './city';
@@ -139,7 +139,11 @@ export function resolveContestStep(
     const d = state.districts.find((x) => x.id === c.districtId);
     if (!d) { continue; } // district vanished — drop the contest
     const p = presence.get(c.districtId) ?? { rival: 0, player: 0 };
-    const net = p.rival - p.player; // > 0 ⇒ the invader is winning
+    // RTS-30c-1.1: the invader has the INITIATIVE (CONTEST_INVADER_DRIFT) — so the meter is never stuck
+    // at a dead 0; an even match still slowly falls, and the player must OUT-muster to repel. This is
+    // the SINGLE authority that flips a contested district's blocks (the background capture is suspended
+    // for contested districts in rivalStrategicTarget), so what the player sees is what decides.
+    const net = (p.rival - p.player) + CONTEST_INVADER_DRIFT; // > 0 ⇒ trending to the invader
     c.pressure = clamp(c.pressure + net * CONTEST_PRESSURE_STEP, -CONTEST_PRESSURE_MAX, CONTEST_PRESSURE_MAX);
     let flipped = false;
     let end: 'lost' | 'held' | null = null;

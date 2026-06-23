@@ -2783,3 +2783,55 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   on Code's side. (d) committed the embedded spec to docs/RTS30C_WAR_SPEC.md for 30c-2/3.
 - Gate: typecheck ✅  build ✅  test ✅ (674).
 - Commit: rts30c-1: turf war core + collector interception switched on — green
+
+## RTS-30c-1.1 (Reconcile turf-war authority + resolve stuck state) — GREEN  (2026-06-23)
+- Summary: A RECONCILE/tuning pass fixing a design-integrity bug a UAT found by PLAY (not the gate): the
+  VISIBLE pressure meter sat at 0 for a whole war while the contested district's blocks STILL flipped to
+  the rival — a BACKGROUND strategic-capture pulse was taking blocks off-board during skipped/advanced
+  weeks while the on-screen meter froze. Two systems decided a contested district's fate; the hidden one
+  won — breaking the pillar "the hold % is the inspectable truth" and leaving contests STUCK open
+  (pressure never hit FLIP, enforcers parked forever). No new content/units/war-actions (that's 30c-2).
+  tick/applyCommand untouched; /src/sim pure. 674 → 676 green (+2 net; 1 premise-changed test updated).
+- ROOT CAUSE: the contest meter (scene `tickWar`) ran on RAW real-time `dt`, but `observeWorld`
+  (economy + the legacy `advanceStrategy` capture) ran on the SCALED/skip-week `stepDt`. So a skipped or
+  fast-forwarded week advanced the background capture many sim-weeks (flipping blocks via applyCapture)
+  while the contest meter barely moved → "meter shows 0, blocks vanish."
+- ⭐ FIX 1 — ONE AUTHORITY, AND IT'S VISIBLE (approach: SUSPEND the background capture in contested
+  districts). `rivalStrategicTarget` now EXCLUDES any district with an active contest (reads
+  state.contests directly — no import cycle), so the legacy strategic-capture pulse can't target/flip a
+  contested district off-board. In a contested district the ONLY thing that flips blocks is
+  `resolveContestStep` — the visible presence meter. The rival still expands into NON-contested ground
+  (the legacy engine + Domination feed are intact).
+- ⭐ FIX 2 — RESOLVE THE STUCK STATE (two parts):
+  (a) The contest pulse now runs on the SIMULATED `stepDt` (a capped while-loop), so it keeps pace with
+      skipped/fast weeks — a skipped week fires the pulses it should, and the meter moves with the clock
+      instead of freezing.
+  (b) New `CONTEST_INVADER_DRIFT` (1) is added to net presence each pulse: the invader has the
+      INITIATIVE, so the meter can NEVER sit at a dead 0 — an even match slowly climbs to FLIP →
+      resolves "lost"; the player must OUT-muster the invader (player > rival) to drive it down to
+      −PUSHOUT → "held". Either way the contest always trends to a resolution (no parked-enforcers limbo).
+- FIX 3 — STRONGER AMBER WASH: the contested map wash went from alpha 0.06–0.13 (too faint; the HUD
+  carried the read) to 0.20–0.34 pulsing, on a brighter amber (#e8a53a). The war now reads on the MAP at
+  the resting zoom, still soot-friendly and neither brass nor rival-red (red discipline held).
+- FIX 4 — ACTIVATION TIMING: dormancy = 3 weeks is correct (canon). The first contest now opens at
+  ~wk3, not the UAT's ~wk6 — the wk6 was the OLD real-time-gated pulse lagging the sim clock; the FIX-2a
+  stepDt drive pulls activation back in step. Verified by a deterministic probe: PATH A (player extorts
+  toward a rival) opens at wk3; PATH B (player turtles in the home district) also opens at wk3 (rival-a
+  expands into the adjacent district within the first awake week, so the home district borders a rival
+  foothold by wk3). No timing code change beyond the stepDt drive.
+- TESTS: +2 net (tests/turfContest.test.ts now 9). CHANGED: the "stalemate (equal muscle) parks at 0"
+  test → "INVADER INITIATIVE: an even match trends to the invader (never a dead 0); out-mustering holds"
+  (premise legitimately changed — the drift removed the dead-0 by design). ADDED: "ALWAYS RESOLVES" (a
+  sustained even match reaches a resolution within bounded pulses — the stuck-state guarantee); and "ONE
+  visible authority" (running resolveStrategicPulse 20× leaves a contested district's hold % UNCHANGED —
+  no off-board flip — while resolveContestStep DOES flip it: the meter is the sole authority). The legacy
+  tests/turfWar.test.ts is unaffected (those setups have no contests → the exclusion is a no-op).
+- PLAY-THROUGH (what it now shows): a border district goes CONTESTED at ~wk3 and reads clearly amber on
+  the map; the VISIBLE meter climbs under the invader's initiative (even if you match their muscle), and
+  it is THAT number that flips your blocks — nothing changes off-board. Skip/fast-forward a week and the
+  meter advances with the clock instead of freezing. Send MORE thugs than the invaders and the meter
+  falls and the contest RESOLVES "held" (amber clears, enforcers leave, you claw a block back); ignore it
+  and it climbs to FLIP and resolves "lost" (the district falls) — no stuck-at-0 limbo either way. (The
+  ROB + recruit-and-REPEL paths are the human-playtest items this headless gate structurally can't force.)
+- Gate: typecheck ✅  build ✅  test ✅ (676).
+- Commit: rts30c-1.1: reconcile turf-war authority + resolve stuck state — green

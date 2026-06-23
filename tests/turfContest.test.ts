@@ -8,6 +8,7 @@ import {
   districtContested, collectorVulnerableInDistrict, familyShare, contestOf,
 } from '../src/sim/turfWar';
 import { districtStatusOf } from '../src/sim/districtStatus';
+import { resolveStrategicPulse } from '../src/sim/strategy';
 import { businessEarner } from '../src/sim/economy';
 import type { GameState } from '../src/sim/types';
 
@@ -76,14 +77,58 @@ describe('turf war — the presence-based contest (hold-% shift + flip)', () => 
     expect(districtContested(s, playerDid)).toBe(false); // the war is over — you held
   });
 
-  it('a stalemate (equal muscle) neither flips nor ends — the player can hold the line', () => {
+  // RTS-30c-1.1 UPDATED (premise changed): the invader has the INITIATIVE, so an EVEN match no longer
+  // parks at a dead 0 — it slowly falls to the rival. To hold you must OUT-muster them (player > rival).
+  it('INVADER INITIATIVE: an even match still trends to the invader (never a dead 0); out-mustering holds', () => {
+    const sEven = big();
+    const a = setupBorder(sEven);
+    activateContests(sEven);
+    resolveContestStep(sEven, new Map([[a.playerDid, { rival: 2, player: 2 }]]));
+    expect(contestOf(sEven, a.playerDid)!.pressure).toBeGreaterThan(0); // an even match drifts up, not 0
+
+    const sHold = big();
+    const b = setupBorder(sHold);
+    activateContests(sHold);
+    // player out-musters the invader → pressure must go DOWN (you can hold the line by sending MORE)
+    resolveContestStep(sHold, new Map([[b.playerDid, { rival: 2, player: 4 }]]));
+    expect(contestOf(sHold, b.playerDid)!.pressure).toBeLessThan(0);
+  });
+
+  // ⭐ THE STUCK-STATE FIX: a contest must always reach a resolution — it can never hang at 0 while the
+  // war drags on. Under a sustained even match (which used to park at 0), the invader's initiative drives
+  // it to FLIP/"lost" within a bounded number of pulses.
+  it('ALWAYS RESOLVES: a sustained even match reaches a resolution (never hangs at 0)', () => {
     const s = big();
     const { playerDid } = setupBorder(s);
     activateContests(s);
     const presence = new Map([[playerDid, { rival: 2, player: 2 }]]);
-    for (let i = 0; i < 8; i++) resolveContestStep(s, presence);
-    expect(districtContested(s, playerDid)).toBe(true); // still contested, no flip
-    expect(contestOf(s, playerDid)!.pressure).toBe(0);
+    let resolved = false;
+    for (let i = 0; i < 40 && !resolved; i++) {
+      const r = resolveContestStep(s, presence);
+      if (r.outcomes.some((o) => o.ended) || !districtContested(s, playerDid)) resolved = true;
+    }
+    expect(resolved).toBe(true); // the contest ended — no parked-enforcers-forever limbo
+  });
+});
+
+describe('turf war — ONE visible authority (the background capture is suspended in contested districts)', () => {
+  it('a contested district does NOT lose blocks to the background strategic pulse — only the visible meter flips them', () => {
+    const s = big();
+    const { playerDid, invader } = setupBorder(s);
+    s.rivalWakeWeek = 0; s.tick = 5; // rivals awake so the background pulse actually runs
+    activateContests(s);
+    expect(districtContested(s, playerDid)).toBe(true);
+    const before = familyShare(s.districts[0], s.player.id);
+    // run the BACKGROUND strategic-capture pulse many times — it must NOT touch the contested district
+    for (let i = 0; i < 20; i++) resolveStrategicPulse(s);
+    expect(familyShare(s.districts[0], s.player.id)).toBe(before); // hold % unchanged by the hidden pulse
+    expect(s.districts[0].businesses.every((b) => businessEarner(b) !== invader)).toBe(true); // no off-board flip
+    // the VISIBLE meter, by contrast, DOES flip a block (it is the one authority)
+    let flipped = false;
+    const presence = new Map([[playerDid, { rival: 3, player: 0 }]]);
+    for (let i = 0; i < 8 && !flipped; i++) flipped = resolveContestStep(s, presence).outcomes.some((o) => o.flipped);
+    expect(flipped).toBe(true);
+    expect(familyShare(s.districts[0], s.player.id)).toBeLessThan(before); // the meter moved the truth
   });
 });
 
