@@ -187,6 +187,10 @@ import {
 import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
 import { AmbientLife } from './ambientLife';
 import {
+  advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, type RigPose,
+} from './gait';
+import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
+import {
   SPEC,
   MOTION,
   hexNum,
@@ -295,6 +299,20 @@ interface UnitView {
   attackKind?: 'melee' | 'ranged';
   attackFaceRight?: boolean; // recoil direction (away from the target)
   hitUntil?: number; // time.now ms until the hit-react flinch finishes
+  // RTS-32 procedural rig (thug-role units only): the live-posed articulated figure + its gait clock.
+  rig?: Phaser.GameObjects.Graphics;       // the posed silhouette (CLOSE/MID); undefined for un-rigged roles
+  rigDebug?: Phaser.GameObjects.Graphics;  // ?debugRig=1 joint/plant overlay
+  rigText?: Phaser.GameObjects.Text;       // ?debugRig=1 phase + state readout
+  gaitPhase?: number; // 0..1 — DISTANCE-driven gait clock (the anti-skate keystone)
+  loco?: number;      // 0 idle → 1 walk → 2 run, eased for cross-fades
+  lastSX?: number; lastSY?: number; // last world screen-pos, to measure per-frame ground distance
+}
+
+/** RTS-32 — which units get the procedural rig: a plain button-man (thug) of either faction. Weapon
+ * enforcers + collectors keep their baked silhouettes this slice (the rig is structured to adopt them
+ * later — same gait clock, their own prop layer). */
+function isRiggedUnit(unit: MovableUnit): boolean {
+  return !unit.weapon && unit.role !== 'collector';
 }
 
 interface BizMarker { coin: Phaser.GameObjects.Image; glow?: Phaser.GameObjects.Image; roofX: number; roofY: number; }
@@ -413,6 +431,9 @@ export class IsoScene extends Phaser.Scene {
   // RTS-30a.1: ?reveal=1 lifts the fog over the whole map so the sparse city is inspectable (debug-only;
   // normal play keeps the fog). Parsed by the pure revealAllRequested helper.
   private debugRevealAll = typeof window !== 'undefined' && revealAllRequested(window.location?.search ?? '');
+  // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
+  // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
+  private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
   private actionTitle?: Phaser.GameObjects.Text; // RTS-28 ACTION BOARD (retired by the rts30b-ui toolbar)
   private actionBody?: Phaser.GameObjects.Text;
@@ -874,6 +895,20 @@ export class IsoScene extends Phaser.Scene {
     const figKey = faction === 'player' && unit.weapon ? enforcerTexKey(unit.weapon) : figureKeyFor(unit.role, faction, 1);
     const sprite = this.add.image(0, 0, figKey).setOrigin(0.5, 0.93);
     const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing, idleSeed: hashSeed(unit.id) };
+    // RTS-32: a plain button-man gets the live procedural rig (a reused Graphics, posed each frame). Its
+    // gait clock starts desynced so a crew doesn't march in lock-step. Weapon/collector roles keep the
+    // baked sprite this slice.
+    if (isRiggedUnit(unit)) {
+      view.rig = this.add.graphics();
+      view.gaitPhase = (hashSeed(unit.id) % 1000) / 1000;
+      view.loco = 0;
+      if (this.debugRig) {
+        view.rigDebug = this.add.graphics();
+        view.rigText = this.add.text(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '9px', color: '#ff2bd0' }).setOrigin(0.5, 1);
+        this.worldFx(view.rigDebug, view.rigText);
+      }
+      this.worldFx(view.rig);
+    }
     if (unit.role === 'collector') {
       view.dangerRing = this.add.ellipse(0, 0, 40, 22).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
       view.cashTag = this.add
@@ -1006,7 +1041,7 @@ export class IsoScene extends Phaser.Scene {
     const idx = this.units.findIndex((v) => v.unit.id === id);
     if (idx >= 0) {
       const v = this.units[idx];
-      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing]) o?.destroy();
+      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.rig, v.rigDebug, v.rigText]) o?.destroy();
       this.units.splice(idx, 1);
     }
     this.state.units = this.state.units.filter((u) => u.id !== id);
@@ -1100,7 +1135,35 @@ export class IsoScene extends Phaser.Scene {
         kick += (v.faction === 'player' ? -1 : 1) * 3 * t; // a recoiling knock-back
       }
 
-      v.sprite.setPosition(s.x + sway + kick, s.y - bob + lift).setDepth(depth).setScale(1, breath).setFlipX(!facesRight(unitFacing(v.unit)));
+      // RTS-32 — the ARTICULATED RIG (thug-role units): a DISTANCE-driven gait so the foot never skates.
+      if (v.rig) {
+        const lsx = v.lastSX ?? s.x, lsy = v.lastSY ?? s.y;
+        const dist = Math.hypot(s.x - lsx, s.y - lsy); // world-screen travel since last frame (camera-independent)
+        v.lastSX = s.x; v.lastSY = s.y;
+        const stride = v.unit.speed >= RUN_BOB_SPEED ? RUN_STRIDE : WALK_STRIDE;
+        v.gaitPhase = advanceGaitPhase(v.gaitPhase ?? 0, moving ? dist : 0, stride); // ⭐ cadence ∝ ground speed
+        v.loco = easeLoco(v.loco ?? 0, locoTarget(v.unit.speed, moving, RUN_BOB_SPEED), dt * 1000, 150); // ~150ms cross-fade / stop-settle
+        const faceRight = facesRight(unitFacing(v.unit));
+        if (rigLOD(this.targetZoom) === 'far') {
+          // FAR LOD — bypass the per-frame rig; the cheap baked silhouette stands in (perf).
+          v.rig.setVisible(false); v.rigDebug?.setVisible(false); v.rigText?.setVisible(false);
+          v.sprite.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(1, 1).setFlipX(!faceRight);
+        } else {
+          v.sprite.setVisible(false);
+          const pose: RigPose = poseFor(v.gaitPhase, v.loco, now + seed * 7);
+          const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? 1 : -1, 1);
+          g.clear();
+          drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG);
+          if (v.rigDebug && v.rigText) {
+            const dg = v.rigDebug.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth + 1).setScale(faceRight ? 1 : -1, 1);
+            dg.clear(); drawRigDebug(dg, pose);
+            const state = v.loco < 0.5 ? 'IDLE' : v.loco < 1.5 ? 'WALK' : 'RUN';
+            v.rigText.setVisible(true).setPosition(s.x, s.y - 58).setDepth(depth + 2).setText(`φ${v.gaitPhase.toFixed(2)} ${state}`);
+          }
+        }
+      } else {
+        v.sprite.setPosition(s.x + sway + kick, s.y - bob + lift).setDepth(depth).setScale(1, breath).setFlipX(!facesRight(unitFacing(v.unit)));
+      }
       v.shadow.setPosition(s.x, s.y + 2).setDepth(depth - 2);
       v.factionRing.setPosition(s.x, s.y + 2).setDepth(depth - 1);
 
