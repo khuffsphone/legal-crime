@@ -44,10 +44,11 @@ describe('seam → clip mappings', () => {
     expect(greaseCueKey('police')).toBe('grease_beat');
     expect(greaseCueKey('feds')).toBe('grease_bureau');
   });
-  it('federal cue escalates to the siren at the raid tier (85 = tier 3)', () => {
-    expect(federalCueKey(1)).toBe('warning');
-    expect(federalCueKey(2)).toBe('warning');
-    expect(federalCueKey(3)).toBe('siren');
+  it('federal cue rings a DISTINCT clip per rung (NOTICE 50 / WATCH 70 / RAID 85)', () => {
+    expect(federalCueKey(1)).toBe('federal_notice');
+    expect(federalCueKey(2)).toBe('federal_watch');
+    expect(federalCueKey(3)).toBe('federal_raid');
+    expect(new Set([federalCueKey(1), federalCueKey(2), federalCueKey(3)]).size).toBe(3); // all distinct
   });
   it('combat cues: tommy-gun for raids/ambush, pistol for a hit, siren for a lockout', () => {
     expect(combatCueKey('raid')).toBe('tommygun');

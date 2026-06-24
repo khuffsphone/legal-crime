@@ -27,22 +27,28 @@ const LIBRARY: ClipDef[] = [
   { key: 'siren', file: 'LCR_sfx_siren.m4a', bus: 'sfx', vol: 0.7, urgent: true }, // the law at 85 / lockout
   { key: 'warning', file: 'LCR_sfx_warning.m4a', bus: 'sfx', vol: 0.8, urgent: true }, // 🔔 teletype 50/70/85
   { key: 'mutiny', file: 'LCR_sfx_mutiny.m4a', bus: 'sfx', vol: 0.85, urgent: true }, // crew defection stinger
-  // ── grease level-ups / extras (expected; silent until dropped) ──
-  { key: 'grease_beat', file: 'LCR_sfx_grease_beat.m4a', bus: 'sfx', vol: 0.8 },
-  { key: 'grease_bench', file: 'LCR_sfx_grease_bench.m4a', bus: 'sfx', vol: 0.8 },
-  { key: 'grease_cityhall', file: 'LCR_sfx_grease_cityhall.m4a', bus: 'sfx', vol: 0.8 },
-  { key: 'grease_bureau', file: 'LCR_sfx_grease_bureau.m4a', bus: 'sfx', vol: 0.8 },
-  { key: 'wire_routine', file: 'LCR_sfx_wire_routine.m4a', bus: 'sfx', vol: 0.4 }, // soft tick
-  { key: 'wire_crisis', file: 'LCR_sfx_wire_crisis.m4a', bus: 'sfx', vol: 0.85, urgent: true }, // 📞 needs-you ring
-  { key: 'door', file: 'LCR_sfx_door.m4a', bus: 'sfx', vol: 0.7 },
-  { key: 'typewriter', file: 'LCR_sfx_typewriter.m4a', bus: 'sfx', vol: 0.5 },
-  // ── phase + win/lose stings (expected) ──
-  { key: 'sting_establish', file: 'LCR_sting_establish.m4a', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_first_blood', file: 'LCR_sting_first_blood.m4a', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_contest', file: 'LCR_sting_contest.m4a', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_decapitate', file: 'LCR_sting_decapitate.m4a', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_win', file: 'LCR_sting_win.m4a', bus: 'sfx', vol: 0.95, urgent: true },
-  { key: 'sting_lose', file: 'LCR_sting_lose.m4a', bus: 'sfx', vol: 0.95, urgent: true },
+  // ── grease level-ups / extras — RTS-30e-audio: reconciled to the user's ACTUAL asset filenames (.wav) ──
+  { key: 'grease_beat', file: 'sfx_the_beat_whistle.wav', bus: 'sfx', vol: 0.8 }, // a cop's whistle
+  { key: 'grease_bench', file: 'sfx_the_bench_gavel.wav', bus: 'sfx', vol: 0.8 }, // a gavel
+  { key: 'grease_cityhall', file: 'sfx_city_hall_stamp.wav', bus: 'sfx', vol: 0.8 }, // a wax stamp
+  { key: 'grease_bureau', file: 'sfx_the_bureau_receiver_click.wav', bus: 'sfx', vol: 0.8 }, // a phone receiver
+  { key: 'wire_routine', file: 'sfx_the_wire_soft_ring.wav', bus: 'sfx', vol: 0.4 }, // soft tick
+  { key: 'wire_crisis', file: 'sfx_the_wire_crisis_double_ring.wav', bus: 'sfx', vol: 0.85, urgent: true }, // 📞 needs-you ring
+  { key: 'door', file: 'sfx_door_slam.wav', bus: 'sfx', vol: 0.7 },
+  { key: 'typewriter', file: 'sfx_typewriter_log.wav', bus: 'sfx', vol: 0.5 },
+  // ── federal ladder — RTS-30e-audio: the user shipped DISTINCT 50/70/85 cues, so each rung is its own clip ──
+  { key: 'federal_notice', file: 'sfx_federal_50_notice.wav', bus: 'sfx', vol: 0.8, urgent: true }, // NOTICE @ 50
+  { key: 'federal_watch', file: 'sfx_federal_70_watch.wav', bus: 'sfx', vol: 0.8, urgent: true }, // WATCH @ 70
+  { key: 'federal_raid', file: 'sfx_federal_85_raid.wav', bus: 'sfx', vol: 0.8, urgent: true }, // RAID @ 85
+  // ── phase + win/lose stings — RTS-30e-audio: win/lose reconciled to the user's exact assets; the four
+  // phase stings ASSUME the user's `sfx_phase_<phase>.wav` convention (confirm the suffixes / see the
+  // rename table in the receipt if the real files differ). ──
+  { key: 'sting_establish', file: 'sfx_phase_establish.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_first_blood', file: 'sfx_phase_first_blood.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_contest', file: 'sfx_phase_contest.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_decapitate', file: 'sfx_phase_decapitate.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_win', file: 'sfx_victory_you_took_the_city.wav', bus: 'sfx', vol: 0.95, urgent: true },
+  { key: 'sting_lose', file: 'sfx_defeat_the_city_took_you.wav', bus: 'sfx', vol: 0.95, urgent: true },
   // ── VO (expected; rotated takes) ──
   { key: 'vo_confirm_1', file: 'LCR_vo_confirm_1.m4a', bus: 'vo', vol: 1 },
   { key: 'vo_confirm_2', file: 'LCR_vo_confirm_2.m4a', bus: 'vo', vol: 1 },

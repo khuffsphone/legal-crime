@@ -47,9 +47,12 @@ export function greaseCueKey(channel: string): string {
   }
 }
 
-/** Federal threshold cue by tier: 50/70 = the teletype escalation, 85 = the siren. */
+/** Federal threshold cue by tier — RTS-30e-audio: the user shipped DISTINCT 50/70/85 clips, so each
+ * rung rings its own cue (NOTICE 50 / WATCH 70 / RAID 85) instead of the old warning/siren pair. */
 export function federalCueKey(tier: number): string {
-  return tier >= 3 ? 'siren' : 'warning';
+  if (tier >= 3) return 'federal_raid'; // RAID @ 85
+  if (tier >= 2) return 'federal_watch'; // WATCH @ 70
+  return 'federal_notice'; // NOTICE @ 50
 }
 
 /** The SFX for an offensive verb (tommy-gun for a raid/ambush; the single pistol report for a hit). */
