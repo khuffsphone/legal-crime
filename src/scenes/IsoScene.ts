@@ -186,7 +186,7 @@ import {
 } from './playability';
 import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
 import { AmbientLife } from './ambientLife';
-import { rollToward } from './fx';
+import { rollToward, winLossCompass } from './fx';
 import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, type RigPose,
 } from './gait';
@@ -358,6 +358,7 @@ export class IsoScene extends Phaser.Scene {
   private districtLabels = new Map<string, Phaser.GameObjects.Text>();
   private strategyPanel?: Phaser.GameObjects.Text;
   private strategyTitle?: Phaser.GameObjects.Text;
+  private compassText?: Phaser.GameObjects.Text; // RTS-34 win/loss compass (hero line of the right rail)
   private pressureBanner?: Phaser.GameObjects.Text;
   private endgameShown = false;
   // RTS-23 — elevated HUD (top bar / channel dials / context card / wire frame / audio seams)
@@ -2186,6 +2187,10 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** The victory/defeat readout when the contest resolves (RTS-17). */
+  /** RTS-34 — the end-state lands as a period NEWSPAPER headline (deco masthead, big headline naming
+   * the win PATH, a one-line story, a week dateline, the "— 30 —" end mark). Brass/soot/newsprint on the
+   * fixed camera. ⭐ The headline is newsprint INK for both win and loss — no static danger-red wash
+   * (red discipline; danger stays MOTION-only). A brass rule under the masthead marks a victory. */
   private showEndgame(): void {
     if (this.endgameShown) return;
     this.endgameShown = true;
@@ -2194,20 +2199,43 @@ export class IsoScene extends Phaser.Scene {
     this.audio?.play(won ? 'sting_win' : 'sting_lose');
     this.audio?.vo([won ? 'vo_win' : 'vo_lose']);
     this.audio?.setPhase(won ? 'TITLE' : 'GAMEOVER');
-    const w = this.scale.width, h = this.scale.height;
-    this.add.rectangle(0, 0, 6000, 4000, PAL.soot, 0.82).setOrigin(0, 0).setScrollFactor(0).setDepth(200000);
+    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
     const last = [...this.state.log].reverse().find((e) => e.kind === 'game-over');
-    // RTS-24: a per-WIN-PATH headline variant — the screen names HOW you won (force / clean / ballot).
     const kind = (last?.data as { kind?: string } | undefined)?.kind;
     const headline = !won ? 'THE CITY TOOK YOU'
       : kind === 'win-go-straight' ? 'YOU WENT STRAIGHT'
       : kind === 'win-mayor' ? 'MR. MAYOR'
       : kind === 'win-dominance' ? 'THE CITY IS YOURS'
       : 'YOU TOOK THE CITY';
-    this.mkText(w / 2, h / 2 - 30, headline, {
-      fontFamily: NOIR_FONT, fontSize: '34px', color: won ? SPEC.brass : SPEC.danger, fontStyle: 'bold',
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
-    this.mkText(w / 2, h / 2 + 16, last?.message ?? '', { fontFamily: NOIR_FONT, fontSize: '15px', color: NOIR_PALETTE.bone }).setOrigin(0.5).setScrollFactor(0).setDepth(200001);
+    const kicker = !won ? 'OUTFIT FOLDS' : kind === 'win-go-straight' ? 'RACKETEER GOES LEGIT'
+      : kind === 'win-mayor' ? 'MACHINE TAKES CITY HALL' : 'A CITY UNDER ONE FAMILY';
+
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    objs.push(this.add.rectangle(0, 0, 6000, 4000, PAL.soot, 0.9).setOrigin(0, 0).setScrollFactor(0).setDepth(200000));
+    const paperW = Math.min(700, w - 56), paperH = Math.min(388, h - 56);
+    const px = cx - paperW / 2, py = cy - paperH / 2;
+    const g = this.add.graphics().setScrollFactor(0).setDepth(200001);
+    g.fillStyle(0xcdc4b0, 1).fillRect(px, py, paperW, paperH);          // aged newsprint
+    g.fillStyle(PAL.ink, 0.05).fillRect(px, py + paperH - 64, paperW, 64); // a faint lower column
+    g.lineStyle(2, PAL.ink, 0.55).strokeRect(px, py, paperW, paperH);
+    g.lineStyle(1, PAL.ink, 0.4); g.strokeRect(px + 7, py + 7, paperW - 14, paperH - 14); // double rule
+    objs.push(g);
+
+    const ink = '#16130f', inkSoft = '#3a322a';
+    objs.push(this.mkText(cx, py + 22, 'THE CHICAGO LEDGER', { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, py + 46, `EXTRA  ·  WEEK ${this.state.tick}  ·  ${kicker}`, { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    // masthead rule — brass for a win, plain ink for a loss
+    g.lineStyle(2, won ? PAL.brass : PAL.ink, won ? 0.95 : 0.5); g.beginPath(); g.moveTo(px + 24, py + 66); g.lineTo(px + paperW - 24, py + 66); g.strokePath();
+
+    objs.push(this.mkText(cx, cy - 6, headline, { fontFamily: NOIR_DISPLAY, fontSize: '40px', color: ink, fontStyle: 'bold', align: 'center', wordWrap: { width: paperW - 60 } }).setOrigin(0.5).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, cy + 44, (last?.message ?? '').toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '14px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 80 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, py + paperH - 26, '— 30 —', { fontFamily: NOIR_FONT, fontSize: '13px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+
+    this.hudFx(...objs);
+    // a brief slam-in (the headline thumps onto the desk)
+    const paperBits = objs.slice(1) as unknown as Phaser.GameObjects.Components.Alpha[];
+    for (const o of paperBits) o.setAlpha(0);
+    this.tweens.add({ targets: paperBits, alpha: 1, duration: 360, ease: 'Quad.Out' });
   }
 
   /** Give a freshly-shaken front a little back-pay so the collect step is immediately playable. */
@@ -2610,7 +2638,10 @@ export class IsoScene extends Phaser.Scene {
       // RTS-25: labels ≥13px; the empire-at-a-glance TOTALS jump to 24px in the condensed display
       // face (was a thin 17px mono — the #1 "hard to read" offender).
       const label = this.mkText(0, 0, cd.label, { fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
-      const value = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '24px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
+      // RTS-34 HUD hierarchy — ONE hero number: NET/wk (the empire's heartbeat) renders LARGER than the
+      // secondary cells, so the eye lands on the trajectory first. Every cell keeps its number + hover.
+      const hero = cd.key === 'net';
+      const value = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: hero ? '30px' : '23px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
       this.topCells.push({ label, value, x: 0, w: 0, key: cd.key });
     }
     this.heatCaption = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
@@ -2655,6 +2686,10 @@ export class IsoScene extends Phaser.Scene {
     this.marketTitle = this.mkText(0, 0, 'THE MARKET  [M]', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
     this.marketBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
+    // RTS-34 — the WIN/LOSS COMPASS: one high-signal line (fastest win path + top threat) so the player
+    // always knows where they're heading and what's coming for them. The hero of the right rail; the
+    // verbose standings sit below it as the inspectable detail.
+    this.compassText = this.mkText(0, 196, '', { fontFamily: NOIR_DISPLAY, fontSize: '14px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001);
     // RTS-16 turf-war standings (right side, under THE WIRE) + rival-pressure telegraph banner.
     this.strategyTitle = this.mkText(0, 196, 'THE CITY', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
     this.strategyPanel = this.mkText(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
@@ -3014,7 +3049,12 @@ export class IsoScene extends Phaser.Scene {
     if (!this.strategyPanel || !this.strategyTitle || !this.pressureBanner) return;
     const right = this.scale.width - 18;
     const standing = cityStanding(this.state);
-    this.strategyTitle.setPosition(right, 256);
+    // RTS-34 — the COMPASS hero line: one read of where you're heading + the top threat.
+    if (this.compassText) {
+      const compass = winLossCompass(this.state);
+      this.setTC(this.compassText, compass.line, compass.threatUrgent ? SPEC.danger : NOIR_PALETTE.brass).setPosition(right, 250);
+    }
+    this.strategyTitle.setPosition(right, 270);
     const lines = [standing.read, ''];
     lines.push(`YOUR HQ: ${Math.round(hqIntegrityOf(this.state.player))}%`);
     // While founding, show the home corner and the path to lock it down (30 → CONTROL_HOLD).
@@ -3050,7 +3090,7 @@ export class IsoScene extends Phaser.Scene {
       lines.push(`${star} ${w.label} ${w.pct}%`);
       lines.push(`   ${w.read.length > 38 ? w.read.slice(0, 37) + '…' : w.read}`);
     }
-    this.setT(this.strategyPanel, lines.join('\n')).setPosition(right, 276);
+    this.setT(this.strategyPanel, lines.join('\n')).setPosition(right, 290);
     this.setC(this.strategyPanel, standing.trajectory === 'dominant' || standing.trajectory === 'ahead' ? NOIR_PALETTE.brass
       : standing.trajectory === 'behind' || standing.trajectory === 'crushed' ? SPEC.danger : NOIR_PALETTE.bone);
 
@@ -3243,7 +3283,7 @@ export class IsoScene extends Phaser.Scene {
         cell.value.setVisible(false);
         this.drawHeatMeter(g, cx, barY, def.w, p.heat, p.federalExposure, p.federalTier);
       } else {
-        this.setTC(cell.value, def.v, def.c).setPosition(cx, barY + 22).setVisible(true);
+        this.setTC(cell.value, def.v, def.c).setPosition(cx, barY + (cell.key === 'net' ? 18 : 22)).setVisible(true);
       }
       this.hudRegions.push({ x: cx - 6, y: barY, w: def.w, h: barH, explain: this.cellExplain(cell.key, p, net) });
       cx += def.w + spreadGap;
