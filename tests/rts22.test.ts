@@ -173,8 +173,8 @@ describe('extort-first re-anchor — rivals build, war comes later', () => {
     expect(expansionRamp(0)).toBeLessThan(0.2);
     expect(targetScore(s, s.rivals[0], playerBlock)).toBeLessThan(targetScore(s, s.rivals[0], neutral) + 1);
 
-    // war phase: the undefended player block becomes the juicy target.
-    s.tick = 12;
+    // war phase: the undefended player block becomes the juicy target (RTS-33: full force ~wk21, not wk8).
+    s.tick = 22;
     expect(targetScore(s, s.rivals[0], playerBlock)).toBeGreaterThan(targetScore(s, s.rivals[0], s.districts[3]));
   });
 

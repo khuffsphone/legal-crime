@@ -270,6 +270,10 @@ export const RIVAL_MENACE_PER_DISTRICT = 14;
 // Off-board rivals "lie low" between moves — federal heat they shed per strategic pulse, so a GROWING
 // rival doesn't self-destruct in a federal bust on a fast clock (the bug that handed idle players a win).
 export const RIVAL_HEAT_BLEED = 6;
+// RTS-33 — a HUMANE learner runway: the rival territorial menace ramp (expansionRamp) is held gentle
+// for this many weeks before it climbs to full war force, so a fumbling new player isn't buried mid-
+// tutorial. Idling STILL loses (agency clause + lose-city) — just later, not an 8-minute execution.
+export const RIVAL_MENACE_GRACE_WEEKS = 4;
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)

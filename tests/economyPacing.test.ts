@@ -60,12 +60,13 @@ describe('the build verbs are reachable in rhythm', () => {
 });
 
 describe('early rivals are dampened, then ramp to a real fight', () => {
-  it('expansionRamp opens very low (~0.15×) and reaches full force by ~week 8 (war emerges later)', () => {
-    expect(expansionRamp(0)).toBeCloseTo(0.15);
-    expect(expansionRamp(2)).toBeCloseTo(0.37);
-    expect(expansionRamp(4)).toBeCloseTo(0.59);
-    expect(expansionRamp(8)).toBe(1); // full war force by ~week 8
-    expect(expansionRamp(20)).toBe(1); // capped
+  it('RTS-33: expansionRamp holds a gentle GRACE window, then ramps to full force by ~week 21 (humane learner runway)', () => {
+    expect(expansionRamp(0)).toBeCloseTo(0.10); // grace — gentle while a new player finds their feet
+    expect(expansionRamp(4)).toBeCloseTo(0.10); // still in the grace window
+    expect(expansionRamp(8)).toBeCloseTo(0.32); // climbing
+    expect(expansionRamp(14)).toBeCloseTo(0.65);
+    expect(expansionRamp(21)).toBe(1); // full war force by ~week 21 (was ~week 8 — too steep, buried learners)
+    expect(expansionRamp(30)).toBe(1); // capped
   });
 
   it('a week-0 rival push is heavily throttled; the war-phase push is full force', () => {
@@ -73,11 +74,11 @@ describe('early rivals are dampened, then ramp to a real fight', () => {
     const rival = s.rivals[0];
     expect(rampedPushAmount(s, rival)).toBeLessThan(rivalPushAmount(rival)); // dampened opening
     expect(rampedPushAmount(s, rival)).toBeLessThanOrEqual(Math.round(rivalPushAmount(rival) * 0.3));
-    s.tick = 9; // war phase
+    s.tick = 22; // deep war phase — the ramp has reached full force
     expect(rampedPushAmount(s, rival)).toBe(rivalPushAmount(rival)); // full force
   });
 
-  it("rivals don't run away early (≤2 OUTWARD grabs by wk2), then press hard mid-game", () => {
+  it("rivals don't run away early (≤2 OUTWARD grabs by wk2), then press hard mid-game (RTS-33: a touch later)", () => {
     const HOMES = ['district-2', 'district-6']; // the two rival starting corners
     const outward = (s: GameState): number =>
       [...districtsHeld(s, 'rival-a'), ...districtsHeld(s, 'rival-b')].filter((d) => !HOMES.includes(d.id)).length;
@@ -86,8 +87,9 @@ describe('early rivals are dampened, then ramp to a real fight', () => {
     // EARLY: dampened — at most a couple of grabs beyond their own homes (was a 5-block runaway).
     expect(outward(s)).toBeLessThanOrEqual(2);
 
-    // MID/LATE: the ramp reaches full force — the war becomes a real fight, they take real ground.
-    s = runWeeks(s, 3); // → week 5
+    // MID/LATE: the ramp reaches full force — the war becomes a real fight, they take real ground (the
+    // softened ramp pushes "press hard" out from ~wk5 to ~wk10, the humane-runway tune).
+    s = runWeeks(s, 8); // → week 10
     expect(outward(s)).toBeGreaterThanOrEqual(4);
   });
 });

@@ -16,6 +16,7 @@ import {
   POLITICIAN_DETERRENCE,
   RIVAL_HEAT_BLEED,
   RIVAL_HQ_STRIKE_DAMAGE,
+  RIVAL_MENACE_GRACE_WEEKS,
   RIVAL_MENACE_PER_DISTRICT,
   RIVAL_PUSH_BASE,
   RIVAL_PUSH_PER_STRENGTH,
@@ -118,7 +119,11 @@ export function passiveAggression(state: GameState, rival: Family): number {
  * scales the strategic PUSH + the appetite for the player's turf, never the player.
  */
 export function expansionRamp(tick: number): number {
-  return Math.min(1, 0.15 + 0.11 * Math.max(0, tick));
+  // RTS-33 — HUMANE LEARNER RUNWAY: the early menace was too steep (full force by ~wk8 → a fully-idle
+  // player was buried by ~wk9, mid-tutorial). Gentler slope + a grace window so a FUMBLING learner has
+  // room to find their feet, ramping to full war force by ~wk18. ⚠ Idling still TRENDS TO LOSS (RTS-31
+  // playerHasAgency + lose-city intact) — just on a longer runway, not an 8-minute execution.
+  return Math.min(1, 0.10 + 0.055 * Math.max(0, tick - RIVAL_MENACE_GRACE_WEEKS));
 }
 
 /** A rival's push this week — `rivalPushAmount` throttled by the early-game `expansionRamp` (and at

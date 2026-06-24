@@ -147,8 +147,9 @@ describe('active rival AI — targets, telegraph, expansion', () => {
   it('an undefended player district can be taken by the rival war (WAR PHASE)', () => {
     const s = big();
     // RTS-22 re-anchor: early on, rivals leave the player's turf alone (extort-first). The contest
-    // for an undefended player block only ignites in the WAR phase (full expansionRamp ~wk 8+).
-    s.tick = 10;
+    // for an undefended player block only ignites in the WAR phase (full expansionRamp — RTS-33
+    // softened the early ramp so full force is now ~wk 21, not ~wk 8).
+    s.tick = 22;
     hold(s, 'district-1', 'player', 51); // weakly held, no guards, next to rival-a's d2
     let captured = false;
     for (let i = 0; i < 8 && !captured; i++) {

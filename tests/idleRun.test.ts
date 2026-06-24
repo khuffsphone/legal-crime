@@ -20,13 +20,14 @@ function idleRun(weeks: number) {
   let s = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
   s.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
   let resolvedKind: string | null = null;
+  let lossWeek = -1;
   for (let w = 0; w < weeks; w++) {
     const dt = skipWeekDt(s.weekElapsed ?? 0, WEEK);
     const obs = updateAndObserve(s, dt, WEEK, PULSE);
     s = obs.state;
-    if (obs.endgame) { resolvedKind = obs.endgame.kind; break; }
+    if (obs.endgame) { resolvedKind = obs.endgame.kind; lossWeek = s.tick; break; }
   }
-  return { s, resolvedKind };
+  return { s, resolvedKind, lossWeek };
 }
 
 describe('RTS-31 idle playthrough — doing nothing must NOT win', () => {
@@ -50,5 +51,11 @@ describe('RTS-31 idle playthrough — doing nothing must NOT win', () => {
   it('the idle player is pressed: HQ takes unprovoked strikes as the rivals out-grow them', () => {
     const { s } = idleRun(40);
     expect(s.player.hqIntegrity ?? 100).toBeLessThan(100); // they came for you even though you never hit them
+  });
+
+  it('RTS-33: the idle loss is on a HUMANE runway — still lost, but well past the old ~wk9 execution', () => {
+    const { s, lossWeek } = idleRun(40);
+    expect(s.status).toBe('lost');      // ⚠ the win-by-inaction exploit stays closed — idling STILL loses
+    expect(lossWeek).toBeGreaterThan(12); // …but a fumbling learner gets real room (was ~wk9 / ~8 min)
   });
 });
