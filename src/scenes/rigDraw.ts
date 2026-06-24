@@ -9,7 +9,7 @@
 import Phaser from 'phaser';
 import { PAL } from './cityArt';
 import {
-  type RigPose, HIP_H, TORSO_H, SHOULDER_HW, HIP_HW, HEAD_H, ARM_DROP,
+  type RigPose, HIP_H, TORSO_H, SHOULDER_HW, HIP_HW, HEAD_H, ARM_DROP, solveTwoBoneLegIK,
 } from './gait';
 
 export interface RigStyle {
@@ -22,9 +22,7 @@ export interface RigStyle {
 export const PLAYER_RIG: RigStyle = { accent: PAL.brass, accentDim: PAL.brassDim, suit: PAL.suitCharcoal, suitDark: PAL.sootDeep };
 export const RIVAL_RIG: RigStyle = { accent: PAL.blood, accentDim: PAL.bloodDim, suit: PAL.charcoal, suitDark: PAL.sootDeep };
 
-const KNEE_FWD = 2.2; // knee leads forward of the hip→foot line (the bent-knee read)
-const KNEE_UP = 1.0;
-const ELBOW_FWD = 1.6;
+const ELBOW_FWD = 1.6; // elbows keep the cheap forward-bulge (arms read fine without IK)
 type Pt = { x: number; y: number };
 
 /** Cheap forward-bulged midpoint (no IK): the joint sits at the limb midpoint, nudged forward + up so
@@ -57,11 +55,13 @@ export function drawThugRig(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigS
   const shL: Pt = { x: shoulderCx - SHOULDER_HW, y: shoulderCy };
   const shR: Pt = { x: shoulderCx + SHOULDER_HW, y: shoulderCy };
 
-  // feet (footLift 0 ⇒ planted on the ground at y=0); knees bulge forward of the hip→foot line.
+  // feet (footLift 0 ⇒ planted on the ground at y=0); RTS-34.2 — the KNEE is now solved by two-bone IK
+  // so the foot truly PLANTS (the leg bends naturally over the planted foot) instead of a forward-posed
+  // midpoint that floated. The bend deepens as the body vaults over the contact foot.
   const footL: Pt = { x: p.legL.footDX, y: -p.legL.footLift };
   const footR: Pt = { x: p.legR.footDX, y: -p.legR.footLift };
-  const kneeL = joint(hipL, footL, KNEE_FWD, KNEE_UP);
-  const kneeR = joint(hipR, footR, KNEE_FWD, KNEE_UP);
+  const kneeL = solveTwoBoneLegIK(hipL.x, hipL.y, footL.x, footL.y);
+  const kneeR = solveTwoBoneLegIK(hipR.x, hipR.y, footR.x, footR.y);
 
   // hands swing fore/aft from the shoulders; elbows bulge forward.
   const handL: Pt = { x: shL.x + p.armL.handDX, y: shoulderCy + ARM_DROP - p.armL.handLift };

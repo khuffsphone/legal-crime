@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   advanceGaitPhase, legWalk, legRun, walkPose, runPose, idlePose, poseFor, blendPose,
   locoTarget, easeLoco, rigLOD, FIGURE_PX, WALK_STRIDE, RUN_STRIDE,
+  solveTwoBoneLegIK, THIGH, SHIN, HIP_H,
 } from '../src/scenes/gait';
 
 describe('opposed limbs — diagonal coordination', () => {
@@ -140,6 +141,41 @@ describe('blends + loco — continuous phase, eased state changes', () => {
     const eased = easeLoco(0, 1, 75, 110); // half a tau ≈ partway
     expect(eased).toBeGreaterThan(0);
     expect(eased).toBeLessThan(1);
+  });
+});
+
+describe('RTS-34.2 two-bone IK — the foot PLANTS (knee bends naturally, no over-extension)', () => {
+  const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(bx - ax, by - ay);
+
+  it('the solved knee makes the bones EXACT: |hip→knee| = thigh and |knee→foot| = shin', () => {
+    const hipX = 0, hipY = -HIP_H, footX = 6, footY = 0; // a reachable foot target
+    const k = solveTwoBoneLegIK(hipX, hipY, footX, footY);
+    expect(dist(hipX, hipY, k.x, k.y)).toBeCloseTo(THIGH, 4);
+    expect(dist(k.x, k.y, footX, footY)).toBeCloseTo(SHIN, 4);
+  });
+
+  it('the knee bends FORWARD (+x) — the anatomically correct flex, not backward', () => {
+    // foot straight under the hip: a real leg still breaks the knee forward
+    const k = solveTwoBoneLegIK(0, -HIP_H, 0, 0);
+    expect(k.x).toBeGreaterThan(0.5); // knee bows forward, not on the straight hip→foot line
+  });
+
+  it('the leg cannot OVER-EXTEND: an out-of-reach foot straightens to full reach (knee ≈ on the line)', () => {
+    const reach = THIGH + SHIN;
+    const k = solveTwoBoneLegIK(0, -HIP_H, reach + 30, 0); // far beyond reach
+    // with the target clamped to max reach, hip→knee→foot is nearly straight (knee ~on the hip→foot line)
+    const hipKnee = dist(0, -HIP_H, k.x, k.y);
+    expect(hipKnee).toBeCloseTo(THIGH, 3); // bone length preserved (never stretched)
+  });
+
+  it('a planted stance foot is HIT by the IK through the whole contact window (the foot plants)', () => {
+    for (const ph of [0.0, 0.2, 0.4, 0.6]) {
+      const leg = legWalk(ph);
+      const footX = leg.footDX, footY = -leg.footLift;
+      const k = solveTwoBoneLegIK(0, -HIP_H, footX, footY);
+      expect(dist(k.x, k.y, footX, footY)).toBeCloseTo(SHIN, 4); // the foot is exactly reached → planted
+      expect(Math.hypot(footX, footY + HIP_H)).toBeLessThan(THIGH + SHIN); // never over-extended → bent knee
+    }
   });
 });
 

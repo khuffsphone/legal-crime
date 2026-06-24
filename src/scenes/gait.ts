@@ -14,27 +14,33 @@
 
 // ── tunable rig geometry (px, for the ~56px MID figure — the rts30c scale) ──────────────────────
 export const FIGURE_PX = 56; // rts30c-scale figure height — UNCHANGED (the silhouette/anchor contract)
-export const HIP_H = 20;     // pelvis (hip line) height above the ground point (< leg length ⇒ stepping slack)
+export const HIP_H = 20;     // pelvis (hip line) height above the ground point (< thigh+shin ⇒ the knee
+                            // always carries slack, so the leg reads BENT, never lanky-straight)
 export const TORSO_H = 17;   // hip → shoulder
 export const SHOULDER_HW = 6; // half shoulder width
-export const HIP_HW = 4;      // half hip width
+export const HIP_HW = 4;      // half hip width (GPT hipWidth 8 → ±4)
 export const HEAD_H = 8;      // shoulder → head center
 export const ARM_DROP = 14;   // shoulder → relaxed hand drop
+// RTS-34.2 — TWO-BONE leg bones (GPT's gait-math numbers) for the IK foot-plant. Their sum (26.5) is
+// well over HIP_H (20) so the knee is always meaningfully bent (the cure for the lanky over-extended leg).
+export const THIGH = 13.5;
+export const SHIN = 13;
+export const FOOT_LEN = 5;
 
-// ── tunable gait degrees/lengths (Design's seed 46/92 hand-tuned to THIS 56px figure until the skip
-// was gone: a 46px stride throws a ±23px foot past the ±8px rest stance — the splits, not a step — so
-// the stride is tuned to a ±12px excursion that reads as a planted, moderate pace; the run keeps the
-// ~1.8× longer-stride relationship). The anti-skate (cadence ∝ distance) holds at any stride. ──────
-export const WALK_STRIDE = 36; // px of ground travel per full gait cycle at a walk (tuned from 46)
-export const RUN_STRIDE = 78;  // a run lengthens the stride (tuned from 92)
+// ── tunable gait values (RTS-34.2 — re-tuned to GPT's gait-math seed to fix the "lanky/hopping" read:
+// the cure was REDUCE VERTICAL BOB (2.4 → 0.8, now <1px for the walk) + a real two-bone IK foot-plant
+// (rigDraw) instead of a forward-posed midpoint knee. STRIDE = walkStep×2 since the phase clock counts a
+// full L+R cycle. The anti-skate (cadence ∝ distance, planted-foot world-fixed) holds at any value. ──
+export const WALK_STRIDE = 28; // = walkStep 14 ×2 (was 36 — shorter, less reaching/lanky)
+export const RUN_STRIDE = 42;  // = runStep 21 ×2 (was 78)
 const WALK_DUTY = 0.62;        // fraction of the cycle a foot is PLANTED (>0.5 ⇒ always one foot down)
-const RUN_DUTY = 0.34;         // <0.5 ⇒ a FLIGHT phase (both feet airborne — the run "float")
-const WALK_LIFT = 5;           // swing-foot peak lift
-const RUN_LIFT = 8;
-const WALK_VAULT = 2.4;        // pelvis rise at mid-stance (the body vaulting over the planted leg)
-const RUN_VAULT = 4.2;
-const WALK_SWAY = 1.0;         // lateral weight shift
-const WALK_ARM = 7;            // hand fore/aft swing amplitude
+const RUN_DUTY = 0.42;         // a run shortens the stance → a brief float (was 0.34)
+const WALK_LIFT = 3;           // swing-foot peak lift (GPT walkFootLift 3; was 5)
+const RUN_LIFT = 6;            // (was 8)
+const WALK_VAULT = 0.8;        // ⭐ pelvis rise at mid-stance — UNDER 1px for the walk (was 2.4 → the hop)
+const RUN_VAULT = 1.8;         // a run gets a touch more (was 4.2)
+const WALK_SWAY = 1.6;         // lateral hip shift (GPT 1-2.5; was 1.0)
+const WALK_ARM = 7;            // hand fore/aft swing amplitude (the arm opposes its leg)
 const RUN_ARM = 12;
 const WALK_TWIST = 3;          // shoulder counter-rotation vs the hips (opposed)
 const RUN_TWIST = 5;
@@ -89,6 +95,30 @@ export function legWalk(phase: number, stride: number = WALK_STRIDE): LegPose {
 }
 export function legRun(phase: number, stride: number = RUN_STRIDE): LegPose {
   return legGait(phase, stride, RUN_DUTY, RUN_LIFT);
+}
+
+// ── TWO-BONE IK (the foot-PLANT) ─────────────────────────────────────────────────────────────────
+export interface Knee { x: number; y: number; }
+/** Solve hip→knee→foot so the foot HITS its target and the knee bends NATURALLY (law of cosines). This
+ * is what makes the foot PLANT instead of float: given the hip + the foot target (which the gait holds
+ * world-fixed during stance), the knee position is derived — it bends forward and DEEPENS as the body
+ * vaults over the planted foot. Coords are the pose's local space (+x forward, +y DOWN; hip above foot).
+ * The leg can't over-extend (clamped to thigh+shin), so a too-long reach straightens rather than tearing.
+ * bendSign −1 ⇒ the knee bows FORWARD (+x), the anatomically-correct direction for a leg. Pure. */
+export function solveTwoBoneLegIK(
+  hipX: number, hipY: number, footX: number, footY: number,
+  thigh: number = THIGH, shin: number = SHIN, bendSign = -1,
+): Knee {
+  const dx = footX - hipX, dy = footY - hipY;
+  let d = Math.hypot(dx, dy);
+  const maxReach = thigh + shin - 0.001;
+  if (d > maxReach) d = maxReach;     // can't over-extend — straighten to full reach
+  if (d < 1e-4) d = 1e-4;
+  const cosHip = Math.max(-1, Math.min(1, (thigh * thigh + d * d - shin * shin) / (2 * thigh * d)));
+  const hipAng = Math.acos(cosHip);                 // angle between hip→foot line and hip→knee
+  const baseAng = Math.atan2(dy, dx);               // hip→foot direction
+  const kneeAng = baseAng + bendSign * hipAng;
+  return { x: hipX + Math.cos(kneeAng) * thigh, y: hipY + Math.sin(kneeAng) * thigh };
 }
 
 /** An arm swings as a free pendulum in OPPOSITION to its same-side leg. Forward (+) at phase 0 so the

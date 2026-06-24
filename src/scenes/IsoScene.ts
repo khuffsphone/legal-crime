@@ -2666,7 +2666,7 @@ export class IsoScene extends Phaser.Scene {
       const value = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: hero ? '30px' : '23px', color: NOIR_PALETTE.bone, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
       this.topCells.push({ label, value, x: 0, w: 0, key: cd.key });
     }
-    this.heatCaption = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
+    this.heatCaption = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.fog }).setScrollFactor(0).setDepth(100000);
     this.phaseChip = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(100001);
 
     // FOUR CHANNELS — labeled dials (level + what it buys + bump cost). [G] cycles a bump.
@@ -3359,7 +3359,11 @@ export class IsoScene extends Phaser.Scene {
   /** §1D — the LADDERED heat meter: filled to exposure, ENGRAVED ticks at 50/70/85 with their
    * NOTICE/WATCH/RAID labels, a direction arrow, and a named caption. */
   private drawHeatMeter(g: Phaser.GameObjects.Graphics, x: number, barY: number, w: number, _heat: number, exposure: number, tier: number): void {
-    const my = barY + 26, mh = 8, mw = w - 8;
+    // RTS-34.2 — lift the track so the tier labels + caption tuck ONTO it inside the 50px top bar
+    // (they were anchored 14px below the track → spilled below the bar frame, reading as detached
+    // "floating" labels). Layout within the bar: header(≈13) · meter(26-34) · NOTICE/WATCH/RAID(35) ·
+    // caption(45). All y are relative to barY (fixed UI camera) so they re-anchor at every window size.
+    const my = barY + 20, mh = 8, mw = w - 8;
     g.fillStyle(PAL.charcoal, 1).fillRect(x, my, mw, mh);
     g.fillStyle(hexNum(federalBarColor(tier)), 1).fillRect(x, my, mw * Phaser.Math.Clamp(exposure / 100, 0, 1), mh);
     // engraved threshold ticks + tiny NOTICE/WATCH/RAID labels
@@ -3369,13 +3373,13 @@ export class IsoScene extends Phaser.Scene {
       g.lineStyle(1, hexNum(passed ? SPEC.brass : SPEC.bone), passed ? 0.95 : 0.7); // static: brass when passed
       g.beginPath(); g.moveTo(tx, my - 2); g.lineTo(tx, my + mh + 2); g.strokePath();
     }
-    // direction arrow + the named tier caption ("WATCH · exp 72/100 ▲ · raid at 85")
+    // the threshold labels engraved right UNDER their ticks (on the meter track)
+    this.drawLadderLabels(g, x, my + mh + 1, mw);
+    // direction arrow + the named tier caption ("WATCH · exp 72/100 ▲ · raid at 85") below the labels
     const dir = exposure > this.lastHeat + 0.5 ? '▲ rising' : exposure < this.lastHeat - 0.5 ? '▼ cooling' : '◆ steady';
     const name = federalTierLabel(tier);
     const cap = `${name} · exp ${exposure}/100 ${dir} · raid at 85`;
-    if (this.heatCaption) this.setTC(this.heatCaption, cap, tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 3);
-    // the threshold labels engraved under their ticks
-    this.drawLadderLabels(g, x, my + mh + 14, mw);
+    if (this.heatCaption) this.setTC(this.heatCaption, cap, tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 11);
   }
 
   /** Tiny engraved NOTICE/WATCH/RAID labels under their ladder ticks (drawn once-per-frame as text
@@ -3384,7 +3388,7 @@ export class IsoScene extends Phaser.Scene {
   private drawLadderLabels(_g: Phaser.GameObjects.Graphics, x: number, y: number, mw: number): void {
     FEDERAL_LADDER.forEach((t, i) => {
       let lbl = this.ladderLabelPool[i];
-      if (!lbl) { lbl = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '11px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000); this.ladderLabelPool[i] = lbl; }
+      if (!lbl) { lbl = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '9px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000); this.ladderLabelPool[i] = lbl; }
       this.setT(lbl, t.label).setPosition(x + (mw * t.at) / 100, y).setVisible(true);
     });
   }
