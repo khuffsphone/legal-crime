@@ -77,6 +77,17 @@ describe('hasEstablishedIncome / suggestedExtortTarget', () => {
     s.districts[0].control.player = EXTORT_MIN_CONTROL - 1; // drop below the only foothold
     expect(suggestedExtortTarget(s, 'player')).toBeNull();
   });
+
+  it('RTS-31: never points [E] at a front someone ELSE already extorts (it would not be shakeable)', () => {
+    const s = createInitialState(1);
+    // a RIVAL holds the first home front; the objective must skip it (not an un-shaken [%] target) and
+    // suggest the next genuinely un-shaken one — so the first [E] always lands on a real target.
+    s.districts[0].businesses[0].extortedBy = 'rival-a';
+    const t = suggestedExtortTarget(s, 'player');
+    expect(t).not.toBeNull();
+    expect(t!.businessId).not.toBe(s.districts[0].businesses[0].id);
+    expect(s.districts[0].businesses.find((b) => b.id === t!.businessId)!.extortedBy).toBeUndefined();
+  });
 });
 
 describe('firstObjective — the guided next move', () => {

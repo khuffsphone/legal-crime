@@ -10,7 +10,7 @@
 import Phaser from 'phaser';
 import {
   type AudioBus, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
-  combatCueKey, pickTake,
+  combatCueKey, pickTake, conductBeds,
 } from './audioMap';
 
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
@@ -85,6 +85,11 @@ export class AudioManager {
   private urgentUntil = 0; // one urgent sound at a time
   private musicSound?: Phaser.Sound.BaseSound;
   private ambienceSound?: Phaser.Sound.BaseSound;
+  // RTS-31 — the conductor's live beds (≤1 after a crossfade settles) + the beds mid-fade-out, so a
+  // fresh phase change can HARD-CUT a still-fading bed (the crossfade lock) instead of stacking it.
+  private liveBeds: { id: number; bed: string; snd: Phaser.Sound.BaseSound }[] = [];
+  private retiringBeds: Phaser.Sound.BaseSound[] = [];
+  private bedSeq = 0;
   private currentBed = '';
   private currentPhase: MusicPhase = 'TITLE';
   private lastVoIndex = -1;
@@ -177,22 +182,44 @@ export class AudioManager {
     this.setPhase(this.currentPhase, true);
   }
 
-  /** Switch the music bed for a match phase, crossfading. No-op if already on that bed. */
+  /** Switch the music bed for a match phase, crossfading. ONE conductor: on every change it retires
+   * EVERY non-target bed (RTS-31), and HARD-CUTS any bed still fading from a prior change — so rapid
+   * skip-week phase flips can never stack orphan beds (the old bug played 3 beds at once). */
   setPhase(phase: MusicPhase, force = false): void {
     this.currentPhase = phase;
     const bed = musicBedForPhase(phase);
     if (!force && bed === this.currentBed) return;
     this.currentBed = bed;
-    if (!this.loaded.has(bed)) { this.musicSound?.stop(); this.musicSound = undefined; return; }
-    const target = this.bedVol('music', bed);
-    const next = this.scene.sound.add(bed, { loop: DEFS.get(bed)?.loop ?? true, volume: 0 });
-    next.play();
-    this.scene.tweens.add({ targets: next, volume: target, duration: 900 });
-    const prev = this.musicSound;
-    if (prev) {
-      this.scene.tweens.add({ targets: prev, volume: 0, duration: 700, onComplete: () => prev.stop() });
+
+    // CROSSFADE LOCK — a fresh transition arrived: hard-cut any bed still fading out from the last one
+    // so the audible count can't climb past the single outgoing→incoming crossfade pair.
+    for (const snd of this.retiringBeds) { this.scene.tweens.killTweensOf(snd); snd.stop(); }
+    this.retiringBeds = [];
+
+    // Ask the pure conductor which beds to stop / start (guarantees ≤1 live afterward).
+    const decision = conductBeds(
+      this.liveBeds.map((b) => ({ id: b.id, bed: b.bed })),
+      phase,
+      (b) => this.loaded.has(b),
+    );
+    const stopIds = new Set(decision.stop.map((s) => s.id));
+    for (const b of this.liveBeds) {
+      if (!stopIds.has(b.id)) continue;
+      this.scene.tweens.killTweensOf(b.snd);
+      this.retiringBeds.push(b.snd);
+      const snd = b.snd;
+      this.scene.tweens.add({ targets: snd, volume: 0, duration: 600, onComplete: () => { snd.stop(); this.retiringBeds = this.retiringBeds.filter((x) => x !== snd); } });
     }
-    this.musicSound = next;
+    this.liveBeds = this.liveBeds.filter((b) => !stopIds.has(b.id));
+
+    if (decision.start) {
+      const target = this.bedVol('music', bed);
+      const next = this.scene.sound.add(bed, { loop: DEFS.get(bed)?.loop ?? true, volume: 0 });
+      next.play();
+      this.scene.tweens.add({ targets: next, volume: target, duration: 900 });
+      this.liveBeds.push({ id: ++this.bedSeq, bed, snd: next });
+    }
+    this.musicSound = this.liveBeds.length > 0 ? this.liveBeds[this.liveBeds.length - 1].snd : undefined;
   }
 
   /** Briefly duck the music + ambience beds under a sting/VO, then restore. */

@@ -66,7 +66,21 @@ export function playerCollapsed(state: GameState): boolean {
   return p.cash <= 0 && p.dirtyCash <= 0;
 }
 
-export type EndKind = 'win-last-standing' | 'win-dominance' | 'win-go-straight' | 'win-mayor' | 'lose-hq' | 'lose-collapse';
+export type EndKind = 'win-last-standing' | 'win-dominance' | 'win-go-straight' | 'win-mayor' | 'lose-hq' | 'lose-collapse' | 'lose-city';
+
+/**
+ * RTS-31 — EARN THE WIN. Has the player exercised real AGENCY (built or earned something) so a win is
+ * EARNED rather than handed to them by a self-destructing AI? True if they HOLD a district, EARN from
+ * any racket (an extorted front / owned operation), or have accrued civic INFLUENCE. A do-nothing
+ * player — 0 districts, $0 earned, 0 influence — has none, so they cannot be crowned "last standing".
+ */
+export function playerHasAgency(state: GameState): boolean {
+  const p = state.player;
+  if (districtsHeld(state, p.id).length > 0) return true;
+  if (allBusinesses(state).some((b) => businessEarner(b) === p.id)) return true;
+  if ((p.influence ?? 0) > 0) return true;
+  return false;
+}
 
 export interface EndgameResult {
   status: GameState['status'];
@@ -83,6 +97,8 @@ export function evaluateEndgame(state: GameState): EndgameResult | null {
   if (state.status !== 'playing') return null;
   const p = state.player;
 
+  const total = state.districts.length;
+
   // ── losses ──
   if (!p.alive || hqIntegrityOf(p) <= 0) {
     return resolve(state, 'lost', 'lose-hq', 'Your HQ was razed. The city is theirs.');
@@ -90,13 +106,22 @@ export function evaluateEndgame(state: GameState): EndgameResult | null {
   if (playerCollapsed(state)) {
     return resolve(state, 'lost', 'lose-collapse', 'You have nothing left. The outfit is finished.');
   }
+  // RTS-31 — a rival has taken the city out from under you. Doing NOTHING while the rivals expand is a
+  // LOSS, not a safe stalemate: the moment a living rival holds the dominance threshold, you're buried.
+  if (total > 0) {
+    const overlord = state.rivals.find((r) => r.alive && districtsHeld(state, r.id).length / total >= TURF_DOMINANCE);
+    if (overlord) {
+      return resolve(state, 'lost', 'lose-city', `${overlord.name} has taken the city. You were too slow.`);
+    }
+  }
 
   // ── wins ──
   const rivalsLeft = state.rivals.filter((r) => r.alive).length;
-  if (rivalsLeft === 0) {
+  // RTS-31 EARN THE WIN: outlasting a self-destructing AI is not a victory — the player must have
+  // exercised real agency (held turf / earned a racket / built influence) to be crowned last standing.
+  if (rivalsLeft === 0 && playerHasAgency(state)) {
     return resolve(state, 'won', 'win-last-standing', 'The last family standing. The city is yours.');
   }
-  const total = state.districts.length;
   const held = districtsHeld(state, p.id).length;
   if (total > 0 && held / total >= TURF_DOMINANCE) {
     return resolve(state, 'won', 'win-dominance', `You hold the city — ${held} of ${total} blocks. Dominance.`);

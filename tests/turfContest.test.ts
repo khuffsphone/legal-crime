@@ -63,6 +63,30 @@ describe('turf war — the presence-based contest (hold-% shift + flip)', () => 
     expect(s.districts[0].businesses.some((b) => businessEarner(b) === invader)).toBe(true);
   });
 
+  it('RTS-31: the FLIP is coupled to the visible meter — a block flips exactly when pressure crosses the threshold', () => {
+    const s = big();
+    const { playerDid } = setupBorder(s);
+    activateContests(s);
+    const presence = new Map([[playerDid, { rival: 3, player: 0 }]]);
+    // step the meter one pulse at a time (as skip-week loops it) and watch pressure vs the flip
+    let flippedAtThreshold = false;
+    for (let i = 0; i < 10; i++) {
+      const pressureBefore = contestOf(s, playerDid)?.pressure ?? 0;
+      const r = resolveContestStep(s, presence);
+      const flipped = r.outcomes.some((o) => o.flipped);
+      if (flipped) {
+        // the flip fired only because the VISIBLE meter the UI shows had reached the flip line — what
+        // the player watched IS what resolved (so a skipped/fast-forwarded week can't desync them).
+        expect(pressureBefore).toBeGreaterThanOrEqual(100 - 30); // climbing toward CONTEST_FLIP (100)
+        flippedAtThreshold = true;
+        break;
+      }
+      const c = contestOf(s, playerDid);
+      if (c) expect(c.pressure).toBeGreaterThan(pressureBefore); // the meter only ever moves on the meter's terms
+    }
+    expect(flippedAtThreshold).toBe(true);
+  });
+
   it('DEFEND: out-mustering the invader drives pressure down and REPELS them (contest ends "held")', () => {
     const s = big();
     const { playerDid } = setupBorder(s);

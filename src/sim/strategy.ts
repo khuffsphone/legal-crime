@@ -14,7 +14,9 @@ import {
   LOCKOUT_BLEED_CASH,
   LOCKOUT_BLEED_HEAT,
   POLITICIAN_DETERRENCE,
+  RIVAL_HEAT_BLEED,
   RIVAL_HQ_STRIKE_DAMAGE,
+  RIVAL_MENACE_PER_DISTRICT,
   RIVAL_PUSH_BASE,
   RIVAL_PUSH_PER_STRENGTH,
   STRATEGY_PULSE_SECONDS,
@@ -91,6 +93,20 @@ export function rivalStrategicTarget(state: GameState, rival: Family): District 
 /** How hard a rival pushes — base plus a strength bonus, sharpened by aggression (retaliation). */
 export function rivalPushAmount(rival: Family): number {
   return Math.round(RIVAL_PUSH_BASE + familyStrength(rival) * RIVAL_PUSH_PER_STRENGTH + (rival.aggro ?? 0) * 0.1);
+}
+
+/**
+ * RTS-31 — the UNPROVOKED menace a grown rival brings to bear on the player's HQ. Retaliation (aggro,
+ * from being attacked) is only ONE source of danger: a rival that has out-grown the player and entered
+ * the war phase comes for them ANYWAY — so IDLING is dangerous, not safe. Scales with how far the
+ * rival's held turf outstrips the player's, gated by the war ramp (≈0 before the rivals wake → full
+ * force mid/late). Zero unless the rival is alive and actually ahead on the board. Pure.
+ */
+export function passiveAggression(state: GameState, rival: Family): number {
+  if (!rival.alive) return 0;
+  const lead = districtsHeld(state, rival.id).length - districtsHeld(state, state.player.id).length;
+  if (lead <= 0) return 0;
+  return expansionRamp(state.tick) * lead * RIVAL_MENACE_PER_DISTRICT;
 }
 
 /**
@@ -185,14 +201,25 @@ export function resolveStrategicPulse(state: GameState): StrategicEvent {
 
     rival.aggro = Math.max(0, (rival.aggro ?? 0) - AGGRO_DECAY);
 
+    // RTS-31: off-board rivals "lie low" between moves — their fixers keep the federal warrant at bay
+    // and bleed heat, so a GROWING rival doesn't self-destruct in a federal bust on a fast clock (the
+    // old bug that let an idle player wait for the AIs to bust themselves and win by default). Rivals
+    // now grow into a threat instead of dying on their own; the player must take them down by force.
+    rival.fedImminentTicks = 0;
+    rival.bustArmed = false;
+    rival.heat = Math.max(0, rival.heat - RIVAL_HEAT_BLEED);
+
     const target = rivalStrategicTarget(state, rival);
     if (target) {
       const res = pushPresence(state, rival.id, target.id, rampedPushAmount(state, rival));
       if (res) pushes.push(res);
     }
 
-    // Escalation: an enraged, strong rival strikes your HQ — the threat that can end your run.
-    if ((rival.aggro ?? 0) >= AGGRO_HQ_STRIKE && familyStrength(rival) >= ASSASSINATE_MIN_STRENGTH) {
+    // Escalation: a strong rival strikes your HQ — the threat that can end your run. The menace is
+    // retaliation (aggro from being attacked) PLUS the unprovoked pressure of a rival who has out-grown
+    // you (RTS-31), so a PASSIVE player who lets the rivals expand still gets hit — idling trends to loss.
+    const menace = (rival.aggro ?? 0) + passiveAggression(state, rival);
+    if (menace >= AGGRO_HQ_STRIKE && familyStrength(rival) >= ASSASSINATE_MIN_STRENGTH) {
       damageHQ(state, state.player.id, RIVAL_HQ_STRIKE_DAMAGE);
       hqStrikes.push(rival.id);
     }

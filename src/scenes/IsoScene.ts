@@ -526,9 +526,12 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30a: clamp the camera to the WORLD bounds (no black void), and OPEN framed on the player's
     // HQ DISTRICT at MID zoom — the calm, readable home base. The rest is under fog.
     this.setWorldCameraBounds();
+    // RTS-31: frame the player's SEAT (HQ) — where the starting crew now spawns — so the opening view
+    // always contains the crew + HQ. (Falls back to the home plaza if the HQ tile is somehow absent.)
     const home = this.world.districts[0];
-    const c = gridToScreen(home.plaza.gx, home.plaza.gy);
-    cam.centerOn(c.x, c.y - 60);
+    const seat = hqTileOf(this.layout, 'player') ?? home.plaza;
+    const c = gridToScreen(seat.gx, seat.gy);
+    cam.centerOn(c.x, c.y - 20);
     this.targetZoom = ZOOM_STOPS[1]; // MID = the resting view
     cam.setZoom(this.targetZoom);
 
@@ -843,8 +846,13 @@ export class IsoScene extends Phaser.Scene {
     // RTS-29: your two starting button men at the SLOW stroll speed (travel is visible ambient time).
     // NO rival enforcer is spawned — rivals are dormant/off-screen across the fog this slice (the
     // interception path is retained but never triggered while rivals sleep — see RTS-30).
-    this.addUnit(spawnUnit('muscle-1', 3, 2, STROLL_SPEED), 'player');
-    this.addUnit(spawnUnit('muscle-2', 4, 2, STROLL_SPEED), 'player');
+    // RTS-31: spawn them BESIDE the player HQ (in the home district the opening camera frames) — they
+    // used to spawn at the map corner (3,2)/(4,2), OFF the opening view AND a whole map away from the
+    // first extort target, which made the opening crew invisible and the first shakedown a long slog.
+    const hq = hqTileOf(this.layout, 'player');
+    const sx = hq ? hq.gx : 3, sy = hq ? hq.gy + 1 : 2; // just south of the seat (HQ tile itself is a building)
+    this.addUnit(spawnUnit('muscle-1', sx, sy, STROLL_SPEED), 'player');
+    this.addUnit(spawnUnit('muscle-2', sx + 1, sy, STROLL_SPEED), 'player');
   }
 
   /** The nearest player collector currently carrying a take, if any (the rival's prey). */

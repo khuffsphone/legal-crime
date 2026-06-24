@@ -24,6 +24,38 @@ export function stingForPhase(phase: MusicPhase): string {
   return `sting_${phase.toLowerCase().replace(/ /g, '_')}`;
 }
 
+// ── RTS-31 — the MUSIC CONDUCTOR (one bed at a time) ───────────────────────────────────────────
+// The AudioManager owns the Phaser sound objects, but the DECISION of which beds to STOP on each
+// phase change lives here so it's testable Phaser-free. THE INVARIANT: after any phase change at
+// most ONE bed remains live. The old setPhase only retired the single previous bed, so a rapid
+// skip-week phase flip (A→B→A faster than the crossfade) piled up orphan instances — 3 beds at once.
+
+/** A live music bed the manager is currently playing. `id` is a per-instance token (two instances of
+ * the SAME bed are distinct — that is exactly the orphan case the conductor must collapse). */
+export interface BedInstance { id: number; bed: string; }
+
+/** What the conductor decides for a phase change: the bed to START (null ⇒ none/unchanged) and EVERY
+ * live instance to STOP. */
+export interface ConductorDecision { start: string | null; stop: BedInstance[]; }
+
+/**
+ * Pure music conductor: given every currently-live bed instance and the new phase, decide which beds
+ * to STOP and whether to START the target — guaranteeing AT MOST ONE bed is live afterward. If the
+ * sole live bed is already the target, it's a no-op (no restart, no orphan). Otherwise EVERY live
+ * instance is retired and the target started fresh, so rapid transitions can never stack. `isLoaded`
+ * lets the manager say a bed's clip isn't present (then we silence all and start nothing).
+ */
+export function conductBeds(
+  live: BedInstance[],
+  phase: MusicPhase,
+  isLoaded: (bed: string) => boolean = () => true,
+): ConductorDecision {
+  const bed = musicBedForPhase(phase);
+  if (!isLoaded(bed)) return { start: null, stop: [...live] }; // clip missing → silence, start nothing
+  if (live.length === 1 && live[0].bed === bed) return { start: null, stop: [] }; // already settled
+  return { start: bed, stop: [...live] }; // retire everything, start the target clean
+}
+
 /** Which Wire ring a slip earns by severity — needs-you (danger/warning) RINGS (📞 crisis), routine
  * slips get a soft tick. Mirrors the visual NEEDS-YOU priority (progressive disclosure for the ears). */
 export function wireCueForSeverity(severity: string): 'crisis' | 'routine' {

@@ -261,6 +261,13 @@ export const AGGRO_DECAY = 8; // aggression shed per strategic pulse
 export const AGGRO_HQ_STRIKE = 60; // aggression above which a strong rival strikes YOUR HQ
 export const RIVAL_HQ_STRIKE_DAMAGE = 12; // HQ integrity a rival strike costs you
 export const HQ_MAX = 100;
+// RTS-31 — INVERTED THREAT MODEL: idling must be dangerous, not safe.
+// A grown rival presses your HQ even UNPROVOKED — `menace` per district it out-holds you by, gated by
+// the war ramp — so aggro-from-attacks is no longer the only path to a strike (passive players get hit).
+export const RIVAL_MENACE_PER_DISTRICT = 14;
+// Off-board rivals "lie low" between moves — federal heat they shed per strategic pulse, so a GROWING
+// rival doesn't self-destruct in a federal bust on a fast clock (the bug that handed idle players a win).
+export const RIVAL_HEAT_BLEED = 6;
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)

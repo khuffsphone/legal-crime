@@ -25,15 +25,20 @@ export interface ExtortTarget {
 }
 
 /**
- * The best first front to shake down: a front the family does NOT already extort, in a district
- * where it already clears the control gate (so the move is legal). Scans districts then their
+ * The best first front to shake down: an UN-SHAKEN front (nobody is extorting it yet), in a district
+ * where the family already clears the control gate (so the move is legal). Scans districts then their
  * businesses in order, so it is deterministic. Returns null if there is no legal target.
+ *
+ * RTS-31: this must agree with the actual extortable affordance (`extortProgress().extortable`, which
+ * is `extortedBy === undefined`). The old test `extortedBy !== familyId` also matched RIVAL-held
+ * fronts — so the objective could point [E] at a front that isn't actually shakeable, and the first
+ * extort silently no-op'd ("click an un-shaken [%] front"). Only suggest genuinely un-shaken fronts.
  */
 export function suggestedExtortTarget(state: GameState, familyId: string): ExtortTarget | null {
   for (const d of state.districts) {
     if (controlOf(d, familyId) < EXTORT_MIN_CONTROL) continue;
     for (const b of d.businesses) {
-      if (b.kind === 'front' && b.extortedBy !== familyId) {
+      if (b.kind === 'front' && b.extortedBy === undefined) {
         return { businessId: b.id, districtId: d.id, districtName: d.name };
       }
     }

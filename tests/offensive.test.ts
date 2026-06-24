@@ -5,9 +5,9 @@ import {
   resolveRaid, resolveSabotage, resolveAssassinate, resolveLockout,
 } from '../src/sim/offense';
 import {
-  hqIntegrityOf, damageHQ, evaluateEndgame, playerCollapsed, rivalWeakness, weakestRival,
+  hqIntegrityOf, damageHQ, evaluateEndgame, playerCollapsed, playerHasAgency, rivalWeakness, weakestRival,
 } from '../src/sim/endgame';
-import { resolveStrategicPulse } from '../src/sim/strategy';
+import { resolveStrategicPulse, passiveAggression } from '../src/sim/strategy';
 import { updateAndObserve } from '../src/sim/realtime';
 import { incidentsByType } from '../src/sim/ledger';
 import {
@@ -181,15 +181,55 @@ describe('rival escalation — retaliation & HQ strikes', () => {
     expect(ev.hqStrikes).toContain('rival-a');
     expect(hqIntegrityOf(s.player)).toBe(HQ_MAX - RIVAL_HQ_STRIKE_DAMAGE);
   });
+
+  it('RTS-31: a grown, dominant rival strikes your HQ UNPROVOKED — idling is not safe (aggro 0)', () => {
+    const s = big();
+    crew(s.rivals[0], [6, 6, 6]); // strong enough to project force
+    s.rivals[0].aggro = 0; // the player never touched them…
+    s.tick = 12; // …but the war ramp is on…
+    for (const id of ['district-1', 'district-2', 'district-3', 'district-4', 'district-5']) hold(s, id, 'rival-a', 60); // …and they out-hold you
+    expect(passiveAggression(s, s.rivals[0])).toBeGreaterThanOrEqual(AGGRO_HQ_STRIKE);
+    const ev = resolveStrategicPulse(s);
+    expect(ev.hqStrikes).toContain('rival-a'); // they came for you anyway
+  });
+
+  it('RTS-31: a rival never self-destructs in a federal bust — the pulse keeps the warrant disarmed', () => {
+    const s = big();
+    s.rivals[0].heat = 100; s.rivals[0].fedImminentTicks = 99; s.rivals[0].bustArmed = true; // primed to bust
+    resolveStrategicPulse(s);
+    expect(s.rivals[0].bustArmed).toBe(false); // the fixers kept the warrant at bay
+    expect(s.rivals[0].fedImminentTicks).toBe(0);
+    expect(s.rivals[0].heat).toBeLessThan(100); // and they lay low (bled heat)
+  });
 });
 
 describe('endgame — win / lose detection', () => {
-  it('WIN: last family standing', () => {
+  it('WIN: last family standing — but only when EARNED (agency)', () => {
     const s = big();
     s.rivals.forEach((r) => (r.alive = false));
+    hold(s, 'district-0', 'player', 60); // RTS-31: the player has built something (held turf)
     const e = evaluateEndgame(s);
     expect(e!.kind).toBe('win-last-standing');
     expect(s.status).toBe('won');
+  });
+
+  it('NO WIN by inaction: rivals gone but the player did nothing (0 turf / $0 earned / 0 influence)', () => {
+    const s = big();
+    s.rivals.forEach((r) => (r.alive = false));
+    for (const d of s.districts) delete d.control.player; // hold nothing
+    expect(playerHasAgency(s)).toBe(false);
+    expect(evaluateEndgame(s)).toBeNull(); // not crowned — earn it
+    expect(s.status).toBe('playing');
+  });
+
+  it('LOSE: a rival takes the city (dominance) — idling is a loss, not a stalemate', () => {
+    const s = big();
+    const total = s.districts.length;
+    const need = Math.ceil(total * 0.6);
+    for (let i = 0; i < need; i++) s.districts[i].control['rival-a'] = 60; // rival holds the majority
+    const e = evaluateEndgame(s);
+    expect(e!.kind).toBe('lose-city');
+    expect(s.status).toBe('lost');
   });
 
   it('WIN: city dominance (hold ≥ threshold)', () => {
@@ -235,6 +275,7 @@ describe('driver — offense + endgame flow through updateAndObserve', () => {
     let s = big();
     // assassinate-eliminate rival-a, then push rival-b to fall, then expect a win.
     s.rivals[0].hqIntegrity = 1; s.rivals[1].alive = false;
+    hold(s, 'district-0', 'player', 60); // RTS-31: the win is earned — the player holds turf
     damageHQ(s, 'rival-a', 5); // rival-a eliminated -> last family standing
     const obs = updateAndObserve(s, 0.01, 1000, 1000);
     s = obs.state;
