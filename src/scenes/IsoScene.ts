@@ -1740,7 +1740,7 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     const hq = hqTileOf(this.layout, 'player');
     if (hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, `OPENED ${kind.toUpperCase()} RACKET`, NOIR_PALETTE.brass); }
-    this.audio?.confirm(); this.fireTipOnce('launder'); // RTS-27 crew confirm + the consigliere's money tip
+    this.audio?.laundering(); this.audio?.confirm(); this.fireTipOnce('launder'); // RTS-34 typewriter (cooking the books) + RTS-27 confirm + money tip
     this.setStatus(`opened a ${kind} racket in ${d.name}`);
   }
 
@@ -2129,7 +2129,7 @@ export class IsoScene extends Phaser.Scene {
     if (!g.ok) { this.setStatus(`LOCKOUT ${w.name}: ${g.reason}`); return; }
     resolveLockout(this.state, w.familyId);
     this.state = harvestIncidents(this.state);
-    this.audio?.combat('lockout'); this.audio?.confirm(); // RTS-27 the Bureau's siren
+    this.audio?.combat('lockout'); this.audio?.lockoutEntry(); this.audio?.confirm(); // RTS-27 siren + RTS-34 door-slam forced entry
     this.setStatus(`the Bureau is locking down ${w.name}`);
   }
 
@@ -2572,7 +2572,8 @@ export class IsoScene extends Phaser.Scene {
     this.revealFog(); // RTS-29: peel back the fog around the HQ + moving units
     this.drawGround(); // RTS-30a: culled ground/streets/parks/fog/washes for the visible tiles only
     this.updateDressingVisibility(); // RTS-30b-ground: fog-reveal + FAR-LOD bulk-hide of static props
-    this.ambient?.update(dt, this.cameras.main); // living-city Pass 1: pooled, culled, LOD'd peds + cars
+    // RTS-34: fog-gate the ambient life — peds/cars only render on revealed tiles (no life through fog).
+    this.ambient?.update(dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
     this.refreshHud();
     this.refreshObjective();
     this.refreshFeed();

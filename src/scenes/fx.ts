@@ -56,3 +56,12 @@ export function winLossCompass(state: GameState): Compass {
   const line = `▸ ${best.label} ${best.pct}%   ·   ${threatUrgent ? '⚠ ' : ''}${threatLabel}`;
   return { pathLabel: best.label, pathPct: best.pct, threatLabel, threatUrgent, line };
 }
+
+// ── fog-gate for ambient life (peds/cars only show on revealed ground) ───────────────────────────
+/** Whether an ambient agent at (gx,gy) should be DRAWN: only on a tile the player has revealed (so
+ * peds/cars no longer wander through the fog). `reveal` is the scene's revealed-tile predicate;
+ * undefined ⇒ always shown (e.g. ?reveal=1 lifts the fog). Pure. */
+export function ambientShown(reveal: ((gx: number, gy: number) => boolean) | undefined, gx: number, gy: number): boolean {
+  return !reveal || reveal(Math.round(gx), Math.round(gy));
+}
+

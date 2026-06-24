@@ -121,3 +121,13 @@ export function cycleVolume(v: number): number {
   const next = step - 0.25;
   return next < -0.001 ? 1 : clampVolume(next);
 }
+
+// ── RTS-34 — orphan-clip wiring (free juice) ─────────────────────────────────────────────────────
+/** Route the previously-UNWIRED clips that shipped in public/audio/ onto sensible EXISTING beats:
+ *  `door` (a door slam) → a LOCKOUT (the Bureau's forced entry on a rival); `typewriter` → LAUNDERING
+ *  (cooking the books on the adding machine). NOTE: the `warning` teletype is intentionally LEFT
+ *  unwired — its thematic home is the federal ladder, which already rings the dedicated NOTICE/WATCH/
+ *  RAID cues (RTS-30e), so wiring it anywhere else would just double a cue. Pure. */
+export function orphanCueKey(beat: 'lockout' | 'launder'): string {
+  return beat === 'lockout' ? 'door' : 'typewriter';
+}

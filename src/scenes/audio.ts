@@ -10,7 +10,7 @@
 import Phaser from 'phaser';
 import {
   type AudioBus, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
-  combatCueKey, pickTake, conductBeds,
+  combatCueKey, pickTake, conductBeds, orphanCueKey,
 } from './audioMap';
 
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
@@ -168,6 +168,9 @@ export class AudioManager {
   federal(tier: number): void { this.play(federalCueKey(tier)); }
   combat(kind: 'raid' | 'ambush' | 'attack' | 'assassinate' | 'sabotage' | 'lockout'): void { this.play(combatCueKey(kind)); }
   mutiny(): void { this.play('mutiny'); }
+  // RTS-34 orphan-clip wiring: door slam under a LOCKOUT (forced entry); typewriter on LAUNDERING.
+  lockoutEntry(): void { this.play(orphanCueKey('lockout')); }
+  laundering(): void { this.play(orphanCueKey('launder')); }
   wire(cue: 'crisis' | 'routine'): void { this.play(cue === 'crisis' ? 'wire_crisis' : 'wire_routine'); }
   confirm(): void { this.vo(['vo_confirm_1', 'vo_confirm_2', 'vo_confirm_3']); }
   tip(which: 'extort' | 'grease' | 'launder' | 'war'): void { this.vo([`vo_tip_${which}`]); }

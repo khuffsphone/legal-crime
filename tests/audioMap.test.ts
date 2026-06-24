@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   musicBedForPhase, stingForPhase, wireCueForSeverity, wireShouldRing, greaseCueKey,
-  federalCueKey, combatCueKey, nextTakeIndex, pickTake, cycleVolume, clampVolume,
+  federalCueKey, combatCueKey, nextTakeIndex, pickTake, cycleVolume, clampVolume, orphanCueKey,
 } from '../src/scenes/audioMap';
 
 describe('music state machine — bed per phase', () => {
@@ -85,5 +85,12 @@ describe('settings volume helpers', () => {
     expect(cycleVolume(0.75)).toBe(0.5);
     expect(cycleVolume(0.25)).toBe(0);
     expect(cycleVolume(0)).toBe(1);
+  });
+});
+
+describe('RTS-34 orphan-clip wiring — the no-seam clips fire on real beats', () => {
+  it('a LOCKOUT plays the door-slam (forced entry); LAUNDERING plays the typewriter', () => {
+    expect(orphanCueKey('lockout')).toBe('door');
+    expect(orphanCueKey('launder')).toBe('typewriter');
   });
 });

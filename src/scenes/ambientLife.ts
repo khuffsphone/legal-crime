@@ -16,6 +16,7 @@ import {
   type CityGraph, type LifeCaps, type WorldLayout,
 } from '../sim';
 import { TEX, PED_COATS, pedTexKey } from './cityArt';
+import { ambientShown } from './fx';
 
 const HW = ISO_TILE_HALF_WIDTH;  // 64
 const HH = ISO_TILE_HALF_HEIGHT; // 32
@@ -93,7 +94,11 @@ export class AmbientLife {
   get carCount(): number { return this.cars.activeCount; }
 
   /** Per-frame tick: LOD by zoom, then cull+simulate+top-up each pool. O(active), no allocation. */
-  update(dt: number, cam: Phaser.Cameras.Scene2D.Camera): void {
+  // RTS-34 — the fog-gate predicate for this frame: an agent is only drawn on a revealed tile.
+  private reveal?: (gx: number, gy: number) => boolean;
+
+  update(dt: number, cam: Phaser.Cameras.Scene2D.Camera, reveal?: (gx: number, gy: number) => boolean): void {
+    this.reveal = reveal;
     const zoom = cam.zoom;
     const far = zoom < FAR_ZOOM;
     const mid = !far && zoom < MID_ZOOM;
@@ -130,7 +135,9 @@ export class AmbientLife {
 
   private simAgent(a: Agent, dt: number, isCar: boolean, mid: boolean, sx: number, sy: number): void {
     const s = a.sprite;
-    s.setVisible(true).setPosition(sx, sy).setDepth(depthValue(a.gx, a.gy) * 10 + (isCar ? 4 : 3));
+    // RTS-34: fog-gate — keep simulating the agent's path, but only DRAW it on a revealed tile (no
+    // peds/cars showing through the fog of war).
+    s.setVisible(ambientShown(this.reveal, a.gx, a.gy)).setPosition(sx, sy).setDepth(depthValue(a.gx, a.gy) * 10 + (isCar ? 4 : 3));
     if (a.pauseT > 0) { a.pauseT -= dt; return; }
     const dx = a.tx - a.gx, dy = a.ty - a.gy;
     const dist = Math.sqrt(dx * dx + dy * dy);

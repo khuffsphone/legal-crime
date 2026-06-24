@@ -1,7 +1,7 @@
 // RTS-34 — pure tests for the make-it-beautiful helpers (no pixels): the cash count-up reaches its
 // target, and the win/loss compass names the fastest path + the top threat.
 import { describe, it, expect } from 'vitest';
-import { rollToward, winLossCompass } from '../src/scenes/fx';
+import { rollToward, winLossCompass, ambientShown } from '../src/scenes/fx';
 import { createInitialState } from '../src/sim/state';
 import { TURF_DOMINANCE } from '../src/sim/constants';
 import type { GameState } from '../src/sim/types';
@@ -58,5 +58,21 @@ describe('winLossCompass — fastest path + top threat', () => {
     const c = winLossCompass(s);
     expect(c.threatUrgent).toBe(false);
     expect(c.threatLabel).toMatch(/no rival holds the city/);
+  });
+});
+
+describe('ambientShown — the fog-gate for ambient life', () => {
+  it('hides an agent on an UNREVEALED tile and shows it on a revealed one', () => {
+    const revealed = new Set(['5,5', '5,6']);
+    const reveal = (gx: number, gy: number) => revealed.has(`${gx},${gy}`);
+    expect(ambientShown(reveal, 5, 5)).toBe(true);   // revealed → drawn
+    expect(ambientShown(reveal, 9, 9)).toBe(false);  // under fog → hidden
+  });
+  it('rounds the continuous agent position to a tile before testing', () => {
+    const reveal = (gx: number, gy: number) => gx === 5 && gy === 6;
+    expect(ambientShown(reveal, 4.7, 5.9)).toBe(true); // rounds to (5,6)
+  });
+  it('no predicate (e.g. ?reveal=1) ⇒ always shown', () => {
+    expect(ambientShown(undefined, 99, 99)).toBe(true);
   });
 });
