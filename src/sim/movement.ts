@@ -49,6 +49,12 @@ export interface MovableUnit {
   routeIndex?: number;
   /** RTS-22 — route phase: walking to the next stop to gather, or banking the take at HQ. */
   routePhase?: 'toStop' | 'toBank';
+  /** RTS-35a — combat condition 0..THUG_MAX_HEALTH. Absent ⇒ full. At 0 the unit is DOWNED. Additive. */
+  health?: number;
+  /** RTS-35a — true once health hit 0 (incapacitated; the combat step removes it from play). */
+  downed?: boolean;
+  /** RTS-35a — seconds until this unit's next combat swing (discrete hits → beats). Absent ⇒ ready. */
+  attackCd?: number;
 }
 
 /** Create an idle unit standing at tile (gx, gy). Plain mover — no faction/role (RTS-2/3). */

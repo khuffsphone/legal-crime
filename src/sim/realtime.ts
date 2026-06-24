@@ -9,6 +9,7 @@
 import { advanceClock } from './clock';
 import { advanceUnits } from './movement';
 import { resolveInterceptions, type InterceptionEvent } from './interception';
+import { resolveProximityCombat, type CombatEvent } from './combat';
 import { advanceStrategy, type StrategicEvent } from './strategy';
 import { evaluateEndgame, type EndgameResult } from './endgame';
 import { harvestIncidents, recordIncident } from './ledger';
@@ -24,6 +25,8 @@ export interface UpdateResult {
   arrivedUnitIds: string[];
   /** Ambushes resolved this step (RTS-4). Empty when no carrying collector was caught. */
   interceptions: InterceptionEvent[];
+  /** RTS-35a — unit-vs-unit combat beats this step (hits + downs) for the render layer. */
+  combat: CombatEvent[];
 }
 
 /**
@@ -44,8 +47,12 @@ export function update(
   }
   const arrivedUnitIds = advanceUnits(state.units, dt);
   const interceptions = resolveInterceptions(state);
+  // RTS-35a: embodied unit combat — opposing thugs within range trade blows (settles AROUND the tick,
+  // on the freshly-advanced positions, before the week settles). Collectors are untouched (robbed via
+  // interception above); this only fights factioned non-collector units.
+  const combat = resolveProximityCombat(state, dt);
   const weeksFired = advanceClock(state, dt, weekDuration);
-  return { weeksFired, arrivedUnitIds, interceptions };
+  return { weeksFired, arrivedUnitIds, interceptions, combat };
 }
 
 export interface ObserveResult {

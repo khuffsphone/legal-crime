@@ -137,6 +137,9 @@ export {
 } from './mapEconomy';
 export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
 export {
+  unitHealth, isCombatant, hostile, enemyInRange, damageUnit, resolveProximityCombat, type CombatEvent,
+} from './combat';
+export {
   federalTierLabel,
   bribeBracket,
   verbChipState,

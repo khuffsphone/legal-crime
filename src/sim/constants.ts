@@ -274,6 +274,13 @@ export const RIVAL_HEAT_BLEED = 6;
 // for this many weeks before it climbs to full war force, so a fumbling new player isn't buried mid-
 // tutorial. Idling STILL loses (agency clause + lose-city) — just later, not an 8-minute execution.
 export const RIVAL_MENACE_GRACE_WEEKS = 4;
+// RTS-35a — embodied unit-vs-unit COMBAT (proximity engagement + a health model). All tunable; read
+// by the pure combat module the real-time wrapper calls (the tick is untouched).
+export const THUG_MAX_HEALTH = 100;          // a thug's combat condition; at 0 it goes DOWN
+export const COMBAT_ENGAGE_RANGE = 1.3;      // tiles — two opposing thugs this close AUTO-engage
+export const COMBAT_MELEE_DAMAGE = 24;       // damage per swing (≈4-5 swings to down a fresh thug)
+export const COMBAT_ATTACK_INTERVAL = 0.8;   // seconds between a unit's swings (discrete hits → beats)
+export const COMBAT_SEEK_RANGE = 6;          // tiles — a rival will break off to ENGAGE a player thug this near
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)

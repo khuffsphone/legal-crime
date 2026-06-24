@@ -157,10 +157,12 @@ import {
   type GameState,
   type MapLayout,
   type Selection,
+  COMBAT_SEEK_RANGE,
   type NavGrid,
   type MovableUnit,
   type ThreatView,
   type InterceptionEvent,
+  type CombatEvent,
   type IncidentRecord,
   type IncidentSeverity,
   type ShockKind,
@@ -1053,6 +1055,10 @@ export class IsoScene extends Phaser.Scene {
       for (const id of c.muscleIds) {
         const e = this.state.units.find((u) => u.id === id);
         if (!e) continue;
+        // RTS-35a — fix the inverted AI: a rival muscle ENGAGES a nearby player thug FIRST (defend/
+        // contest the block, not only rob collectors). It breaks off to fight, then resumes the prey/wander.
+        const foe = this.nearestPlayerThug(e);
+        if (foe) { issueMove(e, unitTile(foe), this.navGrid); continue; }
         if (prey) issueMove(e, unitTile(prey), this.navGrid);
         else if (e.path.length === 0 && d) issueMove(e, { gx: cl(d.centroid.gx + Phaser.Math.Between(-2, 2)), gy: cl(d.centroid.gy + Phaser.Math.Between(-2, 2)) }, this.navGrid);
       }
@@ -1071,6 +1077,19 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** Remove a unit + its view (turf-war invaders that have been repelled/won). */
+  /** RTS-35a — the nearest live player thug (combatant, non-collector) within seek range of `from`, if
+   * any. Drives a rival's decision to break off and ENGAGE a player unit. */
+  private nearestPlayerThug(from: MovableUnit): MovableUnit | undefined {
+    let best: MovableUnit | undefined;
+    let bestD = COMBAT_SEEK_RANGE;
+    for (const u of this.state.units) {
+      if (u.factionId !== 'player' || u.role === 'collector' || u.downed) continue;
+      const d = Math.hypot(u.pos.gx - from.pos.gx, u.pos.gy - from.pos.gy);
+      if (d < bestD) { bestD = d; best = u; }
+    }
+    return best;
+  }
+
   private removeUnitById(id: string): void {
     const idx = this.units.findIndex((v) => v.unit.id === id);
     if (idx >= 0) {
@@ -1119,6 +1138,7 @@ export class IsoScene extends Phaser.Scene {
     this.processExtortArrivals();
     if (obs.result.weeksFired > 0) this.syncBusinessCollectors();
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
+    for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) this.flashTerritory(cap.districtId, cap.before === 'player');
@@ -1995,6 +2015,27 @@ export class IsoScene extends Phaser.Scene {
   private triggerHitReact(unitId: string): void {
     const v = this.units.find((u) => u.unit.id === unitId);
     if (v) v.hitUntil = this.time.now + MOTION.hitFlinch;
+  }
+
+  /** RTS-35a — render a unit-vs-unit combat beat from the pure sim (resolveProximityCombat): the
+   * attacker SWINGS/FIRES (melee swing or ranged recoil by its weapon — reusing the RTS-30e motion
+   * system, not a duplicate helper), the struck thug FLINCHES, and on a DOWN the kill beat fires
+   * (one danger-MOTION flash → desaturated slump → near-black pool, NEVER rival-red) + the view drops
+   * + a "down" line rides The Wire. Combat SFX punctuate the beats. */
+  private playCombatBeat(ev: CombatEvent): void {
+    const c = gridToScreen(ev.gx, ev.gy);
+    const attacker = this.units.find((v) => v.unit.id === ev.attackerId);
+    if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x); // melee swing / ranged recoil by weapon
+    if (ev.kind === 'hit') {
+      this.triggerHitReact(ev.unitId);
+      if (ev.weapon) { this.combatContact(c.x, c.y, 'muzzle'); this.audio?.combat('attack'); } // ranged report (melee has no committed punch SFX yet)
+    } else {
+      const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
+      this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool)
+      this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
+      this.audio?.combat('assassinate');       // a decisive report punctuates the down
+      this.setStatus(faction === 'player' ? 'one of your thugs went DOWN — pull back or reinforce' : 'a rival thug went DOWN in the brawl');
+    }
   }
 
   /** RTS-30e — the CONTACT vfx at a target (world coords). All MOTION pulses, never a static mark:
