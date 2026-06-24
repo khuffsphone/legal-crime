@@ -182,10 +182,11 @@ import { AudioManager } from './audio';
 import { cycleVolume } from './audioMap';
 import type { MusicPhase } from './audioMap';
 import {
-  nextTimeScale, scaledDt, skipWeekDt,
+  nextTimeScale, scaledDt, skipWeekDt, flagEnabled,
 } from './playability';
 import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
 import { AmbientLife } from './ambientLife';
+import { rollToward } from './fx';
 import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, type RigPose,
 } from './gait';
@@ -434,6 +435,12 @@ export class IsoScene extends Phaser.Scene {
   // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
   // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
   private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
+  // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
+  // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
+  private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
+  private grain?: Phaser.GameObjects.TileSprite;
+  private vignette?: Phaser.GameObjects.Graphics;
+  private shownCash = 0; private shownNet = 0; private cashInit = false; // RTS-34 top-bar count-up state
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
   private actionTitle?: Phaser.GameObjects.Text; // RTS-28 ACTION BOARD (retired by the rts30b-ui toolbar)
   private actionBody?: Phaser.GameObjects.Text;
@@ -573,6 +580,8 @@ export class IsoScene extends Phaser.Scene {
     this.buildAudioPanel();
     // RTS-30a: split the world + HUD onto two cameras (AFTER all HUD exists) so the HUD never zooms.
     this.setupUiCamera();
+    // RTS-34: the noir mood overlay (grain + vignette) on the fixed UI camera, below every HUD element.
+    this.buildFxOverlay();
     // consigliere: the extort-first tip on a fresh load (gated to once)
     this.fireTipOnce('extort');
   }
@@ -717,6 +726,19 @@ export class IsoScene extends Phaser.Scene {
       const rec = { img, gx: p.gx, gy: p.gy };
       this.dressing.push(rec);
       this.dressingDark.push(rec);
+      // RTS-34: a warm AMBER light POOL on the wet asphalt under each lamppost (soft radial alpha,
+      // additive → reads as gaslight catching the rain-slick street; never a bright white). It rides the
+      // SAME fog-reveal / FAR-cull lifecycle as the prop (pushed into the dressing lists). Depth sits just
+      // above the ground so units + the lamp draw OVER the pool.
+      if (p.kind === 'lamppost' && this.fxEnabled) {
+        const pool = this.add.image(c.x, c.y + 6, TEX.glow).setOrigin(0.5)
+          .setScale(2.4, 1.25).setTint(PAL.lamp).setAlpha(0.15)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(depthValue(p.gx, p.gy) * 10 + 1).setVisible(false);
+        const poolRec = { img: pool, gx: p.gx, gy: p.gy };
+        this.dressing.push(poolRec);
+        this.dressingDark.push(poolRec);
+      }
     }
   }
 
@@ -1350,10 +1372,24 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** Banked beat (RTS-15): coins arc to the HQ vault, a 90ms 1.04x camera punch, satchel deflates. */
+  /** RTS-34 — a brief BRASS sparkle off the top-bar CLEAN-cash cell so a bank reads as the number
+   * LANDING (pairs with the count-up roll). UI-camera only; brass, restrained (4 motes, ~600ms). */
+  private sparkleCashCell(): void {
+    const cell = this.topCells.find((c) => c.key === 'clean');
+    if (!cell) return;
+    const bx = cell.x, by = cell.label.y + 24;
+    for (let i = 0; i < 4; i++) {
+      const star = this.mkText(bx + Phaser.Math.Between(0, 64), by + Phaser.Math.Between(-2, 8), '✦',
+        { fontFamily: NOIR_FONT, fontSize: '12px', color: '#e3c36a' }).setOrigin(0.5).setScrollFactor(0).setDepth(100003);
+      this.hudFx(star);
+      this.tweens.add({ targets: star, y: star.y - 16, alpha: { from: 0.9, to: 0 }, duration: 560 + i * 50, onComplete: () => star.destroy() });
+    }
+  }
+
   private flashDeposit(collectorId: string, banked: number): void {
     const v = this.units.find((u) => u.unit.id === collectorId);
     if (!v) return;
-    if (banked > 0) this.signalBeat('banked'); // RTS-23 audio seam
+    if (banked > 0) { this.signalBeat('banked'); this.sparkleCashCell(); } // RTS-23 audio seam + RTS-34 cash-land sparkle
     const s = unitScreenPos(v.unit);
     const hq = hqTileOf(this.layout, 'player');
     const vault = hq ? gridToScreen(hq.gx, hq.gy) : { x: s.x, y: s.y - 40 };
@@ -2325,6 +2361,58 @@ export class IsoScene extends Phaser.Scene {
     this.scale.on('resize', () => ui.setSize(this.scale.width, this.scale.height));
   }
 
+  /** RTS-34 — the noir MOOD overlay: a soft dark VIGNETTE + a faint film-GRAIN, both on the fixed UI
+   * camera so they never scale with zoom/pan. Restrained (atmosphere, not a filter) and BELOW every HUD
+   * element so readability is untouched. Cheap: the vignette is drawn ONCE; the grain is a single tiled
+   * sprite jittered a few px/frame. ?fx=off (or toggleFx) removes it entirely. Soot/ink — never red. */
+  private buildFxOverlay(): void {
+    if (!this.fxEnabled) return;
+    const w = this.scale.width, h = this.scale.height;
+    const vig = this.add.graphics().setScrollFactor(0).setDepth(90000);
+    this.drawVignette(vig, w, h);
+    this.vignette = vig;
+    if (!this.textures.exists('lcr_grain')) this.bakeGrain();
+    const grain = this.add.tileSprite(0, 0, w, h, 'lcr_grain').setOrigin(0, 0).setScrollFactor(0).setDepth(90001).setAlpha(0.05);
+    this.grain = grain;
+    this.hudFx(vig, grain); // UI-camera only (the create-time snapshot already passed)
+    this.scale.on('resize', () => { this.drawVignette(vig, this.scale.width, this.scale.height); grain.setSize(this.scale.width, this.scale.height); });
+  }
+
+  /** A rectangular soft vignette: dark ink rings strongest at the edge, fading to nothing toward centre
+   * (so the corners sink into shadow). Drawn once into `g`. */
+  private drawVignette(g: Phaser.GameObjects.Graphics, w: number, h: number): void {
+    g.clear();
+    const rings = 22, reach = Math.min(w, h) * 0.5, band = reach / rings + 1, maxA = 0.5;
+    for (let i = 0; i < rings; i++) {
+      const t = i / rings;            // 0 = outer edge, 1 = inner
+      const inset = t * reach;
+      g.lineStyle(band, PAL.ink, maxA * (1 - t) * (1 - t)); // strongest at the very edge
+      g.strokeRect(inset, inset, w - 2 * inset, h - 2 * inset);
+    }
+  }
+
+  /** Bake a small monochrome speck texture once for the film grain (one-time; render-only, so the
+   * cosmetic randomness here never touches the deterministic sim). */
+  private bakeGrain(): void {
+    const S = 128;
+    const g = this.make.graphics({ x: 0, y: 0 }, false);
+    const specks = Math.floor(S * S * 0.07);
+    for (let i = 0; i < specks; i++) {
+      g.fillStyle(Phaser.Math.Between(0, 1) ? 0xffffff : 0x000000, 1);
+      g.fillRect(Phaser.Math.Between(0, S - 1), Phaser.Math.Between(0, S - 1), 1, 1);
+    }
+    g.generateTexture('lcr_grain', S, S);
+    g.destroy();
+  }
+
+  /** Toggle the mood overlay live (atmosphere vs maximum readability). */
+  private toggleFx(): void {
+    this.fxEnabled = !this.fxEnabled;
+    if (this.fxEnabled && !this.vignette) { this.buildFxOverlay(); return; }
+    this.vignette?.setVisible(this.fxEnabled);
+    this.grain?.setVisible(this.fxEnabled);
+  }
+
   /** RTS-30a — snap to the next/prev of the 3 zoom stops (CLOSE/MID/FAR), anchored to the cursor. */
   private cycleZoom(dir: 1 | -1): void {
     const cur = this.targetZoom;
@@ -2435,6 +2523,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
     this.input.keyboard?.on('keydown-O', () => this.toggleAudioPanel());
     this.input.keyboard?.on('keydown-ZERO', () => { this.audio?.toggleMute(); this.refreshAudioPanel(); });
+    this.input.keyboard?.on('keydown-X', () => { this.toggleFx(); this.setStatus(this.fxEnabled ? 'film grain + vignette ON' : 'film grain + vignette OFF'); }); // RTS-34 mood toggle (also ?fx=off)
     // RTS-28 — pacing: [Space] cycle fast-forward, [>] (period) skip to the next week.
     this.input.keyboard?.on('keydown-SPACE', () => this.cycleFastForward());
     this.input.keyboard?.on('keydown-PERIOD', () => this.skipWeek());
@@ -2465,6 +2554,9 @@ export class IsoScene extends Phaser.Scene {
     this.refreshActionCard(); // RTS-30c-2b: the selected-unit action-icon chips
     this.refreshNight();
     this.refreshFastForward();
+    // RTS-34: jitter the film grain a few px/frame for a subtle moving-emulsion flicker (one cheap
+    // property set; the tile sprite is a single draw call).
+    if (this.grain) this.grain.setTilePosition((_t * 0.07) % 128, (_t * 0.053) % 128);
     this.samplePerf(delta);
 
     const cam = this.cameras.main;
@@ -3117,11 +3209,18 @@ export class IsoScene extends Phaser.Scene {
     // a hairline brass deco rule under the title row
     g.lineStyle(1, PAL.brass, 0.25).beginPath(); g.moveTo(barX + 8, barY + 21); g.lineTo(barX + barW - 8, barY + 21); g.strokePath();
 
+    // RTS-34 CASH JUICE — the empire totals ROLL toward their value (count-up) instead of snapping, so a
+    // bank/spend reads as the number LANDING. Seeded to the real values on the first frame (no opening roll).
+    const dtMs = this.game.loop.delta;
+    if (!this.cashInit) { this.shownCash = p.cleanCash; this.shownNet = net; this.cashInit = true; }
+    else { this.shownCash = rollToward(this.shownCash, p.cleanCash, dtMs); this.shownNet = rollToward(this.shownNet, net, dtMs); }
+    const cleanShown = Math.round(this.shownCash), netShown = Math.round(this.shownNet);
+
     const heatCellW = 300;
     const fixed: Record<string, { v: string; c: string; w: number }> = {
-      clean: { v: `$${p.cleanCash}`, c: NOIR_PALETTE.brass, w: 118 },
+      clean: { v: `$${cleanShown}`, c: NOIR_PALETTE.brass, w: 118 },
       dirty: { v: `$${p.dirtyCash}`, c: p.dirtyCash > 4000 ? '#d98a6a' : NOIR_PALETTE.bone, w: 118 },
-      net: { v: net >= 0 ? `+$${net}` : `-$${Math.abs(net)}`, c: net >= 0 ? SPEC.cashGreen : SPEC.danger, w: 120 },
+      net: { v: netShown >= 0 ? `+$${netShown}` : `-$${Math.abs(netShown)}`, c: netShown >= 0 ? SPEC.cashGreen : SPEC.danger, w: 120 },
       heat: { v: '', c: NOIR_PALETTE.bone, w: heatCellW },
       crew: { v: `${p.crew}`, c: NOIR_PALETTE.bone, w: 64 },
       week: { v: `${hud.week} · ${hud.weekCountdownLabel}`, c: NOIR_PALETTE.bone, w: 150 },
@@ -3525,18 +3624,31 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** A centred banner when the match phase changes (a clear visual beat for audio/VO to hook). */
+  /** RTS-34 — a brief deco PHASE TITLE CARD on a stage change (the phase sting already fires, RTS-30e —
+   * this lands the visual). A brass-framed cartouche with the phase name + a one-line read, on the fixed
+   * camera, ~1.8s, non-blocking (it fades itself). DECAPITATE flashes danger-red — MOTION, never static. */
   private flashPhaseChange(phase: string): void {
-    const labels: Record<string, string> = {
-      'ESTABLISH': 'ESTABLISH YOUR RACKET — EXTORT THE NEIGHBOURHOOD',
-      'FIRST BLOOD': 'FIRST BLOOD — MAKE YOUR MOVE ON A RIVAL',
-      'CONTEST': 'CONTEST THE CITY — THE TURF WAR IS ON',
-      'DECAPITATE': 'DECAPITATE — FINISH A RIVAL FAMILY',
+    const labels: Record<string, { title: string; sub: string }> = {
+      'ESTABLISH': { title: 'ESTABLISH', sub: 'Shake down the neighbourhood — build your racket' },
+      'FIRST BLOOD': { title: 'FIRST BLOOD', sub: 'Make your move on a rival family' },
+      'CONTEST': { title: 'CONTEST', sub: 'The turf war is on — hold your ground' },
+      'DECAPITATE': { title: 'DECAPITATE', sub: 'Finish a rival — take the city' },
     };
-    const label = labels[phase] ?? phase;
-    const t = this.mkText(this.scale.width / 2, 120, label, { fontFamily: NOIR_FONT, fontSize: '22px', color: phase === 'DECAPITATE' ? SPEC.danger : SPEC.brass, fontStyle: 'bold' })
-      .setOrigin(0.5).setScrollFactor(0).setDepth(100002).setScale(0.6).setAlpha(0);
-    this.tweens.add({ targets: t, scale: 1, alpha: 1, duration: 320, ease: 'Back.Out' });
-    this.tweens.add({ targets: t, alpha: 0, y: 100, delay: 1600, duration: 600, onComplete: () => t.destroy() });
+    const meta = labels[phase] ?? { title: phase, sub: '' };
+    const danger = phase === 'DECAPITATE';
+    const accent = danger ? hexNum(SPEC.danger) : PAL.brass;
+    const cx = this.scale.width / 2, cy = 134, cardW = 440, cardH = 78;
+    const card = this.add.graphics().setScrollFactor(0).setDepth(100001).setAlpha(0);
+    card.fillStyle(PAL.ink, 0.9).fillRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH);
+    this.decoFrame(card, cx - cardW / 2, cy - cardH / 2, cardW, cardH, accent, 0.9);
+    const title = this.mkText(cx, cy - 11, meta.title, { fontFamily: NOIR_DISPLAY, fontSize: '30px', color: danger ? SPEC.danger : SPEC.brass, fontStyle: 'bold' })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(100002).setAlpha(0).setScale(0.7);
+    const sub = this.mkText(cx, cy + 19, meta.sub, { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(100002).setAlpha(0);
+    this.hudFx(card, title, sub);
+    this.tweens.add({ targets: [card, sub], alpha: 1, duration: 260, ease: 'Quad.Out' });
+    this.tweens.add({ targets: title, alpha: 1, scale: 1, duration: 300, ease: 'Back.Out' });
+    for (const o of [card, title, sub]) this.tweens.add({ targets: o, alpha: 0, delay: 1500, duration: 500, onComplete: () => o.destroy() });
   }
 
   /** Klaxon vignette (RTS-15): a danger-red edge that pulses when a federal bust is imminent. */
