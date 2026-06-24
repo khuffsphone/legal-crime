@@ -23,6 +23,8 @@ import {
 } from './constants';
 import { familyStrength } from './conflict';
 import { districtsHeld } from './territoryWar';
+import { recruitableEnforcers } from './enforcers';
+import type { WeaponTier } from './types';
 import { canCollect } from './toolbar';
 import { FEDERAL_LADDER } from './hudText';
 import { offenseReadout, expandTargetDistrictId, weeksToAfford, type OffenseKey } from './pacing';
@@ -62,6 +64,46 @@ export interface ActionRequirementInspector {
   nextStep?: string;
   /** A one-line read of the federal-heat cost, when the action draws heat. */
   riskSummary?: string;
+  /** RTS-33 — for RECRUIT: the channel-gated SPECIALIST roster, each with its unlock PATH, so the
+   * why-locked breakdown teaches "grease The Beat to $X to field a PISTOL MAN" — not just "hire a thug".
+   * The player discovers they can build a real crew, not only street muscle. */
+  specialists?: SpecialistGateRow[];
+}
+
+/** RTS-33 — one specialist's recruit gate, surfaced for the inspector: met (unlocked) or missing
+ * (locked behind a grease threshold), with a plain-English unlock path. Pure read of the live gate. */
+export interface SpecialistGateRow {
+  tier: WeaponTier;
+  label: string;
+  state: 'met' | 'missing';
+  channelLabel: string;
+  gateLevel: number;
+  cost: number;
+  current: string;  // current grease on the gating channel, e.g. "$0/wk"
+  required: string; // the gate, e.g. "$10/wk"
+  detail: string;   // "grease The Beat to $10/wk to unlock" | "ready — $350 + 2🔥"
+}
+
+/** The full specialist roster with each unit's live gate + unlock path (RTS-33). Pure read; reuses the
+ * same `recruitableEnforcers` gate the recruit menu shows, so the menu and inspector never disagree. */
+export function specialistRoster(state: GameState): SpecialistGateRow[] {
+  return recruitableEnforcers(state).map(({ tier, spec }) => {
+    const level = state.player.bribes[spec.channel] ?? 0;
+    const unlocked = level >= spec.gateLevel;
+    return {
+      tier,
+      label: spec.label,
+      state: unlocked ? 'met' : 'missing',
+      channelLabel: spec.channelLabel,
+      gateLevel: spec.gateLevel,
+      cost: spec.cost,
+      current: `$${level}/wk`,
+      required: `$${spec.gateLevel}/wk`,
+      detail: unlocked
+        ? `ready — $${spec.cost} + ${spec.heat}🔥`
+        : `grease ${spec.channelLabel} to $${spec.gateLevel}/wk to unlock`,
+    };
+  });
 }
 
 /** The actions the inspector can break down: the per-unit card verbs PLUS the strategic LOCKOUT (bound
@@ -294,6 +336,8 @@ export function buildActionInspector(state: GameState, verb: InspectableActionId
     rows,
     nextStep: st === 'ready' ? undefined : firstMissing ? nextStepFor(firstMissing) : undefined,
     riskSummary: risk ? `${risk.label} → ${risk.current}` : undefined,
+    // RTS-33: RECRUIT also teaches the specialist path (grease a channel → field a real crew).
+    specialists: verb === 'recruit' ? specialistRoster(state) : undefined,
   };
 }
 

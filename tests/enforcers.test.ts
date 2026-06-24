@@ -8,6 +8,8 @@ import {
   totalMusclePresence, recruitableEnforcers,
 } from '../src/sim/enforcers';
 import { familyStrength } from '../src/sim/conflict';
+import { applyCommand } from '../src/sim/commands';
+import { buildActionInspector } from '../src/sim/actionInspector';
 import type { GameState } from '../src/sim/types';
 
 function big(seed = 1): GameState { return createInitialState(seed, { startingCrew: true, bigCity: true }); }
@@ -35,6 +37,38 @@ describe('enforcers — the channel grease GATE', () => {
     const g = enforcerGate(s, 'shotgun');
     expect(g.ok).toBe(false);
     expect(g.reason).toContain(`$${spec.cost}`);
+  });
+});
+
+describe('RTS-33 — the specialist path is REACHABLE + SURFACED', () => {
+  it('the first specialist unlocks through NORMAL grease: greasing The Beat to its gate fields a PISTOL MAN', () => {
+    const s = big();
+    const spec = ENFORCER_SPECS.pistol;
+    expect(enforcerGate(s, 'pistol').ok).toBe(false); // locked at the start (no grease)
+    // grease The Beat through the normal bribe command, in the same $10/wk steps the [G] key uses
+    while ((s.player.bribes[spec.channel] ?? 0) < spec.gateLevel) {
+      applyCommand(s, { type: 'setBribe', familyId: 'player', channel: spec.channel, amount: (s.player.bribes[spec.channel] ?? 0) + 10 });
+    }
+    expect(s.player.bribes[spec.channel]).toBeLessThanOrEqual(spec.gateLevel + 9); // a low, reachable bar
+    s.player.cash = spec.cost;
+    expect(enforcerGate(s, 'pistol').ok).toBe(true); // now recruitable — a real crew is reachable
+    expect(recruitEnforcer(s, 'pistol').ok).toBe(true);
+  });
+
+  it('the RECRUIT inspector SURFACES every specialist with its unlock path (grease The Beat to $X)', () => {
+    const s = big();
+    const insp = buildActionInspector(s, 'recruit');
+    expect(insp.specialists).toBeDefined();
+    expect(insp.specialists!.length).toBe(ENFORCER_TIERS.length);
+    const pistol = insp.specialists!.find((r) => r.tier === 'pistol')!;
+    expect(pistol.state).toBe('missing'); // locked at the start
+    expect(pistol.detail).toContain('grease The Beat'); // the actionable unlock path is shown
+    expect(pistol.detail).toContain(`$${ENFORCER_SPECS.pistol.gateLevel}`);
+    // once greased, the inspector flips it to ready
+    s.player.bribes.police = ENFORCER_SPECS.pistol.gateLevel;
+    const after = buildActionInspector(s, 'recruit').specialists!.find((r) => r.tier === 'pistol')!;
+    expect(after.state).toBe('met');
+    expect(after.detail).toContain('ready');
   });
 });
 

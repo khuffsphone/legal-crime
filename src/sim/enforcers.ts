@@ -69,7 +69,7 @@ export interface RecruitGate { ok: boolean; reason: string; }
 export function enforcerGate(state: GameState, tier: WeaponTier): RecruitGate {
   const spec = ENFORCER_SPECS[tier];
   const level = state.player.bribes[spec.channel] ?? 0;
-  if (level < spec.gateLevel) return { ok: false, reason: `needs ${spec.channelLabel} ≥ $${spec.gateLevel}/wk` };
+  if (level < spec.gateLevel) return { ok: false, reason: `grease ${spec.channelLabel} to $${spec.gateLevel}/wk to unlock` };
   if (state.player.cash < spec.cost) return { ok: false, reason: `need $${spec.cost}` };
   return { ok: true, reason: 'ready' };
 }

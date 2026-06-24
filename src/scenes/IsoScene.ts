@@ -2715,6 +2715,11 @@ export class IsoScene extends Phaser.Scene {
       const nums = r.current && r.required ? `  ${r.current} / ${r.required}` : r.current ? `  ${r.current}` : '';
       lines.push(`${rowSymbol(r.state)} ${r.label}${nums}${r.detail ? `  — ${r.detail}` : ''}`);
     }
+    // RTS-33: RECRUIT teaches the specialist path — each weapon-tier unit + its grease gate / unlock.
+    if (insp.specialists && insp.specialists.length > 0) {
+      lines.push('SPECIALISTS — build a real crew, not just thugs:');
+      for (const s of insp.specialists) lines.push(`${rowSymbol(s.state)} ${s.label}  $${s.cost}  — ${s.detail}`);
+    }
     if (insp.nextStep) lines.push(`→ next: ${insp.nextStep}`);
     return lines.join('\n');
   }
