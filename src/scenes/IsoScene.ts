@@ -420,6 +420,7 @@ export class IsoScene extends Phaser.Scene {
   private lastFederalTier = 0;     // to fire the teletype only when the tier CROSSES up
   private lastMutinyName = '';     // fire the mutiny stinger on the transition, not every frame
   private tipsFired = new Set<string>(); // consigliere tips: first-occurrence gating
+  private rushUsed = false; // RTS-34.1: once the player uses [C] RUSH, the collect tutorial prompt retires
   private audioPanelOpen = false;
   private audioPanel?: Phaser.GameObjects.Text;
   // RTS-28 playability
@@ -607,6 +608,16 @@ export class IsoScene extends Phaser.Scene {
     let detail = o.detail;
     this.highlight.setVisible(false);
     this.routeWarn.setVisible(false);
+
+    // RTS-34.1 — once the player has used [C] RUSH, the collect tutorial has done its job: retire the
+    // banner (collectors are autonomous — they run themselves) so it stops re-nagging each week.
+    if (o.step === 'collect' && this.rushUsed) {
+      this.objTitle.setVisible(false);
+      this.objDetail.setVisible(false);
+      return;
+    }
+    this.objTitle.setVisible(true);
+    this.objDetail.setVisible(true);
 
     if (o.step === 'extort' && o.targetBusinessId) {
       const t = businessTileOf(this.layout, o.targetBusinessId);
@@ -1291,11 +1302,14 @@ export class IsoScene extends Phaser.Scene {
     this.bizBuildings.set(bizId, { ...rec, gfx: roof.gfx, shut, boards });
   }
 
-  /** RTS-22: draw the active player collection route as a faint brass polyline through its stops. */
+  /** RTS-22: draw the player's deliberate [T] AUTOMATED collection route as a faint brass polyline
+   * through its stops. RTS-34.1: EXCLUDE the per-business collector routes (`route-biz-*`, created by
+   * ensureBusinessCollector for the autonomous sea-of-collectors) — those single-stop routes were being
+   * drawn as a stray HQ→business line (the "yellow line" leftover); only the explicit [T] route overlays. */
   private refreshRoute(): void {
     if (!this.routeGfx) return;
     this.routeGfx.clear();
-    const route = this.state.routes?.find((r) => r.familyId === 'player');
+    const route = this.state.routes?.find((r) => r.familyId === 'player' && !r.id.startsWith('route-biz-'));
     if (!route) return;
     const hq = hqTileOf(this.layout, 'player');
     const pts: { x: number; y: number }[] = [];
@@ -1718,7 +1732,14 @@ export class IsoScene extends Phaser.Scene {
       return;
     }
     this.attachView(out.unit, 'player');
+    // RTS-34.1 — make the dispatch a FELT beat, not just copy: a dispatch SOUND (runner out the door)
+    // on top of the crew VO, and a visible brass "RUNNER OUT" punch at the spawn so the player SEES the
+    // collector leave. Collectors stay AUTONOMOUS — this only juices the player-initiated [C] rush.
+    this.audio?.dispatch();
     this.audio?.confirm(); // RTS-27 crew-order confirm on dispatch
+    this.rushUsed = true;  // the player learned [C] — the onboarding prompt can now retire
+    const sp = gridToScreen(out.unit.pos.gx, out.unit.pos.gy);
+    this.floatText(sp.x, sp.y - 34, '▸ RUNNER OUT', NOIR_PALETTE.brass);
     const dName = this.districtName(out.districtId);
     if (out.unit.protectedRun) {
       this.setStatus(`RUSHED a collector from ${dName} for $${out.carrying} — first run rides home SAFE`);

@@ -171,6 +171,9 @@ export class AudioManager {
   // RTS-34 orphan-clip wiring: door slam under a LOCKOUT (forced entry); typewriter on LAUNDERING.
   lockoutEntry(): void { this.play(orphanCueKey('lockout')); }
   laundering(): void { this.play(orphanCueKey('launder')); }
+  // RTS-34.1: the [C] RUSH dispatch beat — a runner heads out the HQ door (reuses the door-slam clip;
+  // distinct from the bank's coin so SEND and ARRIVE don't sound alike).
+  dispatch(): void { this.play('door'); }
   wire(cue: 'crisis' | 'routine'): void { this.play(cue === 'crisis' ? 'wire_crisis' : 'wire_routine'); }
   confirm(): void { this.vo(['vo_confirm_1', 'vo_confirm_2', 'vo_confirm_3']); }
   tip(which: 'extort' | 'grease' | 'launder' | 'war'): void { this.vo([`vo_tip_${which}`]); }
