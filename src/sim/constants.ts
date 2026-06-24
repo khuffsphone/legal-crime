@@ -5,7 +5,9 @@ import type { OperationKind } from './types';
 
 export const EXTORT_RATE = 0.3; // fraction of front base income paid to extorter
 export const EXTORT_MIN_CONTROL = 20; // min control points to extort in a district
-export const EXTORT_HEAT = 3; // heat per tick per extorted business
+export const EXTORT_HEAT = 4; // heat per tick per extorted business (RTS-33: 3→4 — federal attention
+// scales with your extortion FOOTPRINT, so even a modest outfit climbs the NOTICE/WATCH ladder over a
+// normal session; the federal-pressure system was reachable but slow for small outfits, see RTS-33 §1)
 // RTS-11 onboarding tuning: extortion success scales from EXTORT_BASE_CHANCE (at 0 control) up
 // to 1.0 (at full control), plus the muscle bonus. The floor makes a first racket reliably
 // achievable in a try or two so a new player establishes income before the failure timers bite.

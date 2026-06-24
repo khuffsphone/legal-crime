@@ -154,6 +154,50 @@ describe('view-model feedback for the danger chain', () => {
   });
 });
 
+describe('RTS-33 — the federal ladder is REACHABLE in normal play', () => {
+  /** Extort the first `n` un-shaken fronts for `fid` (a normal expanding outfit). */
+  function extortFronts(s: ReturnType<typeof createInitialState>, fid: string, n: number): number {
+    let c = 0;
+    for (const d of s.districts) for (const b of d.businesses) {
+      if (b.kind === 'front' && !b.extortedBy && c < n) { b.extortedBy = fid; c++; }
+    }
+    return c;
+  }
+
+  it('SUSTAINED CRIME climbs the ladder: a modest outfit reaches NOTICE, an aggressive one WATCH+', () => {
+    const modest = createInitialState(1, { bigCity: true });
+    extortFronts(modest, 'player', 4);
+    let modestPeak = 0;
+    for (let w = 0; w < 30; w++) { tick(modest); modestPeak = Math.max(modestPeak, fedWarningTier(federalExposure(modest.player))); }
+    expect(modestPeak).toBeGreaterThanOrEqual(1); // reaches at least NOTICE — the ladder fires in normal play
+
+    const aggressive = createInitialState(1, { bigCity: true });
+    extortFronts(aggressive, 'player', 8);
+    let aggrPeak = 0;
+    for (let w = 0; w < 30; w++) { tick(aggressive); aggrPeak = Math.max(aggrPeak, fedWarningTier(federalExposure(aggressive.player))); }
+    expect(aggrPeak).toBeGreaterThanOrEqual(2); // WATCH / RAID — the reckless path is dangerous
+  });
+
+  it('it is NOT instant: a fresh modest outfit has not drawn NOTICE after a single week', () => {
+    const s = createInitialState(1, { bigCity: true });
+    extortFronts(s, 'player', 4);
+    tick(s);
+    expect(fedWarningTier(federalExposure(s.player))).toBe(0); // the Bureau hasn't noticed yet
+  });
+
+  it('GREASING THE BUREAU cools federal exposure back down (the channel has a real purpose)', () => {
+    const s = createInitialState(1, { bigCity: true });
+    extortFronts(s, 'player', 8);
+    for (let w = 0; w < 12; w++) tick(s);
+    const hot = federalExposure(s.player);
+    expect(fedWarningTier(hot)).toBeGreaterThanOrEqual(1); // the Bureau is onto them
+    s.player.bribes.feds = 80; // grease The Bureau to the cap
+    const cooled = federalExposure(s.player);
+    expect(cooled).toBeLessThan(hot);
+    expect(hot - cooled).toBe(FED_RELIEF_CAP); // by the full relief cap
+  });
+});
+
 describe('determinism with federal telegraphing active', () => {
   it('same seed yields a deeply equal state over many ticks', () => {
     const build = (seed: number) => {
