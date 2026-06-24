@@ -119,12 +119,55 @@ describe('firstObjective — the guided next move', () => {
     expect(o.title).toMatch(/HQ/);
   });
 
-  it('earning with nothing pending is the grow/done step', () => {
+  it('RTS-33: earning with nothing pending no longer DEAD-ENDS — it teaches GREASE next (not done)', () => {
     const s = createInitialState(1);
     s.districts[0].businesses[0].extortedBy = 'player'; // income, but no takings yet, no collector
     const o = firstObjective(s);
-    expect(o.step).toBe('grow');
-    expect(o.done).toBe(true);
+    expect(o.step).toBe('grease');
+    expect(o.done).toBe(false);
+    expect(o.detail).toMatch(/\[G\]/);
+  });
+
+  it('RTS-33: the chain advances PAST earn — grease → hold → specialist → war → win', () => {
+    const s = createInitialState(1, { bigCity: true });
+    // earning: extort the home front
+    s.districts[0].businesses[0].extortedBy = 'player';
+    expect(firstObjective(s).step).toBe('grease');
+
+    // greased a channel → teach HOLD a district
+    s.player.bribes.police = 10;
+    expect(firstObjective(s).step).toBe('hold');
+
+    // hold the home district → teach RECRUIT a SPECIALIST
+    s.districts[0].control.player = 60;
+    expect(firstObjective(s).step).toBe('specialist');
+
+    // fielded a specialist (an enforcer crew member) → teach the TURF WAR
+    s.player.gangsters.push({ id: 'enf-pistol-1-0', name: 'PISTOL MAN', skill: 4, loyalty: 70, upkeep: 18, assignment: { type: 'idle' } });
+    expect(firstObjective(s).step).toBe('war');
+
+    // hold a SECOND district → self-directing: point at the WIN paths (the only `done` step)
+    s.districts[1].control.player = 60;
+    const win = firstObjective(s);
+    expect(win.step).toBe('win');
+    expect(win.done).toBe(true);
+    expect(win.detail).toMatch(/DOMINATION|GO STRAIGHT|MAYOR/);
+  });
+
+  it('RTS-33: only the terminal WIN step is `done` — the player always has a next goal until then', () => {
+    const s = createInitialState(1, { bigCity: true });
+    s.districts[0].businesses[0].extortedBy = 'player';
+    for (const step of ['grease', 'hold', 'specialist', 'war'] as const) {
+      const o = firstObjective(s);
+      expect(o.step).toBe(step);
+      expect(o.done).toBe(false); // never a dead-end before the win
+      // satisfy this step's condition to advance to the next
+      if (step === 'grease') s.player.bribes.police = 10;
+      else if (step === 'hold') s.districts[0].control.player = 60;
+      else if (step === 'specialist') s.player.gangsters.push({ id: 'enf-pistol-1-0', name: 'PISTOL MAN', skill: 4, loyalty: 70, upkeep: 18, assignment: { type: 'idle' } });
+      else if (step === 'war') s.districts[1].control.player = 60;
+    }
+    expect(firstObjective(s).done).toBe(true);
   });
 
   it('hasCarryingCollector is false for an empty collector', () => {

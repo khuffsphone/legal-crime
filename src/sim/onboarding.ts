@@ -7,7 +7,8 @@ import { EXTORT_MIN_CONTROL } from './constants';
 import { allBusinesses } from './economy';
 import { totalUncollected } from './collection';
 import { controlOf } from './territory';
-import type { GameState } from './types';
+import { districtsHeld } from './territoryWar';
+import type { BribeChannel, GameState } from './types';
 
 /** Whether a family has any income source yet: a front it extorts or an operation it owns. */
 export function hasEstablishedIncome(state: GameState, familyId: string): boolean {
@@ -63,7 +64,21 @@ export function carryingRunIsProtected(state: GameState, familyId: string): bool
   );
 }
 
-export type ObjectiveStep = 'extort' | 'collect' | 'protect' | 'grow';
+export type ObjectiveStep =
+  | 'extort' | 'collect' | 'protect' // the earn loop
+  | 'grease' | 'hold' | 'specialist' | 'war' | 'win'; // RTS-33: the mid-game, one beat at a time
+
+/** Total standing grease across the four channels — whether the player has touched the bribe system. */
+export function totalGrease(state: GameState): number {
+  const b = state.player.bribes;
+  return (['police', 'judges', 'politicians', 'feds'] as BribeChannel[]).reduce((sum, ch) => sum + (b[ch] ?? 0), 0);
+}
+
+/** Whether the player has fielded a channel-gated SPECIALIST (enforcer ids are `enf-<tier>-…`), i.e.
+ * built a real crew beyond plain thugs. Pure read — no dependency on the enforcer roster. */
+export function hasSpecialistCrew(state: GameState): boolean {
+  return state.player.gangsters.some((g) => g.id.startsWith('enf-'));
+}
 
 export interface Objective {
   step: ObjectiveStep;
@@ -125,10 +140,60 @@ export function firstObjective(state: GameState): Objective {
     };
   }
 
+  // ── RTS-33: the post-earn progression — the player is earning; teach the MID-GAME one beat at a
+  // time so they always have a next goal until they're self-directing. Each step is a pure completion
+  // check, ordered so a beat already done is simply skipped (never forced to repeat). ──
+  const id2 = state.player.id;
+
+  // 1) GREASE — the four channels are the political toolkit; greasing buys down heat AND unlocks crew.
+  if (totalGrease(state) <= 0) {
+    return {
+      step: 'grease',
+      title: 'GREASE A CHANNEL',
+      detail: 'You\'re earning — now buy some protection. Press [G] to grease a bribery channel ($10/wk). The four channels (The Beat / The Bench / City Hall / The Bureau) buy down heat, slow raids, and UNLOCK weapon specialists. Greasing The Beat is the place to start.',
+      targetBusinessId: null,
+      done: false,
+    };
+  }
+
+  // 2) HOLD — held turf is the board: it unlocks RAID, feeds your standing, and counts toward DOMINATION.
+  if (districtsHeld(state, id2).length < 1) {
+    return {
+      step: 'hold',
+      title: 'HOLD A DISTRICT',
+      detail: 'Press [5] to EXPAND your control in your home block until you HOLD it (≥60%). Held districts are the board state of the war — holding turf unlocks RAID, anchors your standing, and is the road to DOMINATION.',
+      targetBusinessId: null,
+      done: false,
+    };
+  }
+
+  // 3) SPECIALIST — a real crew, not just thugs (the path surfaced in the RECRUIT inspector).
+  if (!hasSpecialistCrew(state)) {
+    return {
+      step: 'specialist',
+      title: 'RECRUIT A SPECIALIST',
+      detail: 'You can field more than street muscle. With The Beat greased to $10/wk, press [6] RECRUIT → PISTOL MAN. Specialists (PISTOL/SHOTGUN/RIFLE via The Beat · HITMAN via The Bench · DEMOLITIONS via City Hall) win the turf war and power the hits — build a real crew.',
+      targetBusinessId: null,
+      done: false,
+    };
+  }
+
+  // 4) WAR — defend your turf / take ground; grow your hold through the turf war.
+  if (districtsHeld(state, id2).length < 2) {
+    return {
+      step: 'war',
+      title: 'WIN THE TURF WAR',
+      detail: 'The rivals will come for your blocks. DEFEND — move muscle into a contested district and your presence holds the meter. Or take ground: [1] RAID rival turf · [2] SABOTAGE their rackets · [4] LOCKOUT a rival with The Bureau. Hold a SECOND district to turn the tide.',
+      targetBusinessId: null,
+      done: false,
+    };
+  }
+
+  // 5) WIN — self-directing now: point at the three roads to taking the city.
   return {
-    step: 'grow',
-    title: "YOU'RE EARNING — BUILD THE EMPIRE",
-    detail: 'Extort-first: shake down MORE storefronts across the neighbourhood, then press [T] to set an automated COLLECTION ROUTE so the take banks itself (guard it — a collector can still be robbed). Grow with [6] RECRUIT more thugs · [5] EXPAND into the next block · [G] grease The Beat to keep heat down · [R] open a racket once you can cover the heat. War comes later: [1] raid · [2] sabotage · [4] lockout · [3] assassinate.',
+    step: 'win',
+    title: 'CLOSE IT OUT — PICK YOUR WIN',
+    detail: 'You run your own outfit now. Three ways to take the city: DOMINATION (hold most of the districts / outlast the rivals) · GO STRAIGHT (launder a clean fortune and retire on top) · GET ELECTED MAYOR (max City Hall + civic influence). Pick your road and finish it.',
     targetBusinessId: null,
     done: true,
   };

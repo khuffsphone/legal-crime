@@ -137,12 +137,12 @@ describe('onboarding teaches defense and first-run safety', () => {
     expect(o.title).toBe('WALK THE TAKE TO HQ');
   });
 
-  it('the grow objective points at the reachable [R] and [G] actions', () => {
+  it('RTS-33: the first post-earn objective teaches GREASE (points at [G]) instead of dead-ending', () => {
     const s = createInitialState(1);
     s.districts[0].businesses[0].extortedBy = 'player';
     const o = firstObjective(s);
-    expect(o.step).toBe('grow');
-    expect(o.detail).toMatch(/\[R\]/);
+    expect(o.step).toBe('grease');
     expect(o.detail).toMatch(/\[G\]/);
+    expect(o.done).toBe(false); // there is always a next goal now
   });
 });
