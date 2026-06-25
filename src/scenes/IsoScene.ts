@@ -145,6 +145,7 @@ import {
   type PropPlacement,
   extortProgress,
   canIssueMoveAndShakedown,
+  isRivalHeldFront,
   frontInteractionPoint,
   applyCommandWithEmbodiedExtortion,
   type EmbodiedExtortionAct,
@@ -1568,8 +1569,18 @@ export class IsoScene extends Phaser.Scene {
     const title = b ? `${b.name}` : 'business';
     const sub = acts.earner === 'player' ? 'yours' : acts.earner ? `${acts.earner}'s` : 'un-shaken';
 
+    // RTS-35d — the EXTORT row reflects the AUTHORITATIVE 35b/35d gate (un-taken front OR a guard-cleared
+    // RIVAL-HELD retake), not the legacy control-foothold gate. A rival-held front reads RETAKE; the gate
+    // hint surfaces "clear the guard first" while a rival still watches the block.
+    const exTile = businessTileOf(this.layout, businessId);
+    const exThug = this.selectedPlayerThug();
+    const exGate = exThug && exTile
+      ? canIssueMoveAndShakedown(this.state, exThug.id, businessId, exTile)
+      : { ok: false, reason: 'select one of your thugs first' };
+    const retakeLabel = isRivalHeldFront(this.state, businessId) ? 'RETAKE' : 'EXTORT';
+
     const rows: { label: string; color: string; enabled: boolean; hint: string; act: () => void }[] = [
-      { label: 'EXTORT', color: acts.extort.ok ? SPEC.brass : NOIR_PALETTE.fog, enabled: acts.extort.ok, hint: acts.extort.reason, act: () => this.commandExtortBusiness(businessId) },
+      { label: retakeLabel, color: exGate.ok ? SPEC.brass : NOIR_PALETTE.fog, enabled: exGate.ok, hint: exGate.reason, act: () => this.commandExtortBusiness(businessId) },
       { label: 'ATTACK', color: acts.attack.ok ? SPEC.danger : NOIR_PALETTE.fog, enabled: acts.attack.ok, hint: acts.attack.reason, act: () => this.commandAttackBusiness(businessId) },
     ];
 
@@ -1599,16 +1610,17 @@ export class IsoScene extends Phaser.Scene {
    * order is gated by canIssueMoveAndShakedown and, on resolve, the wrapper invokes the EXISTING
    * recordExtortVisit conversion. Cost = time + a thug occupied, NOT cash. */
   private commandExtortBusiness(businessId: string): void {
-    const prog = extortProgress(this.state, businessId);
-    if (!prog || !prog.extortable) { this.setStatus('that block already pays — pick an un-shaken [%] front'); return; }
+    const tile = businessTileOf(this.layout, businessId);
+    if (!tile) return;
     // RTS-35b.1 — SELECTION IS AUTHORITATIVE: the order goes to the SELECTED thug, never an arbitrary
     // free one. No selection → require one (the right-click menu is already selection-gated; this matches).
     const thug = this.selectedPlayerThug();
     if (!thug) { this.setStatus('select one of your thugs first, then order the shakedown'); return; }
-    const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId);
+    // RTS-35d — the gate now allows a RETAKE (a rival-held front whose guard is cleared) when given the
+    // front tile, as well as the 35b un-taken front; it states the reason (incl. "clear the guard first").
+    const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId, tile);
     if (!gate.ok) { this.setStatus(gate.reason); return; }
-    const tile = businessTileOf(this.layout, businessId);
-    if (!tile) return;
+    const retake = isRivalHeldFront(this.state, businessId);
     // RTS-35b.1 — a busy selected thug is RE-TASKED (not silently handed off): the wrapper replaces his
     // existing act (dedup by thugId) and issueMove re-paths him — consistent with a MOVE order overriding.
     const wasBusy = this.extortBusyThugIds().has(thug.id);
@@ -1620,9 +1632,12 @@ export class IsoScene extends Phaser.Scene {
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndShakedown', familyId: 'player', thugId: thug.id, frontId: businessId }, () => {}, interaction);
     this.focusBizId = businessId;
     const name = inspectBusiness(this.state, businessId)?.name ?? 'the block';
+    const verb = retake ? 'muscle' : 'shake down';
     this.setStatus(wasBusy
-      ? `pulled your man off his last job — he's on the way to shake down ${name}`
-      : `your man is on the way to shake down ${name} — he leans on it once he's at the door`);
+      ? `pulled your man off his last job — he's on the way to ${verb} ${name}`
+      : retake
+        ? `your man is moving in to muscle ${name} back off the rival — he leans on it once he's at the door`
+        : `your man is on the way to shake down ${name} — he leans on it once he's at the door`);
   }
 
   /** RTS-35b — the thug ids currently committed to an embodied-extortion act (for the re-task readout). */
@@ -1667,7 +1682,10 @@ export class IsoScene extends Phaser.Scene {
         }
         const setup = ensureBusinessCollector(this.state, this.layout, 'player', ev.frontId, this.navGrid);
         if (setup) this.attachView(setup.unit, 'player');
-        this.setStatus(`${name} folded — it pays protection now (a collector is on the way)`);
+        // RTS-35d — a RETAKE reads as muscling the block back off the rival (ownership flipped rival→player).
+        this.setStatus(ev.retook
+          ? `${name} is yours again — muscled it back off the rival (a collector is on the way)`
+          : `${name} folded — it pays protection now (a collector is on the way)`);
         this.extortShoveAt.delete(ev.thugId);
         continue;
       }

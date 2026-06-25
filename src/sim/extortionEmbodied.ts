@@ -12,12 +12,13 @@
 import {
   EXTORT_ABSENCE_GRACE_SECONDS, EXTORT_APPROACH_TIMEOUT_SECONDS, EXTORT_AT_FRONT_RADIUS,
   EXTORT_ENGAGE_SECONDS, EXTORT_INTERRUPT_GRACE_SECONDS, EXTORT_SHAKEDOWN_SECONDS, EXTORT_VISITS_BASE,
-  HARD_INTERRUPT_PROGRESS_RETAINED_RATIO,
+  HARD_INTERRUPT_PROGRESS_RETAINED_RATIO, RETAKE_GUARD_RADIUS,
 } from './constants';
 import { findBusiness } from './commands';
 import { extortProgress, extortResistance, recordExtortVisit } from './extortion';
-import { enemyInRange } from './combat';
+import { enemyInRange, isCombatant } from './combat';
 import type { GameState } from './types';
+import type { MovableUnit } from './movement';
 import type { GridPos } from './iso';
 
 // ── states ───────────────────────────────────────────────────────────────────────────────────────
@@ -79,6 +80,37 @@ export function isAtFront(thug: GridPos, interaction: GridPos, radius: number = 
  * shakedown only advances while this holds (the "no extorting from a distance" rule). Pure. */
 export function isPresentForShakedown(input: ExtortionTickInput): boolean {
   return input.present && input.thugAlive && input.targetValid;
+}
+
+// ── RTS-35d — RETAKING RIVAL-HELD FRONTS ────────────────────────────────────────────────────────
+/** A front HELD by a RIVAL (extortedBy set to a non-player family) — the retake candidate. A front you
+ * already run, or an un-taken one, is NOT rival-held. Pure read. */
+export function isRivalHeldFront(state: GameState, frontId: string): boolean {
+  const b = findBusiness(state, frontId)?.business;
+  return !!b && b.kind === 'front' && b.extortedBy !== undefined && b.extortedBy !== state.player.id;
+}
+
+/** The rival GUARD watching a front: the nearest LIVE rival combatant (non-collector, not downed, not the
+ * player's) within `radius` of the front's tile. undefined ⇒ the guard is CLEARED (the front is open to a
+ * retake). Reuses the 35a combatant definition (isCombatant) — no new combat. Pure read. */
+export function frontGuard(
+  state: GameState, frontTile: GridPos, radius: number = RETAKE_GUARD_RADIUS,
+): MovableUnit | undefined {
+  let best: MovableUnit | undefined;
+  let bestD = radius + 1e-9;
+  for (const u of state.units) {
+    if (!isCombatant(u) || u.factionId === state.player.id) continue; // a live hostile (rival) fighter
+    const d = Math.hypot(u.pos.gx - frontTile.gx, u.pos.gy - frontTile.gy);
+    if (d <= radius && d < bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+
+/** RETAKE eligibility: a RIVAL-HELD front whose GUARD has been CLEARED is re-extortable — you muscle it
+ * back through the existing embodied shakedown. Needs the front's tile (the guard check is spatial); the
+ * scene/act supplies it (the act carries `interaction`). Pure read. */
+export function isRetakeableFront(state: GameState, frontId: string, frontTile: GridPos): boolean {
+  return isRivalHeldFront(state, frontId) && !frontGuard(state, frontTile);
 }
 
 function toInterrupted(act: EmbodiedExtortionAct): void {
@@ -155,13 +187,24 @@ export interface MoveAndShakedownCommand {
 }
 
 /** Whether a MOVE-AND-SHAKEDOWN order is legal: the thug is a live, non-collector unit of the family, and
- * the front is an ELIGIBLE un-paying front (eligibility UNCHANGED — reuses extortProgress). Pure read. */
-export function canIssueMoveAndShakedown(state: GameState, thugId: string, frontId: string): { ok: boolean; reason: string } {
+ * the front is ELIGIBLE. Eligible = an un-taken front (the 35b case) OR — when `frontTile` is supplied
+ * (RTS-35d) — a RIVAL-HELD front whose guard has been CLEARED (retake). A rival-held front that is still
+ * GUARDED is rejected with a "clear the guard first" reason. Pure read. */
+export function canIssueMoveAndShakedown(
+  state: GameState, thugId: string, frontId: string, frontTile?: GridPos,
+): { ok: boolean; reason: string } {
   const thug = state.units.find((u) => u.id === thugId);
   if (!thug || thug.role === 'collector' || thug.downed) return { ok: false, reason: 'no free muscle — pick a thug, or recruit [6]' };
   const prog = extortProgress(state, frontId);
-  if (!prog || !prog.extortable) return { ok: false, reason: 'that block already pays — pick an un-shaken [%] front' };
-  return { ok: true, reason: 'ready' };
+  if (prog?.extortable) return { ok: true, reason: 'ready' };                       // un-taken front (35b)
+  // RTS-35d — retake: a rival-held front is re-extortable once its guard is cleared.
+  if (frontTile && isRivalHeldFront(state, frontId)) {
+    return frontGuard(state, frontTile)
+      ? { ok: false, reason: 'a rival is guarding this block — clear them out, then shake it back' }
+      : { ok: true, reason: 'muscle it back off the rival' };
+  }
+  if (!prog) return { ok: false, reason: 'no such block' };
+  return { ok: false, reason: 'that block already pays — pick an un-shaken [%] front' };
 }
 
 /** Create the act for a move-and-shakedown (state `approach`). The shakedown duration scales with the
@@ -186,6 +229,7 @@ export interface EmbodiedExtortionEvent {
   state: EmbodiedExtortionState; prevState: EmbodiedExtortionState;
   progress: number;
   converted: boolean;   // the front just converted (the EXISTING path fired this tick)
+  retook: boolean;      // RTS-35d — the conversion MUSCLED a rival-held front back (ownership flipped rival→player)
   failed: boolean;
 }
 
@@ -197,7 +241,11 @@ function buildInput(state: GameState, act: EmbodiedExtortionAct): ExtortionTickI
   const present = thugAlive ? isAtFront(thug.pos, act.interaction) : false;
   const attacked = thugAlive && thug ? !!enemyInRange(thug, state.units) : false;
   const prog = extortProgress(state, act.frontId);
-  return { present, attacked, targetValid: !!prog?.extortable, thugAlive, cancelled: !!act.cancelRequested };
+  // RTS-35d — the target stays valid for an un-taken front OR a guard-cleared rival-held one (retake). If a
+  // rival GUARD walks back onto a retake mid-shakedown, this falls false and the act hard-fails (the block
+  // is contested again) — reusing the existing target-lost fail branch, no new logic.
+  const targetValid = !!prog?.extortable || isRetakeableFront(state, act.frontId, act.interaction);
+  return { present, attacked, targetValid, thugAlive, cancelled: !!act.cancelRequested };
 }
 
 /**
@@ -213,7 +261,17 @@ export function advanceEmbodiedExtortion(state: GameState, dt: number): Embodied
   for (const act of acts) {
     const r = tickEmbodiedExtortionAct(act, buildInput(state, act), dt);
     let converted = false;
+    let retook = false;
     if (r.convert) {
+      // RTS-35d — a RETAKE: the front is rival-held. BREAK the rival's claim first (back to neutral) so the
+      // EXISTING conversion path applies — ownership flips rival→player through recordExtortVisit, NOT a new
+      // mechanic. (An un-taken front skips this and converts exactly as in 35b.)
+      const found = findBusiness(state, act.frontId);
+      if (found && isRivalHeldFront(state, act.frontId)) {
+        found.business.extortedBy = undefined;   // rival claim broken — the block is up for grabs
+        found.business.extortVisits = 0;          // reset the resistance counter for the fresh shakedown
+        retook = true;
+      }
       // INVOKE the existing conversion path — drive recordExtortVisit until the front folds (one shakedown
       // delivers the whole resistance; the visit math + the economy are the existing ones, not duplicated).
       let guard = 0;
@@ -221,7 +279,7 @@ export function advanceEmbodiedExtortion(state: GameState, dt: number): Embodied
       converted = true;
     }
     if (r.transitioned || converted) {
-      events.push({ actId: act.id, thugId: act.thugId, frontId: act.frontId, state: act.state, prevState: r.prevState, progress: act.progress, converted, failed: act.state === 'failed' });
+      events.push({ actId: act.id, thugId: act.thugId, frontId: act.frontId, state: act.state, prevState: r.prevState, progress: act.progress, converted, retook, failed: act.state === 'failed' });
     }
   }
   state.extortionActs = acts.filter((a) => a.state !== 'resolve' && a.state !== 'failed');

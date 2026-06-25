@@ -142,6 +142,7 @@ export {
 export {
   tickEmbodiedExtortionAct, advanceEmbodiedExtortion, applyCommandWithEmbodiedExtortion,
   canIssueMoveAndShakedown, createMoveAndShakedownAct, frontInteractionPoint, isAtFront, isPresentForShakedown,
+  isRivalHeldFront, frontGuard, isRetakeableFront,
   type EmbodiedExtortionAct, type EmbodiedExtortionState, type EmbodiedExtortionEvent,
   type ExtortionTickInput, type MoveAndShakedownCommand,
 } from './extortionEmbodied';

@@ -291,6 +291,12 @@ export const EXTORT_ABSENCE_GRACE_SECONDS = 1.2;     // brief absence PAUSES pro
 export const EXTORT_INTERRUPT_GRACE_SECONDS = 2.0;   // window to recover from an attack before the act fails
 export const EXTORT_APPROACH_TIMEOUT_SECONDS = 40;   // safety: a never-arriving approach eventually fails
 export const HARD_INTERRUPT_PROGRESS_RETAINED_RATIO = 0; // an attack is a HARD interrupt: full reset (0); a brief absence only pauses
+// RTS-35d — RETAKING RIVAL-HELD FRONTS. A rival-held front (extortedBy = a rival family) is LOCKED to a
+// shakedown while a rival GUARD watches it; clear the guard via 35a combat and the 35b shakedown muscles
+// it back (ownership flips rival→player through the EXISTING conversion path). The guard is any live rival
+// combatant within this radius of the front — a touch wider than the auto-engage range (a watcher loiters
+// near the block, not just on top of it).
+export const RETAKE_GUARD_RADIUS = 3.0;               // tiles — a rival within this of the front GUARDS it
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)
