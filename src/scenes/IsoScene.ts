@@ -191,6 +191,7 @@ import {
   nextTimeScale, scaledDt, skipWeekDt, flagEnabled,
 } from './playability';
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
+import { orderVerbFor, type OrderTarget } from './orderRouting';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass } from './fx';
 import {
@@ -1516,10 +1517,9 @@ export class IsoScene extends Phaser.Scene {
         return;
       }
       if (p.rightButtonReleased()) {
-        // RTS-22/23: right-click a BUILDING (base tile OR its roof) → EXTORT/ATTACK menu; else MOVE.
-        const bizId = this.businessAtScreen(p.worldX, p.worldY);
-        if (bizId && this.selection.ids.length > 0) this.openBizMenu(bizId, p.x, p.y);
-        else this.commandMove(p);
+        // RTS-35c VERB SPLIT: route the right-click by TARGET TYPE — a rival UNIT → ATTACK, a BUILDING →
+        // the extort/attack menu, empty ground → MOVE (RTS-22/23 building rule preserved within).
+        this.commandContextual(p);
       } else {
         this.commandSelect(p, shift);
       }
@@ -1792,6 +1792,65 @@ export class IsoScene extends Phaser.Scene {
     this.focusBizId = undefined;
     if (!shift) this.selection = clearSelection();
     this.setStatus();
+  }
+
+  /** RTS-35c — the contextual right-click: ROUTE the order by TARGET TYPE (the pure orderVerbFor seam),
+   * so attacking a rival and extorting a front are never confused. A RIVAL UNIT under the cursor → ATTACK
+   * (move-to-engage; 35a proximity combat resolves it); a BUILDING → the EXTORT/ATTACK menu (RTS-22/23,
+   * gated on a selection); empty GROUND → MOVE. No new combat/extortion — pure dispatch to the existing
+   * systems. Selection gating lives in each command (consistent with 35b.1 — selection is authoritative). */
+  private commandContextual(p: Phaser.Input.Pointer): void {
+    const gpoint = screenToGrid(p.worldX, p.worldY);
+    const hitUnit = pickUnit(this.units.map((v) => v.unit), gpoint);
+    const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
+    // a RIVAL COMBATANT (non-collector) is the attack target; collectors stay autonomous (robbed via
+    // interception, never a unit-attack target).
+    const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
+    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    const target: OrderTarget = rival
+      ? { kind: 'rival', unitId: rival.id }
+      : bizId
+        ? { kind: 'front', businessId: bizId }
+        : { kind: 'ground', tile: screenToTile(p.worldX, p.worldY) };
+    const verb = orderVerbFor(target);
+    if (verb === 'attack' && target.kind === 'rival') this.commandAttackUnit(target.unitId);
+    else if (verb === 'extort' && target.kind === 'front') {
+      if (this.selection.ids.length > 0) this.openBizMenu(target.businessId, p.x, p.y);
+      else this.commandMove(p); // no crew selected → a right-click on a building just walks there (legacy rule)
+    } else this.commandMove(p);
+  }
+
+  /** RTS-35c — ATTACK a RIVAL UNIT: order the SELECTED crew to MOVE-TO-ENGAGE it. No new combat — the
+   * thug paths onto the rival and the 35a proximity combat trades blows on contact. Selection is the
+   * actor (consistent with 35b.1); the danger-red intent line + reticle are the attack analog of the
+   * brass extort intent. */
+  private commandAttackUnit(rivalId: string): void {
+    const rival = this.state.units.find((u) => u.id === rivalId);
+    const rivalView = this.units.find((v) => v.unit.id === rivalId);
+    if (!rival || !rivalView || rivalView.faction !== 'rival') return;
+    const thug = this.selectedPlayerThug();
+    if (!thug) { this.setStatus('select one of your thugs first, then order the hit'); return; }
+    // move-to-engage: walk the selected crew onto the rival's tile — auto-engage does the rest.
+    const dest = unitTile(rival);
+    const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, dest, this.navGrid);
+    const from = unitScreenPos(thug), to = unitScreenPos(rival);
+    this.flashAttackIntent(from.x, from.y, to.x, to.y);
+    this.signalBeat('attack');
+    this.setStatus(`${res.moved.length > 1 ? `${res.moved.length} thugs` : 'your man'} moving in on the rival — they trade blows on contact`);
+  }
+
+  /** RTS-35c — the ATTACK intent feedback: the danger-red analog of the brass extort intent line. A
+   * pulsing tether from the thug to the rival + a reticle that snaps onto the target then fades. MOTION
+   * only (a brief fading line + shrinking ring), never a static red wash. */
+  private flashAttackIntent(fromWx: number, fromWy: number, toWx: number, toWy: number): void {
+    const line = this.add.graphics().setDepth(100001);
+    this.worldFx(line);
+    line.lineStyle(2, hexNum(SPEC.danger), 0.9);
+    line.beginPath(); line.moveTo(fromWx, fromWy - 4); line.lineTo(toWx, toWy - 8); line.strokePath();
+    this.tweens.add({ targets: line, alpha: 0, duration: 600, onComplete: () => line.destroy() });
+    const reticle = this.add.circle(toWx, toWy - 8, 16).setStrokeStyle(3, hexNum(SPEC.danger), 0.95).setDepth(100001);
+    this.worldFx(reticle);
+    this.tweens.add({ targets: reticle, scale: 0.5, alpha: 0, duration: 600, ease: 'Quad.Out', onComplete: () => reticle.destroy() });
   }
 
   private commandMove(p: Phaser.Input.Pointer): void {
