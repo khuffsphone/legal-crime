@@ -12,7 +12,7 @@ function firstFront(s: GameState): string {
   for (const d of s.districts) for (const b of d.businesses) if (b.kind === 'front') return b.id;
   throw new Error('no front');
 }
-const NO_CTX: CoreVerbContext = { idleThug: false, extortTarget: false, viceCtx: false, viceAfford: false };
+const NO_CTX: CoreVerbContext = { selectedThug: false, extortTarget: false, viceCtx: false, viceAfford: false };
 
 describe('toolbar core-verb states — pure READY/CONDITIONAL/LOCKED', () => {
   it('KREW is always READY (it just toggles the roster)', () => {
@@ -50,11 +50,11 @@ describe('toolbar core-verb states — pure READY/CONDITIONAL/LOCKED', () => {
     expect(coreVerbState('grease', s, NO_CTX)).toBe('CONDITIONAL');
   });
 
-  it('EXTORT reflects target + idle-thug context (LOCKED → CONDITIONAL → READY)', () => {
+  it('EXTORT reflects target + SELECTED-thug context (LOCKED → CONDITIONAL → READY)', () => {
     const s = big();
     expect(coreVerbState('extort', s, NO_CTX)).toBe('LOCKED'); // no target
-    expect(coreVerbState('extort', s, { ...NO_CTX, extortTarget: true })).toBe('CONDITIONAL'); // target, no thug
-    expect(coreVerbState('extort', s, { ...NO_CTX, extortTarget: true, idleThug: true })).toBe('READY');
+    expect(coreVerbState('extort', s, { ...NO_CTX, extortTarget: true })).toBe('CONDITIONAL'); // target, no thug selected
+    expect(coreVerbState('extort', s, { ...NO_CTX, extortTarget: true, selectedThug: true })).toBe('READY'); // a thug is selected
   });
 
   it('VICE reflects the hovered-racket context (LOCKED → CONDITIONAL → READY)', () => {

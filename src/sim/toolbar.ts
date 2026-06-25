@@ -23,8 +23,9 @@ export function canReinvest(state: GameState): boolean {
 
 /** Scene-only context the core-verb states depend on (resolved view-side, passed in as plain booleans). */
 export interface CoreVerbContext {
-  /** An idle player thug is free to be sent. */
-  idleThug: boolean;
+  /** A player thug is SELECTED to take the order (RTS-35b.1 — selection is authoritative for the
+   * embodied extort: the chip is only READY when the player has picked the thug that will act). */
+  selectedThug: boolean;
   /** A clicked/onboarding [%] front is currently extortable. */
   extortTarget: boolean;
   /** A racket is hovered/selected (the [U] vice context exists). */
@@ -47,7 +48,7 @@ export function coreVerbState(id: CoreVerbId, state: GameState, ctx: CoreVerbCon
     case 'grease':
       return state.player.cash >= 10 ? 'READY' : 'CONDITIONAL';
     case 'extort':
-      return !ctx.extortTarget ? 'LOCKED' : ctx.idleThug ? 'READY' : 'CONDITIONAL';
+      return !ctx.extortTarget ? 'LOCKED' : ctx.selectedThug ? 'READY' : 'CONDITIONAL';
     case 'vice':
       return !ctx.viceCtx ? 'LOCKED' : ctx.viceAfford ? 'READY' : 'CONDITIONAL';
   }

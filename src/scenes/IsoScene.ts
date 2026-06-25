@@ -190,7 +190,7 @@ import type { MusicPhase } from './audioMap';
 import {
   nextTimeScale, scaledDt, skipWeekDt, flagEnabled,
 } from './playability';
-import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
+import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass } from './fx';
 import {
@@ -1601,12 +1601,17 @@ export class IsoScene extends Phaser.Scene {
   private commandExtortBusiness(businessId: string): void {
     const prog = extortProgress(this.state, businessId);
     if (!prog || !prog.extortable) { this.setStatus('that block already pays — pick an un-shaken [%] front'); return; }
-    const thug = this.idlePlayerThug();
-    if (!thug) { this.setStatus('no free muscle — wait for a thug to finish, or recruit [6]'); return; }
+    // RTS-35b.1 — SELECTION IS AUTHORITATIVE: the order goes to the SELECTED thug, never an arbitrary
+    // free one. No selection → require one (the right-click menu is already selection-gated; this matches).
+    const thug = this.selectedPlayerThug();
+    if (!thug) { this.setStatus('select one of your thugs first, then order the shakedown'); return; }
     const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId);
     if (!gate.ok) { this.setStatus(gate.reason); return; }
     const tile = businessTileOf(this.layout, businessId);
     if (!tile) return;
+    // RTS-35b.1 — a busy selected thug is RE-TASKED (not silently handed off): the wrapper replaces his
+    // existing act (dedup by thugId) and issueMove re-paths him — consistent with a MOVE order overriding.
+    const wasBusy = this.extortBusyThugIds().has(thug.id);
     // resolution 2: the interaction point is the building-CENTER seed. Walk the thug there; the act
     // accrues the shakedown only once he is AT the door (the positional gate).
     const interaction = frontInteractionPoint(tile);
@@ -1614,25 +1619,29 @@ export class IsoScene extends Phaser.Scene {
     // create the act through the WRAPPER (proves applyCommand is untouched) — it pushes onto state.extortionActs.
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndShakedown', familyId: 'player', thugId: thug.id, frontId: businessId }, () => {}, interaction);
     this.focusBizId = businessId;
-    this.setStatus(`muscle on the way to shake down ${inspectBusiness(this.state, businessId)?.name ?? 'the block'} — he leans on it once he's at the door`);
+    const name = inspectBusiness(this.state, businessId)?.name ?? 'the block';
+    this.setStatus(wasBusy
+      ? `pulled your man off his last job — he's on the way to shake down ${name}`
+      : `your man is on the way to shake down ${name} — he leans on it once he's at the door`);
   }
 
-  /** RTS-35b — the thug ids currently committed to an embodied-extortion act (so they're not re-tasked). */
+  /** RTS-35b — the thug ids currently committed to an embodied-extortion act (for the re-task readout). */
   private extortBusyThugIds(): Set<string> {
     return new Set((this.state.extortionActs ?? []).map((a) => a.thugId));
   }
 
-  /** An idle player button-man (no path, not a collector, not already tasked) free to be sent on a
-   * job. RTS-29.1: faction is resolved from the VIEW layer (sim muscle units carry no factionId/role —
-   * that was the dead-dispatch blocker); the pure pickIdleMuscle helper makes the seam testable. */
-  private idlePlayerThug(): MovableUnit | undefined {
+  /** RTS-35b.1 — the SELECTED player thug an embodied order is issued to (selection is AUTHORITATIVE).
+   * Faction/role are resolved from the VIEW layer (sim muscle units carry no factionId/role); the pure
+   * pickSelectedMuscle seam makes it testable. A busy selected thug is still returned — the caller
+   * RE-TASKS it (never a silent hand-off to a different thug). */
+  private selectedPlayerThug(): MovableUnit | undefined {
     const candidates: MuscleCandidate[] = this.units.map((v) => ({
       id: v.unit.id,
       faction: v.faction,
       isCollector: v.unit.role === 'collector',
       idle: v.unit.path.length === 0,
     }));
-    const pick = pickIdleMuscle(candidates, this.extortBusyThugIds());
+    const pick = pickSelectedMuscle(candidates, this.selection.ids);
     return pick ? this.state.units.find((u) => u.id === pick.id) : undefined;
   }
 
@@ -2920,7 +2929,7 @@ export class IsoScene extends Phaser.Scene {
     }
     const ladder = this.ctxBizId ? viceLadder(this.state, this.ctxBizId) : null;
     return {
-      idleThug: !!this.idlePlayerThug(),
+      selectedThug: !!this.selectedPlayerThug(),
       extortTarget,
       viceCtx: !!(ladder && ladder.next),
       viceAfford: !!(ladder && ladder.next && ladder.next.state === 'READY'),

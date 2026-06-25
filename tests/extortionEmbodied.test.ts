@@ -11,6 +11,7 @@ import {
 } from '../src/sim/extortionEmbodied';
 import { extortProgress } from '../src/sim/extortion';
 import { EXTORT_AT_FRONT_RADIUS, EXTORT_INTERRUPT_GRACE_SECONDS } from '../src/sim/constants';
+import { pickSelectedMuscle, type MuscleCandidate } from '../src/scenes/dispatch';
 import type { MovableUnit } from '../src/sim/movement';
 import type { GameState } from '../src/sim/types';
 
@@ -168,5 +169,57 @@ describe('the WRAPPER invokes the EXISTING conversion (recordExtortVisit) on res
     expect(convertedEvents).toBe(1);
     expect(s.extortionActs?.length ?? 0).toBe(0);             // the resolved act was dropped
     expect(frontInteractionPoint({ gx: 3, gy: 4 })).toEqual({ gx: 3, gy: 4 }); // the seed = building center
+  });
+});
+
+describe('RTS-35b.1 — the order honors SELECTION end-to-end (the created act is the SELECTED thug)', () => {
+  /** Two free player thugs (A,B) + an eligible front. Mirrors the scene seam: resolve the actor from
+   * the SELECTION, then issue the move-and-shakedown through the wrapper. */
+  function twoThugs() {
+    const s = createInitialState(1, { bigCity: true });
+    const front = s.districts[0].businesses.find((b) => b.kind === 'front' && b.extortedBy === undefined)!;
+    const A: MovableUnit = { id: 'thug-A', pos: { gx: 5, gy: 5 }, path: [], speed: 1, factionId: s.player.id, role: 'enforcer' };
+    const B: MovableUnit = { id: 'thug-B', pos: { gx: 7, gy: 7 }, path: [], speed: 1, factionId: s.player.id, role: 'enforcer' };
+    s.units = [A, B];
+    const candidates: MuscleCandidate[] = s.units.map((u) => ({ id: u.id, faction: 'player', isCollector: false, idle: u.path.length === 0 }));
+    return { s, frontId: front.id, candidates, interaction: { gx: 5, gy: 5 } };
+  }
+
+  it('with thug A SELECTED, the created act is A — even though B is equally free', () => {
+    const { s, frontId, candidates, interaction } = twoThugs();
+    const actor = pickSelectedMuscle(candidates, ['thug-A']);          // the scene resolves the SELECTED thug
+    expect(actor?.id).toBe('thug-A');
+    const act = applyCommandWithEmbodiedExtortion(s, { type: 'moveAndShakedown', familyId: s.player.id, thugId: actor!.id, frontId }, () => {}, interaction);
+    expect(act?.thugId).toBe('thug-A');                                // THE FIX: A acts…
+    expect(s.extortionActs?.map((a) => a.thugId)).toEqual(['thug-A']); // …and B was never tasked
+  });
+
+  it('selecting B instead issues the act to B (selection — not arbitrary order — decides)', () => {
+    const { s, frontId, candidates, interaction } = twoThugs();
+    const actor = pickSelectedMuscle(candidates, ['thug-B']);
+    const act = applyCommandWithEmbodiedExtortion(s, { type: 'moveAndShakedown', familyId: s.player.id, thugId: actor!.id, frontId }, () => {}, interaction);
+    expect(act?.thugId).toBe('thug-B');
+    expect(s.extortionActs?.map((a) => a.thugId)).toEqual(['thug-B']);
+  });
+
+  it('NO selection resolves no actor → no act is created (require-selection fallback)', () => {
+    const { s, frontId, candidates, interaction } = twoThugs();
+    const actor = pickSelectedMuscle(candidates, []);
+    expect(actor).toBeUndefined();
+    // the scene rejects with a prompt and never reaches the wrapper; the front stays un-tasked.
+    expect(s.extortionActs?.length ?? 0).toBe(0);
+    expect(frontId).toBeTruthy(); expect(interaction).toBeTruthy();
+  });
+
+  it('re-tasking the SAME selected thug REPLACES his act (one act per thug — not a silent hand-off)', () => {
+    const { s, frontId, candidates, interaction } = twoThugs();
+    const actor = pickSelectedMuscle(candidates, ['thug-A'])!;
+    applyCommandWithEmbodiedExtortion(s, { type: 'moveAndShakedown', familyId: s.player.id, thugId: actor.id, frontId }, () => {}, interaction);
+    // a second un-paying front; re-task the SAME thug A to it (the busy-selected re-task rule)
+    const front2 = s.districts[0].businesses.find((b) => b.kind === 'front' && b.id !== frontId && b.extortedBy === undefined)!;
+    applyCommandWithEmbodiedExtortion(s, { type: 'moveAndShakedown', familyId: s.player.id, thugId: actor.id, frontId: front2.id }, () => {}, interaction);
+    expect(s.extortionActs?.length).toBe(1);                 // A holds ONE act, not two
+    expect(s.extortionActs?.[0].thugId).toBe('thug-A');
+    expect(s.extortionActs?.[0].frontId).toBe(front2.id);    // the NEW order replaced the old
   });
 });
