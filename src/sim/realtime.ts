@@ -10,6 +10,7 @@ import { advanceClock } from './clock';
 import { advanceUnits } from './movement';
 import { resolveInterceptions, type InterceptionEvent } from './interception';
 import { resolveProximityCombat, type CombatEvent } from './combat';
+import { advanceEmbodiedExtortion, type EmbodiedExtortionEvent } from './extortionEmbodied';
 import { advanceStrategy, type StrategicEvent } from './strategy';
 import { evaluateEndgame, type EndgameResult } from './endgame';
 import { harvestIncidents, recordIncident } from './ledger';
@@ -27,6 +28,8 @@ export interface UpdateResult {
   interceptions: InterceptionEvent[];
   /** RTS-35a — unit-vs-unit combat beats this step (hits + downs) for the render layer. */
   combat: CombatEvent[];
+  /** RTS-35b — embodied-extortion state transitions this step (approach→…→resolve/failed). */
+  extortion: EmbodiedExtortionEvent[];
 }
 
 /**
@@ -51,8 +54,11 @@ export function update(
   // on the freshly-advanced positions, before the week settles). Collectors are untouched (robbed via
   // interception above); this only fights factioned non-collector units.
   const combat = resolveProximityCombat(state, dt);
+  // RTS-35b: drive the embodied-extortion acts (walk → shake down → convert via the EXISTING path).
+  // Runs on the freshly-advanced positions + the combat signal; the economic tick is untouched.
+  const extortion = advanceEmbodiedExtortion(state, dt);
   const weeksFired = advanceClock(state, dt, weekDuration);
-  return { weeksFired, arrivedUnitIds, interceptions, combat };
+  return { weeksFired, arrivedUnitIds, interceptions, combat, extortion };
 }
 
 export interface ObserveResult {

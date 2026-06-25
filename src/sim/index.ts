@@ -140,6 +140,12 @@ export {
   unitHealth, isCombatant, hostile, enemyInRange, damageUnit, resolveProximityCombat, type CombatEvent,
 } from './combat';
 export {
+  tickEmbodiedExtortionAct, advanceEmbodiedExtortion, applyCommandWithEmbodiedExtortion,
+  canIssueMoveAndShakedown, createMoveAndShakedownAct, frontInteractionPoint, isAtFront, isPresentForShakedown,
+  type EmbodiedExtortionAct, type EmbodiedExtortionState, type EmbodiedExtortionEvent,
+  type ExtortionTickInput, type MoveAndShakedownCommand,
+} from './extortionEmbodied';
+export {
   federalTierLabel,
   bribeBracket,
   verbChipState,

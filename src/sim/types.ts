@@ -4,6 +4,7 @@
 import type { MovableUnit } from './movement';
 import type { IncidentRecord } from './ledger';
 import type { Trait } from './traits';
+import type { EmbodiedExtortionAct } from './extortionEmbodied';
 import type { CrewTie } from './crew';
 
 export type GameStatus = 'playing' | 'won' | 'lost';
@@ -219,6 +220,9 @@ export interface GameState {
   /** RTS-22 — automated collection routes (additive; absent ⇒ none, so prior states are
    * byte-identical and the manual collector path is unchanged). */
   routes?: CollectionRoute[];
+  /** RTS-35b — active EMBODIED-EXTORTION acts (a thug walking to + shaking down a front). Additive;
+   * absent ⇒ none. Driven by the real-time wrapper (advanceEmbodiedExtortion); the tick never sees them. */
+  extortionActs?: EmbodiedExtortionAct[];
   /** RTS-24 — THE MARKET (trade mini-game). Additive; absent ⇒ no market yet. */
   market?: MarketState;
   /** RTS-29 — the week before which rival TERRITORIAL aggression is dormant (the peaceful runway).

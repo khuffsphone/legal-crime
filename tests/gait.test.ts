@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   advanceGaitPhase, legWalk, legRun, walkPose, runPose, idlePose, poseFor, blendPose,
   locoTarget, easeLoco, rigLOD, FIGURE_PX, WALK_STRIDE, RUN_STRIDE,
-  solveTwoBoneLegIK, THIGH, SHIN, HIP_H,
+  solveTwoBoneLegIK, THIGH, SHIN, HIP_H, computeIntimidateLean,
 } from '../src/scenes/gait';
 
 describe('opposed limbs — diagonal coordination', () => {
@@ -191,5 +191,19 @@ describe('scale + anchor held, FAR-LOD bypass', () => {
     expect(rigLOD(1.0)).toBe('full');   // CLOSE
     expect(rigLOD(0.6)).toBe('full');   // MID
     expect(rigLOD(0.35)).toBe('far');   // FAR strategy zoom → bypass
+  });
+});
+
+describe('RTS-35b — the intimidate lean (a forward menace, never a static pose)', () => {
+  it('always leans FORWARD (+lean) and surges within a bounded, breathing range', () => {
+    let min = Infinity, max = -Infinity;
+    for (let t = 0; t <= 2000; t += 25) {
+      const { lean, surge } = computeIntimidateLean(t);
+      expect(lean).toBeGreaterThan(0);          // always forward into the storefront
+      expect(surge).toBeGreaterThanOrEqual(0);  // surge never negative
+      min = Math.min(min, lean); max = Math.max(max, lean);
+    }
+    expect(max).toBeGreaterThan(min);           // it BREATHES (motion, not a frozen lean)
+    expect(max).toBeLessThan(12);               // bounded — a menacing lean, not a fall-over
   });
 });

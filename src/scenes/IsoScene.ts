@@ -143,8 +143,12 @@ import {
   type WorldLayout,
   type WorldDistrict,
   type PropPlacement,
-  recordExtortVisit,
   extortProgress,
+  canIssueMoveAndShakedown,
+  frontInteractionPoint,
+  applyCommandWithEmbodiedExtortion,
+  type EmbodiedExtortionAct,
+  type EmbodiedExtortionEvent,
   createFog,
   revealAround,
   revealAll,
@@ -190,7 +194,7 @@ import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass } from './fx';
 import {
-  advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, type RigPose,
+  advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
 } from './gait';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
 import {
@@ -319,6 +323,9 @@ function isRiggedUnit(unit: MovableUnit): boolean {
 }
 
 interface BizMarker { coin: Phaser.GameObjects.Image; glow?: Phaser.GameObjects.Image; roofX: number; roofY: number; }
+
+/** RTS-35b — render cadence for the menacing shoves a thug throws WHILE shaking a front down (ms). */
+const EXTORT_SHOVE_INTERVAL_MS = 950;
 
 /** RTS-30e — a deterministic 0..1000 phase offset from a unit id, so idle breaths/sways desync across
  * the crew without per-frame randomness (motion stays deterministic + replay-safe). */
@@ -466,7 +473,12 @@ export class IsoScene extends Phaser.Scene {
   private controlTitle?: Phaser.GameObjects.Text;
   private controlBody?: Phaser.GameObjects.Text;
   private cityRowHits: { x: number; y: number; w: number; h: number; districtId: string }[] = [];
-  private extortIntents = new Map<string, string>(); // unitId → businessId a thug is walking to lean on
+  // RTS-35b — EMBODIED EXTORTION (CANON REV c): a thug is ordered to MOVE-AND-SHAKEDOWN — it walks to the
+  // front and performs a TIMED shakedown while physically present (no converting from a distance). The pure
+  // acts live on state.extortionActs; this overlay graphic draws the brass intent line + progress ring, and
+  // the per-thug shove cadence times the menacing shoves during the shakedown.
+  private extortOverlay?: Phaser.GameObjects.Graphics;
+  private extortShoveAt = new Map<string, number>(); // thugId → time.now ms of its next shakedown shove
   // RTS-25 — crisp text + per-frame rasterisation budget. textRes renders each Text's canvas at the
   // device pixel ratio (no blurry browser upscaling). setT() change-gates setText so we only re-
   // rasterise a label when its string actually changed (the per-frame text churn was the bottleneck).
@@ -1133,9 +1145,9 @@ export class IsoScene extends Phaser.Scene {
     }
     // RTS-22/29: advance the fixed per-business collectors (gather → bank → loop). No-op without one.
     advanceRoutes(this.state, this.layout, this.navGrid);
-    // RTS-29: a thug that has walked to a front leans on it (a muscle VISIT); ensure a collector
-    // exists for every business we earn from (the sea-of-collectors). Cheap; acts only on change.
-    this.processExtortArrivals();
+    // RTS-35b: react to the embodied-extortion transitions (the sim already drove the acts + fired the
+    // EXISTING conversion on resolve); ensure a collector exists for every business we earn from.
+    this.processExtortionEvents(obs.result.extortion);
     if (obs.result.weeksFired > 0) this.syncBusinessCollectors();
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
@@ -1155,6 +1167,10 @@ export class IsoScene extends Phaser.Scene {
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
     const now = this.time.now;
     const pulse = 0.5 + 0.5 * Math.abs(Math.sin(now / 220));
+
+    // RTS-35b — the live embodied-extortion acts, keyed by their thug, so the unit loop can pose the
+    // intimidate-lean + throw the cadence shoves while a thug is squared up at a front.
+    const extortByThug = new Map<string, EmbodiedExtortionAct>((this.state.extortionActs ?? []).map((a) => [a.thugId, a]));
 
     for (const v of this.units) {
       const s = unitScreenPos(v.unit);
@@ -1187,6 +1203,19 @@ export class IsoScene extends Phaser.Scene {
       if (v.hitUntil && now < v.hitUntil) {
         const t = (v.hitUntil - now) / MOTION.hitFlinch; // 1→0
         kick += (v.faction === 'player' ? -1 : 1) * 3 * t; // a recoiling knock-back
+      }
+      // RTS-35b INTIMIDATE LEAN: a thug squared up at a front (engage/shakedown) leans FORWARD into the
+      // storefront — a slow surging menace (computeIntimidateLean) plus periodic shoves on a cadence.
+      const xact = extortByThug.get(v.unit.id);
+      if (xact && (xact.state === 'engage' || xact.state === 'shakedown')) {
+        const fc = gridToScreen(xact.interaction.gx, xact.interaction.gy);
+        const fwd = Math.sign(fc.x - s.x) || (facesRight(unitFacing(v.unit)) ? 1 : -1);
+        const { lean, surge } = computeIntimidateLean(now + (v.idleSeed ?? 0));
+        kick += fwd * lean; lift -= surge * 0.4; // lean in + a slight rise on the surge
+        if (xact.state === 'shakedown') {
+          const nextShove = this.extortShoveAt.get(v.unit.id) ?? 0;
+          if (now >= nextShove) { this.triggerAttackMotion(v, undefined, fc.x); this.extortShoveAt.set(v.unit.id, now + EXTORT_SHOVE_INTERVAL_MS); }
+        }
       }
 
       // RTS-32 — the ARTICULATED RIG (thug-role units): a DISTANCE-driven gait so the foot never skates.
@@ -1257,6 +1286,8 @@ export class IsoScene extends Phaser.Scene {
         if (carry.vulnerable && moving) this.dropGreenback(s.x, s.y, depth - 3);
       }
     }
+
+    this.drawExtortOverlay(now);
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
     // (earning) — and HIDDEN under the fog (so shrouded blocks/rivals stay unseen).
@@ -1561,22 +1592,34 @@ export class IsoScene extends Phaser.Scene {
     this.hudFx(this.ctxMenu); // RTS-30d-fix: a runtime HUD object — the MAIN camera must ignore it, or it double-renders in world space
   }
 
-  /** EXTORT a specific building: send a selected thug toward it and attempt the shakedown. */
-  /** RTS-29 — extort = REPEATED VISITS. Send a thug to the front; he walks there (slow) and leans on
-   * it (a visit), dropping its resistance a notch. Empty it → it converts to [$] + a collector spawns.
-   * Cost = time + a thug occupied, NOT cash. Gated by the CONTROL cap (you can't take new turf at cap). */
+  /** EXTORT a specific building: order a free thug to MOVE-AND-SHAKEDOWN it. */
+  /** RTS-35b — EMBODIED EXTORTION (CANON REV c). Extort DELIVERY is now POSITIONAL: a thug paths to the
+   * front, squares up at the door, and performs a TIMED shakedown while physically present — the front
+   * converts on completion (no converting from across the map). ELIGIBILITY/ECONOMY are unchanged: the
+   * order is gated by canIssueMoveAndShakedown and, on resolve, the wrapper invokes the EXISTING
+   * recordExtortVisit conversion. Cost = time + a thug occupied, NOT cash. */
   private commandExtortBusiness(businessId: string): void {
     const prog = extortProgress(this.state, businessId);
     if (!prog || !prog.extortable) { this.setStatus('that block already pays — pick an un-shaken [%] front'); return; }
-    // RTS-30a: extortion is NO LONGER gated by a control budget — only by walking time + free muscle.
     const thug = this.idlePlayerThug();
     if (!thug) { this.setStatus('no free muscle — wait for a thug to finish, or recruit [6]'); return; }
+    const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId);
+    if (!gate.ok) { this.setStatus(gate.reason); return; }
     const tile = businessTileOf(this.layout, businessId);
     if (!tile) return;
-    issueMove(thug, tile, this.navGrid);
-    this.extortIntents.set(thug.id, businessId);
+    // resolution 2: the interaction point is the building-CENTER seed. Walk the thug there; the act
+    // accrues the shakedown only once he is AT the door (the positional gate).
+    const interaction = frontInteractionPoint(tile);
+    issueMove(thug, interaction, this.navGrid);
+    // create the act through the WRAPPER (proves applyCommand is untouched) — it pushes onto state.extortionActs.
+    applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndShakedown', familyId: 'player', thugId: thug.id, frontId: businessId }, () => {}, interaction);
     this.focusBizId = businessId;
-    this.setStatus(`muscle on the way to lean on ${inspectBusiness(this.state, businessId)?.name ?? 'the block'} — ${prog.remaining} visit${prog.remaining === 1 ? '' : 's'} to fold it`);
+    this.setStatus(`muscle on the way to shake down ${inspectBusiness(this.state, businessId)?.name ?? 'the block'} — he leans on it once he's at the door`);
+  }
+
+  /** RTS-35b — the thug ids currently committed to an embodied-extortion act (so they're not re-tasked). */
+  private extortBusyThugIds(): Set<string> {
+    return new Set((this.state.extortionActs ?? []).map((a) => a.thugId));
   }
 
   /** An idle player button-man (no path, not a collector, not already tasked) free to be sent on a
@@ -1589,35 +1632,93 @@ export class IsoScene extends Phaser.Scene {
       isCollector: v.unit.role === 'collector',
       idle: v.unit.path.length === 0,
     }));
-    const pick = pickIdleMuscle(candidates, new Set(this.extortIntents.keys()));
+    const pick = pickIdleMuscle(candidates, this.extortBusyThugIds());
     return pick ? this.state.units.find((u) => u.id === pick.id) : undefined;
   }
 
-  /** RTS-29 — a thug that has arrived at its target front LEANS on it (records a visit); on conversion
-   * the front becomes [$] and its fixed collector spawns (coin-stamp + Wire slip). Event-driven. */
-  private processExtortArrivals(): void {
-    if (this.extortIntents.size === 0) return;
-    for (const [unitId, bizId] of [...this.extortIntents]) {
-      const u = this.state.units.find((x) => x.id === unitId);
-      const tile = businessTileOf(this.layout, bizId);
-      if (!u || !tile) { this.extortIntents.delete(unitId); continue; }
-      if (u.path.length > 0) continue; // still walking
-      const ut = unitTile(u);
-      if (Math.abs(ut.gx - tile.gx) > 1 || Math.abs(ut.gy - tile.gy) > 1) { this.extortIntents.delete(unitId); continue; }
-      this.extortIntents.delete(unitId);
-      const res = recordExtortVisit(this.state, 'player', bizId);
-      this.state = harvestIncidents(this.state);
-      const c = gridToScreen(tile.gx, tile.gy);
-      // RTS-30e: the lean is a melee SHOVE — the thug winds up and swings at the storefront.
-      if (res.ok || res.converted) this.triggerAttackMotion(this.units.find((v) => v.unit.id === unitId), undefined, c.x);
-      if (res.converted) {
-        this.seedBackPay(bizId); this.leanBeat(c.x, c.y); this.signalBeat('extort');
-        const setup = ensureBusinessCollector(this.state, this.layout, 'player', bizId, this.navGrid);
+  /** RTS-35b — render the embodied-extortion state transitions the wrapper raised this step (the front
+   * conversion ALREADY fired inside the sim via the EXISTING recordExtortVisit path; here we only react):
+   *  • entering shakedown → a "leaning on them" cue (VO/SFX + status) and the building starts to shudder
+   *  • converted → the Lean beat: brick-dust + coin-stamp, the fixed collector spawns, the front flips to [$]
+   *  • interrupted → a "they jumped your man" warning (the brawl knocked him off the shakedown)
+   *  • failed → a "shakedown blown" line (downed / target gone / walked off / lost the fight) */
+  private processExtortionEvents(events: EmbodiedExtortionEvent[]): void {
+    for (const ev of events) {
+      const tile = businessTileOf(this.layout, ev.frontId);
+      const c = tile ? gridToScreen(tile.gx, tile.gy) : undefined;
+      const name = inspectBusiness(this.state, ev.frontId)?.name ?? 'the block';
+      const thugView = this.units.find((v) => v.unit.id === ev.thugId);
+      if (ev.converted) {
+        // the EXISTING conversion already set extortedBy — surface the felt beat (mirror of the old flow).
+        this.state = harvestIncidents(this.state);
+        if (c) {
+          this.triggerAttackMotion(thugView, undefined, c.x); // a final committing SHOVE on the storefront
+          this.seedBackPay(ev.frontId); this.leanBeat(c.x, c.y); this.signalBeat('extort');
+          if (tile) this.flashConverted(tile.gx, tile.gy);    // a brass flash-to-converted on the building
+        }
+        const setup = ensureBusinessCollector(this.state, this.layout, 'player', ev.frontId, this.navGrid);
         if (setup) this.attachView(setup.unit, 'player');
-        this.setStatus(`${inspectBusiness(this.state, bizId)?.name ?? 'the block'} folded — it pays protection now (a collector is on the way)`);
-      } else if (res.ok) {
-        this.floatText(c.x, c.y - 30, `LEANED ON — ${res.remaining} more`, SPEC.brass);
-        this.setStatus(`leaned on the block — ${res.remaining} more visit${res.remaining === 1 ? '' : 's'} to fold it`);
+        this.setStatus(`${name} folded — it pays protection now (a collector is on the way)`);
+        this.extortShoveAt.delete(ev.thugId);
+        continue;
+      }
+      if (ev.failed) {
+        if (c) this.floatText(c.x, c.y - 30, 'SHAKEDOWN BLOWN', SPEC.danger);
+        this.setStatus(`the shakedown on ${name} fell through — send muscle again when the block's clear`);
+        this.extortShoveAt.delete(ev.thugId);
+        continue;
+      }
+      if (ev.state === 'shakedown' && ev.prevState !== 'shakedown') {
+        // the thug squared up and started leaning on them — open with a shove + the lean cue.
+        if (c) this.triggerAttackMotion(thugView, undefined, c.x);
+        this.signalBeat('extort');
+        this.setStatus(`your man is leaning on ${name} — hold the block while he works`);
+        this.extortShoveAt.set(ev.thugId, this.time.now + EXTORT_SHOVE_INTERVAL_MS);
+      } else if (ev.state === 'interrupted') {
+        if (c) this.floatText(c.x, c.y - 30, 'JUMPED!', SPEC.danger);
+        this.setStatus(`they jumped your man at ${name} — clear the brawl before the shakedown's blown`);
+      }
+    }
+  }
+
+  /** RTS-35b — a brass flash-to-converted pulse over a just-folded front (a beat, not a static wash). */
+  private flashConverted(gx: number, gy: number): void {
+    const c = gridToScreen(gx, gy);
+    const ring = this.add.circle(c.x, c.y - 8, 8).setStrokeStyle(3, hexNum(SPEC.brass), 0.9).setDepth(100001);
+    this.worldFx(ring);
+    this.tweens.add({ targets: ring, scale: 4.5, alpha: 0, duration: 520, ease: 'Quad.Out', onComplete: () => ring.destroy() });
+  }
+
+  /** RTS-35b — the player's BRASS extortion intent + progress feedback, redrawn each frame onto one
+   * world-layer graphic (brass = player; #B8862B): EN ROUTE a thin intent line from the thug to the
+   * front he's been sent to lean on; AT THE DOOR (engage/shakedown) a filling progress ARC over the
+   * storefront so you can read how close the shakedown is to folding it. Fog-gated like the coin badges. */
+  private drawExtortOverlay(now: number): void {
+    const g = this.extortOverlay ?? (this.extortOverlay = (() => { const gr = this.add.graphics().setDepth(100000); this.worldFx(gr); return gr; })());
+    g.clear();
+    const acts = this.state.extortionActs ?? [];
+    if (acts.length === 0) return;
+    const brass = hexNum(SPEC.brass);
+    for (const act of acts) {
+      const tile = businessTileOf(this.layout, act.frontId);
+      if (!tile || !isRevealed(this.fog, tile.gx, tile.gy)) continue;
+      const fc = gridToScreen(tile.gx, tile.gy);
+      const thug = this.state.units.find((u) => u.id === act.thugId);
+      if (act.state === 'approach' && thug) {
+        // intent line: thug → front (a faint brass tether reads "this man is going to lean on that block").
+        const ts = unitScreenPos(thug);
+        g.lineStyle(2, brass, 0.35 + 0.15 * Math.sin(now / 320));
+        g.beginPath(); g.moveTo(ts.x, ts.y - 4); g.lineTo(fc.x, fc.y - 8); g.strokePath();
+        g.fillStyle(brass, 0.6); g.fillCircle(fc.x, fc.y - 8, 3);
+      } else if (act.state === 'engage' || act.state === 'shakedown' || act.state === 'interrupted') {
+        // progress arc over the storefront: a faint track ring + a brass sweep filling with progress.
+        const cx = fc.x, cy = fc.y - 30, r = 13;
+        g.lineStyle(3, brass, 0.18);
+        g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.strokePath();
+        const frac = act.state === 'interrupted' ? 0 : Math.max(0.02, act.progress);
+        const a0 = -Math.PI / 2;
+        g.lineStyle(3, brass, act.state === 'interrupted' ? 0.4 + 0.3 * Math.sin(now / 120) : 0.95);
+        g.beginPath(); g.arc(cx, cy, r, a0, a0 + Math.PI * 2 * frac); g.strokePath();
       }
     }
   }

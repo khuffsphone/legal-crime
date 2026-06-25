@@ -223,6 +223,16 @@ export function poseFor(gaitPhase: number, loco: number, tMs: number): RigPose {
   return blendPose(walkPose(gaitPhase), runPose(gaitPhase), Math.min(1, loco - 1));
 }
 
+// ── RTS-35b — the INTIMIDATE LEAN (embodied extortion) ───────────────────────────────────────────
+/** The menacing pose a thug HOLDS while working over a front: a forward torso lean INTO the building
+ * plus a slow aggressive surge (the lean-in/back of leaning on someone). Returns the extra forward lean
+ * (px the shoulders push) + a body surge (px toward the target). Faster than the idle loop (it reads as
+ * menace, not calm) but ≥0.9s (still under the danger-only fast-loop budget). Pure. */
+export function computeIntimidateLean(tMs: number): { lean: number; surge: number } {
+  const surge = 0.5 + 0.5 * Math.sin((tMs / 900) * TWO_PI); // 0..1 ~0.9s menace cadence
+  return { lean: 4 + surge * 3, surge: surge * 2 };          // strong forward lean (4-7px) + 0-2px surge
+}
+
 // ── LOD ──────────────────────────────────────────────────────────────────────────────────────────
 export type RigLOD = 'full' | 'far';
 /** Which rig LOD a zoom warrants: CLOSE/MID draw the full articulated rig; FAR (the strategy zoom)

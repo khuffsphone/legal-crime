@@ -281,6 +281,16 @@ export const COMBAT_ENGAGE_RANGE = 1.3;      // tiles — two opposing thugs thi
 export const COMBAT_MELEE_DAMAGE = 24;       // damage per swing (≈4-5 swings to down a fresh thug)
 export const COMBAT_ATTACK_INTERVAL = 0.8;   // seconds between a unit's swings (discrete hits → beats)
 export const COMBAT_SEEK_RANGE = 6;          // tiles — a rival will break off to ENGAGE a player thug this near
+// RTS-35b — EMBODIED EXTORTION (CANON REV c): the CONVERSION/eligibility/economy are unchanged; only the
+// DELIVERY becomes a move-and-shakedown a thug physically performs. All tunable; read by the pure state
+// machine (extortionEmbodied.ts) the real-time wrapper drives — tick()/applyCommand() stay untouched.
+export const EXTORT_AT_FRONT_RADIUS = 0.9;            // tiles — within this of the front = "at the building"
+export const EXTORT_ENGAGE_SECONDS = 0.6;            // squaring-up beat at the door before the shakedown proper
+export const EXTORT_SHAKEDOWN_SECONDS = 3.0;         // base shakedown time (scaled UP for a richer/tougher block)
+export const EXTORT_ABSENCE_GRACE_SECONDS = 1.2;     // brief absence PAUSES progress; past this the act FAILS
+export const EXTORT_INTERRUPT_GRACE_SECONDS = 2.0;   // window to recover from an attack before the act fails
+export const EXTORT_APPROACH_TIMEOUT_SECONDS = 40;   // safety: a never-arriving approach eventually fails
+export const HARD_INTERRUPT_PROGRESS_RETAINED_RATIO = 0; // an attack is a HARD interrupt: full reset (0); a brief absence only pauses
 // Onboarding grace: the seeded tutorial crew works cheap, so the idle upkeep bleed is gentle
 // while a new player learns the loop (a recruited gangster still costs skill × upkeep-per-skill).
 export const STARTING_CREW_UPKEEP = 15; // cash/week per tutorial guard (was skill×10 = 30)
