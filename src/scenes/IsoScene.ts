@@ -932,6 +932,13 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private addUnit(unit: MovableUnit, faction: 'player' | 'rival'): void {
+    // ⭐ BUG FIX (the dead combat): spawnUnit() makes player muscle with NO factionId — but the 35a combat
+    // only fights isCombatant() units, which REQUIRES a factionId. Without this, every player thug failed
+    // isCombatant(), so resolveProximityCombat never engaged them (player↔rival) — the thug walked up to the
+    // rival and nothing happened. Stamp the player's faction on the sim unit so it can actually FIGHT. (The
+    // VIEW-layer faction the dispatch/selection seam reads is separate + unchanged; rival units already get
+    // their factionId from spawnEnforcer. role stays undefined — isCombatant only needs !collector.)
+    if (faction === 'player' && unit.factionId === undefined) unit.factionId = this.state.player.id;
     this.state.units.push(unit);
     this.attachView(unit, faction);
   }
@@ -1797,6 +1804,16 @@ export class IsoScene extends Phaser.Scene {
     const col = pickUnit(this.units.filter((v) => v.faction === 'player' && v.unit.role === 'collector').map((v) => v.unit), point);
     if (col) { this.focusBizId = undefined; if (!shift) this.selection = clearSelection(); this.showCollectorInfo(col); return; }
     this.hideCollectorInfo();
+    // ⭐ DISCOVERABILITY: a LEFT-click on a RIVAL fighter (not selectable — it's the enemy) tells the player
+    // the ATTACK gesture instead of silently deselecting, and KEEPS the crew selected so they can right-click
+    // it straight away. (The player report was "the attack function doesn't work / is locked" — make it obvious.)
+    const foe = pickUnit(this.units.filter((v) => v.faction === 'rival' && v.unit.role !== 'collector').map((v) => v.unit), point);
+    if (foe) {
+      this.setStatus(this.selection.ids.length > 0
+        ? "that's a rival — RIGHT-CLICK it to send your crew in (they trade blows on contact)"
+        : "that's a rival — select one of your thugs, then RIGHT-CLICK it to ATTACK");
+      return;
+    }
     // RTS-28: no unit under the cursor → try a BUILDING (height-aware hit-test). A click selects the
     // building under the cursor (its card sticks in the context panel; [E]/[U] target it).
     const bizId = this.businessAtScreen(p.worldX, p.worldY);
@@ -2557,11 +2574,17 @@ export class IsoScene extends Phaser.Scene {
     const gpoint = screenToGrid(p.worldX, p.worldY);
     const hit = pickUnit(this.units.map((v) => v.unit), gpoint);
     if (hit) {
+      const view = this.units.find((v) => v.unit.id === hit.id);
       const i = inspectUnit(this.state, hit.id);
       if (i) {
         const lines = [`${i.kind}${i.ownerName ? ` · ${i.ownerName}` : ''}`];
         if (i.vulnerable) lines.push(`carrying $${i.carrying}  ${i.threat === 'ambush' ? '⚠ AMBUSH' : i.threat === 'threatened' ? '⚠ in danger' : 'in transit'}`);
         else lines.push('idle / no cash');
+        // ⭐ DISCOVERABILITY: a RIVAL fighter is an ATTACK target — surface the right-click gesture (the
+        // combat half of the game was unreachable; make the gesture obvious on hover).
+        if (view?.faction === 'rival' && hit.role !== 'collector') {
+          lines.push(this.selection.ids.length > 0 ? '⚔ right-click → ATTACK' : '⚔ select a thug, then right-click → ATTACK');
+        }
         return lines.join('\n');
       }
     }
