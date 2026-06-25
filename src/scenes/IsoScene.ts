@@ -194,6 +194,7 @@ import {
 } from './playability';
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
+import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -468,6 +469,9 @@ export class IsoScene extends Phaser.Scene {
   private rushUsed = false; // RTS-34.1: once the player uses [C] RUSH, the collect tutorial prompt retires
   private audioPanelOpen = false;
   private audioPanel?: Phaser.GameObjects.Text;
+  // FOOTGUN FIX — restart-to-Boot now requires explicit confirmation (the gate state + its modal).
+  private restartGate: RestartGate = initRestartGate();
+  private restartPrompt?: Phaser.GameObjects.Container;
   // RTS-28 playability
   private timeScale = 1;            // fast-forward multiplier (1× / 2× / 4×)
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
@@ -2855,6 +2859,57 @@ export class IsoScene extends Phaser.Scene {
     this.grain?.setVisible(this.fxEnabled);
   }
 
+  // ── FOOTGUN FIX — confirm before restart-to-Boot ──────────────────────────────────────────────
+
+  /** [B] — ARM the restart (never restarts on the press itself) and raise the confirm modal. */
+  private armRestartPrompt(): void {
+    const r = armRestart(this.restartGate);
+    this.restartGate = r.gate;
+    this.showRestartPrompt();
+  }
+
+  /** [Y] while armed — confirm: restart to Boot ONLY because the gate says so (pure decision). */
+  private doConfirmRestart(): void {
+    const r = confirmRestart(this.restartGate);
+    this.restartGate = r.gate;
+    this.hideRestartPrompt();
+    if (r.restart) this.scene.start('BootScene');
+  }
+
+  /** [Esc] / cancel button while armed — back out, leave the game running. */
+  private doCancelRestart(): void {
+    const r = cancelRestart(this.restartGate);
+    this.restartGate = r.gate;
+    this.hideRestartPrompt();
+  }
+
+  /** The restart confirm dialog: a dim backdrop + a brass-framed panel reading the consequence, with
+   * clickable CONFIRM / CANCEL buttons (keyboard [Y]/[Esc] do the same). Fixed-HUD camera, top depth. */
+  private showRestartPrompt(): void {
+    if (this.restartPrompt) return;
+    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
+    const pw = 460, ph = 150;
+    const backdrop = this.add.rectangle(0, 0, w, h, PAL.soot, 0.72).setOrigin(0, 0);
+    const panel = this.add.rectangle(cx, cy, pw, ph, PAL.ink, 0.98).setStrokeStyle(2, PAL.brass, 0.95);
+    const title = this.mkText(cx, cy - 44, 'RESTART?', { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0.5);
+    const body = this.mkText(cx, cy - 12, 'This ENDS your current game.', { fontFamily: NOIR_FONT, fontSize: '14px', color: NOIR_PALETTE.bone }).setOrigin(0.5, 0.5);
+    const confirm = this.mkText(cx - 92, cy + 34, '[Y] RESTART', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold', backgroundColor: '#1a0a09' })
+      .setOrigin(0.5, 0.5).setPadding(10, 6, 10, 6).setInteractive({ useHandCursor: true });
+    const cancel = this.mkText(cx + 92, cy + 34, '[Esc] CANCEL', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807' })
+      .setOrigin(0.5, 0.5).setPadding(10, 6, 10, 6).setInteractive({ useHandCursor: true });
+    confirm.on('pointerdown', () => this.doConfirmRestart());
+    cancel.on('pointerdown', () => this.doCancelRestart());
+    backdrop.setInteractive().on('pointerdown', () => this.doCancelRestart()); // click-off cancels (safe default)
+    const c = this.add.container(0, 0, [backdrop, panel, title, body, confirm, cancel]).setScrollFactor(0).setDepth(300000);
+    this.hudFx(c); // fixed HUD camera only (the main camera ignores it — never renders in world space)
+    this.restartPrompt = c;
+  }
+
+  private hideRestartPrompt(): void {
+    this.restartPrompt?.destroy(true);
+    this.restartPrompt = undefined;
+  }
+
   /** RTS-30a — snap to the next/prev of the 3 zoom stops (CLOSE/MID/FAR), anchored to the cursor. */
   private cycleZoom(dir: 1 | -1): void {
     const cur = this.targetZoom;
@@ -2949,7 +3004,9 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-L', () => this.toggleFeed());
     this.input.keyboard?.on('keydown-K', () => this.toggleCrew());
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
-    this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
+    // FOOTGUN FIX — [B] no longer wipes the game on a single press; it ARMS a confirm prompt.
+    this.input.keyboard?.on('keydown-B', () => this.armRestartPrompt());
+    this.input.keyboard?.on('keydown-ESC', () => { if (this.restartGate.armed) this.doCancelRestart(); });
     // RTS-17 — the offensive. RTS-27: when the audio panel is open, 1–5 adjust the volume buses
     // instead of firing offense/build verbs (so the settings surface is keyboard-drivable).
     this.input.keyboard?.on('keydown-ONE', () => this.audioPanelOpen ? this.cycleAudioBus(0) : this.commandRaid());
@@ -2974,7 +3031,7 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-U', () => this.commandViceUpgrade());
     this.input.keyboard?.on('keydown-M', () => this.toggleMarket());
     this.input.keyboard?.on('keydown-N', () => { if (this.marketOpen) this.marketSel = (this.marketSel + 1) % 4; });
-    this.input.keyboard?.on('keydown-Y', () => this.commandTrade('buy'));
+    this.input.keyboard?.on('keydown-Y', () => { if (this.restartGate.armed) this.doConfirmRestart(); else this.commandTrade('buy'); });
     this.input.keyboard?.on('keydown-J', () => this.commandTrade('sell'));
     // RTS-25 — perf overlay: live FPS · frame ms · text rasterisations/sec (the cost this pass cut).
     this.input.keyboard?.on('keydown-P', () => { this.perfVisible = !this.perfVisible; this.perfText?.setVisible(this.perfVisible); });
