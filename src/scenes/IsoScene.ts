@@ -200,6 +200,7 @@ import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
+import { initPause, togglePause as togglePauseState, type PauseState } from './pauseGate';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -482,6 +483,8 @@ export class IsoScene extends Phaser.Scene {
   private restartPrompt?: Phaser.GameObjects.Container;
   // RTS-28 playability
   private timeScale = 1;            // fast-forward multiplier (1× / 2× / 4×)
+  private pause: PauseState = initPause(); // GLOBAL ACTIVE-PAUSE — halts the sim tick; camera/UI stay live
+  private pausedBanner?: Phaser.GameObjects.Container; // the PAUSED indicator
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
   private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
   private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
@@ -1202,6 +1205,11 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30c-1.1: compute the simulated step FIRST and drive the turf war with the SAME stepDt as the
     // economy/strategy — so the contest meter keeps pace with skipped/fast-forwarded weeks (it used to
     // run on raw real-time dt, so a skipped week advanced the background capture but froze the meter).
+    // GLOBAL ACTIVE-PAUSE — while paused, the loop simply does NOT advance the sim (no tickWar / observeWorld
+    // / routes): the world freezes in place. The render block below + the camera/HUD still run every frame,
+    // and input still flows, so the player can look around and issue/queue orders (an active pause). This is
+    // a LOOP-level gate; tick()/applyCommand() are untouched.
+    if (!this.pause.paused) {
     let stepDt = scaledDt(dt, this.timeScale);
     if (this.skipWeekPending) { stepDt = skipWeekDt(this.state.weekElapsed ?? 0, SCENE_WEEK_SECONDS); this.skipWeekPending = false; }
 
@@ -1245,6 +1253,7 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     // RTS-17: the contest resolved — surface the win/lose readout.
     if (obs.endgame || this.state.status !== 'playing') this.showEndgame();
+    } // end !paused — sim advancement gate
 
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
     const now = this.time.now;
@@ -3088,7 +3097,8 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-ZERO', () => { this.audio?.toggleMute(); this.refreshAudioPanel(); });
     this.input.keyboard?.on('keydown-X', () => { this.toggleFx(); this.setStatus(this.fxEnabled ? 'film grain + vignette ON' : 'film grain + vignette OFF'); }); // RTS-34 mood toggle (also ?fx=off)
     // RTS-28 — pacing: [Space] cycle fast-forward, [>] (period) skip to the next week.
-    this.input.keyboard?.on('keydown-SPACE', () => this.cycleFastForward());
+    // [Space] is the conventional PAUSE (the keystone). Fast-forward moves to its always-visible button.
+    this.input.keyboard?.on('keydown-SPACE', () => this.togglePause());
     this.input.keyboard?.on('keydown-PERIOD', () => this.skipWeek());
     // RTS-24 — vice upgrade ([U] on the hovered racket) + THE MARKET ([M] toggle, [N] next good,
     // [Y] buy, [J] sell — buy/sell act only while the market tab is open).
@@ -3108,7 +3118,8 @@ export class IsoScene extends Phaser.Scene {
     this.drawGround(); // RTS-30a: culled ground/streets/parks/fog/washes for the visible tiles only
     this.updateDressingVisibility(); // RTS-30b-ground: fog-reveal + FAR-LOD bulk-hide of static props
     // RTS-34: fog-gate the ambient life — peds/cars only render on revealed tiles (no life through fog).
-    this.ambient?.update(dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
+    // GLOBAL ACTIVE-PAUSE — the living city freezes too (a paused frame advances ambient by 0).
+    this.ambient?.update(this.pause.paused ? 0 : dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
     this.refreshHud();
     this.refreshObjective();
     this.refreshFeed();
@@ -4226,13 +4237,41 @@ export class IsoScene extends Phaser.Scene {
     this.setT(this.audioPanel, lines.join('\n')).setColor(s.muted ? SPEC.danger : NOIR_PALETTE.bone);
   }
 
+  // ── GLOBAL ACTIVE-PAUSE ───────────────────────────────────────────────────────────────────────
+
+  /** [Space] — toggle the GLOBAL PAUSE. While paused the sim tick is halted (updateUnits skips the whole
+   * advancement block), but the camera, HUD and INPUT stay live — an "active pause" where you can look
+   * around and issue/queue orders. Resumes at the current speed. */
+  private togglePause(): void {
+    this.pause = togglePauseState(this.pause);
+    this.refreshPausedBanner();
+    this.setStatus(this.pause.paused ? 'PAUSED — [Space] resume · you can still look around + give orders' : `resumed — speed ${this.timeScale}×`);
+  }
+
+  /** Show/hide the PAUSED indicator: a clear centred banner on the fixed HUD camera (top depth). */
+  private refreshPausedBanner(): void {
+    if (this.pause.paused) {
+      if (this.pausedBanner) return;
+      const cx = this.scale.width / 2, y = 110;
+      const strip = this.add.rectangle(cx, y, 320, 46, PAL.ink, 0.86).setStrokeStyle(2, PAL.brass, 0.9);
+      const label = this.mkText(cx, y, '⏸  PAUSED', { fontFamily: NOIR_DISPLAY, fontSize: '22px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0.5);
+      const hint = this.mkText(cx, y + 24, '[Space] resume', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone }).setOrigin(0.5, 0.5);
+      const c = this.add.container(0, 0, [strip, label, hint]).setScrollFactor(0).setDepth(120000);
+      this.hudFx(c); // fixed HUD camera only — never drifts with the world
+      this.pausedBanner = c;
+    } else {
+      this.pausedBanner?.destroy(true);
+      this.pausedBanner = undefined;
+    }
+  }
+
   // ── RTS-28 fast-forward / skip-week ─────────────────────────────────────────────────────────
 
-  /** [Space] / the on-screen button — cycle the real-time speed 1× → 2× → 4×. */
+  /** The on-screen button — cycle the real-time speed 1× → 2× → 4×. */
   private cycleFastForward(): void {
     this.timeScale = nextTimeScale(this.timeScale);
     this.refreshFastForward();
-    this.setStatus(`speed ${this.timeScale}× — [Space] cycle · [>] skip week`);
+    this.setStatus(`speed ${this.timeScale}× — [>] skip week · [Space] pause`);
   }
 
   /** [>] / the on-screen button — jump straight to the next week settlement (exactly one). */
@@ -4246,7 +4285,7 @@ export class IsoScene extends Phaser.Scene {
     if (!this.ffButton || !this.skipButton) return;
     const cy = this.scale.height - 12, cx = this.scale.width / 2;
     const glyph = this.timeScale === 1 ? '▶' : this.timeScale === 2 ? '▶▶' : '▶▶▶';
-    this.setT(this.ffButton, `${glyph} ${this.timeScale}×  [Space]`).setColor(this.timeScale > 1 ? SPEC.cashGreen : NOIR_PALETTE.brass)
+    this.setT(this.ffButton, `${glyph} ${this.timeScale}× SPEED`).setColor(this.timeScale > 1 ? SPEC.cashGreen : NOIR_PALETTE.brass)
       .setPosition(cx - this.ffButton.width / 2 - 6, cy);
     this.skipButton.setPosition(cx + this.skipButton.width / 2 + 6, cy);
   }
