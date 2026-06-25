@@ -182,6 +182,7 @@ import {
   richArt,
   drawIsoBuilding,
   BUILDING_STYLES,
+  ENV_HEIGHT_SCALE,
   TEX,
   PAL,
 } from './cityArt';
@@ -194,7 +195,20 @@ import {
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
 import { AmbientLife } from './ambientLife';
-import { rollToward, winLossCompass } from './fx';
+import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
+// POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
+import { lampFalloff, wetSheenAlpha, ownershipWindowTint } from './noirLightingMath';
+import { smokeCurve, smokeAllowed, dangerColor, MUZZLE_FLASH_MS, SMOKE_MS } from './vfx/vfxMotionCurves';
+import {
+  initHitStop, requestHitStop, worldFrozen, initNudge, requestNudge, nudgeOffset,
+  type BeatSeverity, type HitStopState, type NudgeState,
+} from './cameraFeel';
+import {
+  isOccluded, criticalVisualState, occlusionDisplay, occlusionTargetAlpha, xRayRim, type BuildingHull,
+} from './render/isoOcclusion';
+import {
+  conductorIntensity, conductWithHysteresis, initConductor, isIntensityBed, type ConductorState,
+} from './audio/conductorIntensity';
 import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
 } from './gait';
@@ -308,6 +322,7 @@ interface UnitView {
   attackKind?: 'melee' | 'ranged';
   attackFaceRight?: boolean; // recoil direction (away from the target)
   hitUntil?: number; // time.now ms until the hit-react flinch finishes
+  occA?: number; // POLISH v2 · PKG4 — eased occlusion alpha (1 visible → 0 hidden behind a building)
   // RTS-32 procedural rig (thug-role units only): the live-posed articulated figure + its gait clock.
   rig?: Phaser.GameObjects.Graphics;       // the posed silhouette (CLOSE/MID); undefined for un-rigged roles
   rigDebug?: Phaser.GameObjects.Graphics;  // ?debugRig=1 joint/plant overlay
@@ -359,6 +374,25 @@ export class IsoScene extends Phaser.Scene {
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
+  // POLISH v2 · PKG1 — per-building OWNERSHIP WINDOW glow (tinted per frame by the building's DISTRICT
+  // holder — CANON: district control only, never a per-building owner), + the static biz→district map.
+  private bizOwnerGlow = new Map<string, Phaser.GameObjects.Image>();
+  private bizDistrict = new Map<string, string>();
+  // POLISH v2 · PKG4 — static building occlusion hulls (buildings don't move; computed once in drawCity).
+  private buildingHulls: BuildingHull[] = [];
+  private occEnabled = true; // independently toggleable
+  // POLISH v2 · PKG3 — camera FEEL state (the "clunk"): a hit-stop that freezes WORLD visual time + a
+  // decaying-sine screen-nudge on the WORLD camera. The fixed HUD camera is never touched.
+  private hitStop: HitStopState = initHitStop();
+  private nudge: NudgeState = initNudge();
+  private appliedNudgeX = 0;
+  private appliedNudgeY = 0;
+  private feelEnabled = true; // independently toggleable
+  // POLISH v2 · PKG5 — the audio conductor's intensity-driven bed state (requested via the RTS-31 path).
+  private conductor: ConductorState = initConductor('ESTABLISH');
+  private requestedBedPhase?: MusicPhase; // last bed REQUESTED through setPhase (idempotence guard)
+  private lastCombatMs = Number.NEGATIVE_INFINITY; // when unit combat last fired (the activeCombat signal)
+  private audioConductEnabled = true; // independently toggleable
   // RTS-26: the drawn building per business + its current style key + tile, so a vice upgrade can
   // MORPH it (speakeasy → casino) by redrawing on the event (cached between events, never per-frame).
   private bizBuildings = new Map<string, { gfx: Phaser.GameObjects.Graphics; styleKey: string; gx: number; gy: number; depth: number; shut: boolean; boards?: Phaser.GameObjects.Graphics }>();
@@ -688,7 +722,13 @@ export class IsoScene extends Phaser.Scene {
         const styleKey = upgraded ? 'casino'
           : biz.kind === 'front' ? 'storefront' : biz.kind === 'speakeasy' || biz.kind === 'numbers' ? 'speakeasy' : 'warehouse';
         const bdepth = depthValue(t.gx, t.gy) * 10 + 5;
-        const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], bdepth, { lit: !isShutDown(biz) });
+        const bstyle = BUILDING_STYLES[styleKey];
+        // POLISH v2 · PKG4 — the static occlusion HULL (screen-space silhouette): footprint extent + the
+        // scaled height. CANON: this affects ONLY occlusion/silhouette/draw-depth — never the unit anchor,
+        // footprint, pathing, or sim position (all untouched).
+        const bhw = bstyle.footHalfW ?? 54, bhh = bstyle.footHalfH ?? 27, bh = bstyle.height * ENV_HEIGHT_SCALE;
+        this.buildingHulls.push({ cx: c.x, footY: c.y + bhh, roofY: c.y + bhh - bh, halfW: bhw, depth: bdepth });
+        const roof = drawIsoBuilding(this, c.x, c.y, bstyle, bdepth, { lit: !isShutDown(biz) });
         this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth, shut: isShutDown(biz) });
         const glow = this.add
           .image(roof.roofX, roof.roofY - 6, TEX.glow)
@@ -699,6 +739,14 @@ export class IsoScene extends Phaser.Scene {
           .setDepth(depthValue(t.gx, t.gy) * 10 + 7)
           .setVisible(false);
         this.bizMarkers.set(biz.id, { coin, glow, roofX: roof.roofX, roofY: roof.roofY });
+        // POLISH v2 · PKG1 — the ownership WINDOW glow: a faint warm/cooled wash on the facade that reads
+        // who CONTROLS this block's district. Created once + fog-gated; tint/alpha set per frame from the
+        // district holder. Sits just under the coin so the [$] marker still reads on top.
+        const owner = this.add.image(roof.roofX, roof.roofY + 8, TEX.glow)
+          .setDepth(depthValue(t.gx, t.gy) * 10 + 4).setScale(1.4, 1.9)
+          .setBlendMode(Phaser.BlendModes.ADD).setVisible(false);
+        this.bizOwnerGlow.set(biz.id, owner);
+        this.bizDistrict.set(biz.id, d.id);
       }
       // RTS-16: a district nameplate at its first tile, recoloured each frame by who holds it.
       const first = d.businesses[0] && businessTileOf(this.layout, d.businesses[0].id);
@@ -759,13 +807,25 @@ export class IsoScene extends Phaser.Scene {
       // SAME fog-reveal / FAR-cull lifecycle as the prop (pushed into the dressing lists). Depth sits just
       // above the ground so units + the lamp draw OVER the pool.
       if (p.kind === 'lamppost' && this.fxEnabled) {
+        // POLISH v2 · PKG1 — the RTS-34 "faint lamp" flag (~0.15) → a real warm pool seeded at the noir
+        // peak (lampFalloff(0,R) = LAMP_SEED_ALPHA = 0.31). The baked TEX.glow already carries the soft
+        // (1−r/R)² radial falloff, so the pool reads as gaslight catching the rain-slick street.
         const pool = this.add.image(c.x, c.y + 6, TEX.glow).setOrigin(0.5)
-          .setScale(2.4, 1.25).setTint(PAL.lamp).setAlpha(0.15)
+          .setScale(2.4, 1.25).setTint(PAL.lamp).setAlpha(lampFalloff(0, 1))
           .setBlendMode(Phaser.BlendModes.ADD)
           .setDepth(depthValue(p.gx, p.gy) * 10 + 1).setVisible(false);
         const poolRec = { img: pool, gx: p.gx, gy: p.gy };
         this.dressing.push(poolRec);
         this.dressingDark.push(poolRec);
+        // POLISH v2 · PKG1 — a WET-ASPHALT SHEEN: a faint, longer, tinted streak smeared down-slope from
+        // the pool (cheap additive image, NOT a real reflection). Gentler than the pool (wetSheenAlpha).
+        const sheen = this.add.image(c.x, c.y + 16, TEX.glow).setOrigin(0.5, 0.2)
+          .setScale(0.9, 2.6).setTint(PAL.lamp).setAlpha(wetSheenAlpha(0, 1))
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(depthValue(p.gx, p.gy) * 10 + 1).setVisible(false);
+        const sheenRec = { img: sheen, gx: p.gx, gy: p.gy };
+        this.dressing.push(sheenRec);
+        this.dressingDark.push(sheenRec);
       }
     }
   }
@@ -1160,6 +1220,7 @@ export class IsoScene extends Phaser.Scene {
     if (obs.result.weeksFired > 0) this.syncBusinessCollectors();
     for (const ev of obs.result.interceptions) this.flashAmbush(ev);
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
+    if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) this.flashTerritory(cap.districtId, cap.before === 'player');
@@ -1180,6 +1241,10 @@ export class IsoScene extends Phaser.Scene {
     // RTS-35b — the live embodied-extortion acts, keyed by their thug, so the unit loop can pose the
     // intimidate-lean + throw the cadence shoves while a thug is squared up at a front.
     const extortByThug = new Map<string, EmbodiedExtortionAct>((this.state.extortionActs ?? []).map((a) => [a.thugId, a]));
+
+    // POLISH v2 · PKG4 — the unit the cursor is over (kept findable behind buildings via the x-ray).
+    const ptr = this.input.activePointer;
+    const hoveredId = this.occEnabled ? pickUnit(this.units.map((u) => u.unit), screenToGrid(ptr.worldX, ptr.worldY))?.id : undefined;
 
     for (const v of this.units) {
       const s = unitScreenPos(v.unit);
@@ -1262,6 +1327,32 @@ export class IsoScene extends Phaser.Scene {
       const selected = isSelected(this.selection, v.unit.id);
       v.selRing.setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(selected).setAlpha(pulse);
 
+      // POLISH v2 · PKG4 — ISO OCCLUSION: a unit slipping behind a taller building dims→hides; a unit the
+      // player needs to track (fighting / mid-shakedown / selected / hovered) keeps a faction-rimmed x-ray
+      // so it stays findable. NEVER x-ray a fog-hidden unit (a shrouded rival stays shrouded).
+      if (this.occEnabled) {
+        const occluded = this.buildingHulls.length > 0 && isOccluded(s.x, s.y, depth, this.buildingHulls);
+        const revealed = isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
+        const xact = extortByThug.get(v.unit.id);
+        const critical = criticalVisualState({
+          fighting: (!!v.attackUntil && now < v.attackUntil) || (!!v.hitUntil && now < v.hitUntil),
+          shakedown: xact?.state === 'engage' || xact?.state === 'shakedown',
+          selected,
+          hovered: v.unit.id === hoveredId,
+        });
+        const display = occlusionDisplay(occluded, critical, revealed);
+        const target = occlusionTargetAlpha(display);
+        v.occA = v.occA === undefined ? target : v.occA + (target - v.occA) * 0.25; // ease dim→hide
+        const a = v.occA;
+        v.sprite.setAlpha(a); v.rig?.setAlpha(a); v.shadow.setAlpha(0.5 * a);
+        // the x-ray rim: a bright faction silhouette ring lifted ABOVE the buildings so it reads through them.
+        if (display === 'xray') {
+          v.factionRing.setVisible(true).setStrokeStyle(2.5, hexNum(xRayRim(v.faction, !!v.unit.downed)), 0.95).setDepth(99000);
+        } else {
+          v.factionRing.setStrokeStyle(2, v.faction === 'player' ? PAL.brass : PAL.blood, 0.9).setDepth(depth - 1).setAlpha(a);
+        }
+      }
+
       if (v.cashTag && v.dangerRing) {
         const carry = collectorCarryView(v.unit);
         // The satchel grows in 3 tiers with the take; the tag scales with it (state = brass).
@@ -1301,9 +1392,19 @@ export class IsoScene extends Phaser.Scene {
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
     // (earning) — and HIDDEN under the fog (so shrouded blocks/rivals stay unseen).
     const spinAngle = ((now % MOTION.coinSpin) / MOTION.coinSpin) * 360;
+    // POLISH v2 · PKG1 — district holders this frame (CANON: district control only) for the ownership windows.
+    const holderByDistrict = new Map<string, string | undefined>(this.state.districts.map((d) => [d.id, districtHolder(d)]));
+    const breathe = 0.85 + 0.15 * Math.sin(now / 1300); // a slow window breath (never a static alarm)
     for (const [bid, m] of this.bizMarkers) {
       const t = businessTileOf(this.layout, bid);
-      if (t && !isRevealed(this.fog, t.gx, t.gy)) { m.coin.setVisible(false); if (m.glow) m.glow.setVisible(false); continue; }
+      const owner = this.bizOwnerGlow.get(bid);
+      if (t && !isRevealed(this.fog, t.gx, t.gy)) { m.coin.setVisible(false); if (m.glow) m.glow.setVisible(false); owner?.setVisible(false); continue; }
+      // ownership window glow: tint by the building's DISTRICT holder (player brass / rival cooled #9E1B1B).
+      if (owner) {
+        const tint = ownershipWindowTint(holderByDistrict.get(this.bizDistrict.get(bid) ?? ''), this.state.player.id);
+        if (tint) owner.setVisible(true).setTint(hexNum(tint.color)).setAlpha(tint.alpha * breathe);
+        else owner.setVisible(false);
+      }
       const insp = inspectBusiness(this.state, bid);
       const earning = !!insp?.payingProtection;
       const extortable = !earning && !!extortProgress(this.state, bid)?.extortable; // only for revealed fronts
@@ -2232,9 +2333,11 @@ export class IsoScene extends Phaser.Scene {
     if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x); // melee swing / ranged recoil by weapon
     if (ev.kind === 'hit') {
       this.triggerHitReact(ev.unitId);
+      this.cameraBeat('normalHit');            // POLISH v2 · PKG3 — a small punch on every trade
       if (ev.weapon) { this.combatContact(c.x, c.y, 'muzzle'); this.audio?.combat('attack'); } // ranged report (melee has no committed punch SFX yet)
     } else {
       const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
+      this.cameraBeat('kill');                 // POLISH v2 · PKG3 — a heavier hit-stop on a down
       this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool)
       this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
       this.audio?.combat('assassinate');       // a decisive report punctuates the down
@@ -2247,24 +2350,26 @@ export class IsoScene extends Phaser.Scene {
    *  + debris + shock-ring (the heaviest). Bounded particle counts; world-layer, viewport-culled. */
   private combatContact(wx: number, wy: number, kind: CombatVfx): void {
     if (!this.onScreen(wx, wy)) return; // cost bounded by the viewport, not the map
-    const cam = this.cameras.main;
+    // POLISH v2 · PKG3 — the contact's camera FEEL now flows through the tested cameraBeat (hit-stop +
+    // decaying-sine nudge) instead of an ad-hoc random shake. dust = a demolition; muzzle/shatter = a hit.
+    this.cameraBeat(kind === 'dust' ? 'demolition' : 'normalHit');
     if (kind === 'muzzle') {
-      const flash = this.add.image(wx, wy - 16, TEX.glow).setTint(hexNum('#ff5a2c')).setScale(0.35).setDepth(100001); // muzzle #FF5A2C, motion-only
+      // POLISH v2 · PKG2 — the muzzle SNAPS (≤120ms) in the STANDARD danger #FF5A2C; the live spark is the
+      // hotter #E11D1D (the active-danger frame). dangerColor() keeps that discipline in one place.
+      const flash = this.add.image(wx, wy - 16, TEX.glow).setTint(hexNum(dangerColor(false))).setScale(0.35).setDepth(100001);
       this.worldFx(flash);
-      this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: 150, onComplete: () => flash.destroy() });
+      this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: MUZZLE_FLASH_MS, ease: 'Quad.Out', onComplete: () => flash.destroy() });
       for (let i = 0; i < 5; i++) {
-        const spark = this.add.rectangle(wx, wy - 16, 3, 1.5, hexNum(SPEC.danger), 1).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
+        const spark = this.add.rectangle(wx, wy - 16, 3, 1.5, hexNum(dangerColor(true)), 1).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
         this.worldFx(spark);
         this.tweens.add({ targets: spark, x: wx + Phaser.Math.Between(-26, 26), y: wy - 16 + Phaser.Math.Between(-18, 10), alpha: 0, duration: 220 + i * 20, onComplete: () => spark.destroy() });
       }
-      cam.shake(70, 0.004);
     } else if (kind === 'shatter') {
       for (let i = 0; i < 9; i++) { // brass-line glass shards (NOT red)
         const shard = this.add.rectangle(wx, wy - 14, Phaser.Math.Between(2, 5), 1.5, hexNum(SPEC.brass), 0.95).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
         this.worldFx(shard);
         this.tweens.add({ targets: shard, x: wx + Phaser.Math.Between(-34, 34), y: wy + Phaser.Math.Between(-6, 28), angle: Phaser.Math.Between(-220, 220), alpha: 0, duration: 520 + i * 25, ease: 'Cubic.Out', onComplete: () => shard.destroy() });
       }
-      cam.shake(60, 0.003);
     } else { // 'dust' — the demolish mushroom: debris + soot shock-ring + a heavier kick
       const ring = this.add.circle(wx, wy - 6, 6).setStrokeStyle(3, hexNum(SPEC.fog), 0.6).setDepth(100001);
       this.worldFx(ring);
@@ -2275,8 +2380,27 @@ export class IsoScene extends Phaser.Scene {
         this.worldFx(dust);
         this.tweens.add({ targets: dust, x: dust.x + Phaser.Math.Between(-30, 30), y: wy - 6 - Phaser.Math.Between(20, 58), scale: { from: 1, to: 1.8 }, alpha: 0, duration: 800 + i * 30, ease: 'Quad.Out', onComplete: () => dust.destroy() });
       }
-      cam.shake(150, 0.006);
+      // POLISH v2 · PKG2 — a slow SMOKE column rides ONLY this lingering-damage beat (smokeAllowed('dust'));
+      // a clean muzzle/shatter never smokes. Shaped by smokeCurve (peak ~0.6, long rise→fall).
+      if (smokeAllowed('dust')) {
+        const peak = smokeCurve(0.2).alpha;
+        for (let i = 0; i < 3; i++) {
+          const smoke = this.add.circle(wx + Phaser.Math.Between(-8, 8), wy - 8, Phaser.Math.Between(5, 9), hexNum(SPEC.fog), peak).setDepth(100000);
+          this.worldFx(smoke);
+          this.tweens.add({ targets: smoke, y: wy - 8 - Phaser.Math.Between(40, 80), scale: { from: 1, to: 2.6 }, alpha: 0, duration: SMOKE_MS + i * 140, ease: 'Sine.Out', onComplete: () => smoke.destroy() });
+        }
+      }
     }
+  }
+
+  /** POLISH v2 · PKG3 — register a camera-feel BEAT: arm the severity-banded hit-stop (no-stack + lockout)
+   * + the screen-nudge impulse. Both are applied to the WORLD camera in update(); the fixed HUD camera is
+   * never touched. Maps onto EXISTING events — adds no new beats. */
+  private cameraBeat(severity: BeatSeverity): void {
+    if (!this.feelEnabled) return;
+    const now = this.time.now;
+    this.hitStop = requestHitStop(this.hitStop, severity, now);
+    this.nudge = requestNudge(this.nudge, severity, now);
   }
 
   /** Whether a world point is within the (padded) camera view — viewport culling for FX cost. */
@@ -2413,7 +2537,7 @@ export class IsoScene extends Phaser.Scene {
     this.worldFx(ring);
     this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 620, ease: 'Quad.Out', onComplete: () => ring.destroy() });
     this.floatText(wx, wy - 34, '🔒 LOCKED DOWN', '#7da890');
-    this.cameras.main.shake(150, 0.004);
+    this.cameraBeat('federalRaid'); // POLISH v2 · PKG3 — the Bureau's blow lands with a banded hit-stop
   }
 
   /**
@@ -2477,6 +2601,7 @@ export class IsoScene extends Phaser.Scene {
   private showEndgame(): void {
     if (this.endgameShown) return;
     this.endgameShown = true;
+    this.cameraBeat('winLoss'); // POLISH v2 · PKG3 — the decisive sting gets the longest hit-stop
     const won = this.state.status === 'won';
     // RTS-27: the win/lose STING + a VO one-liner, and switch the music bed (theme swell / defeat).
     this.audio?.play(won ? 'sting_win' : 'sting_lose');
@@ -2878,6 +3003,15 @@ export class IsoScene extends Phaser.Scene {
     this.samplePerf(delta);
 
     const cam = this.cameras.main;
+    // POLISH v2 · PKG3 — HIT-STOP: freeze WORLD-VISUAL time (the VFX tweens) for the brief banded window so
+    // a blow READS. The sim (economy/combat) ran already in updateUnits and is untouched; the fixed HUD
+    // camera is untouched (this only gates tween time + the WORLD-camera nudge below). Auto-releases as the
+    // clock advances past the window.
+    this.tweens.timeScale = this.feelEnabled && worldFrozen(this.hitStop, this.time.now) ? 0 : 1;
+    // POLISH v2 · PKG3 — SCREEN-NUDGE: undo last frame's offset so the pan/zoom math sees the true scroll
+    // (no drift), then re-apply this frame's decaying-sine nudge at the end. WORLD camera only.
+    cam.scrollX -= this.appliedNudgeX; cam.scrollY -= this.appliedNudgeY;
+    this.appliedNudgeX = 0; this.appliedNudgeY = 0;
     // RTS-22/23: ease the zoom toward its target, keeping the cursor's world point pinned.
     if (Math.abs(cam.zoom - this.targetZoom) > 0.001) {
       cam.setZoom(Phaser.Math.Linear(cam.zoom, this.targetZoom, 0.22));
@@ -2901,6 +3035,13 @@ export class IsoScene extends Phaser.Scene {
     if (right) cam.scrollX += step;
     if (up) cam.scrollY -= step;
     if (down) cam.scrollY += step;
+    // POLISH v2 · PKG3 — apply this frame's screen-nudge to the WORLD camera (stored so the next frame can
+    // undo it cleanly; clamped + decaying inside nudgeOffset). The fixed HUD camera never sees it.
+    if (this.feelEnabled) {
+      const off = nudgeOffset(this.nudge, this.time.now);
+      this.appliedNudgeX = off.dx; this.appliedNudgeY = off.dy;
+      cam.scrollX += off.dx; cam.scrollY += off.dy;
+    }
   }
 
   // ── HUD ──────────────────────────────────────────────────────────────────────────────────
@@ -3092,6 +3233,10 @@ export class IsoScene extends Phaser.Scene {
     this.setT(this.toolbarTip, `${b.name} [${b.hotkey}] — ${b.tip}`);
     const tx = Phaser.Math.Clamp(b.label.x, 170, this.scale.width - 170);
     this.toolbarTip.setPosition(tx, b.label.y - b.label.height - 8).setVisible(true);
+    // POLISH v2 · PKG5 — the inspector tip SNAPS open (panelReveal eases scale 0.92→1 + alpha 0→1).
+    const from = panelReveal(0), to = panelReveal(1);
+    this.toolbarTip.setScale(from.scale).setAlpha(from.alpha);
+    this.tweens.add({ targets: this.toolbarTip, scale: to.scale, alpha: to.alpha, duration: 140, ease: 'Quad.Out' });
   }
 
   // ── RTS-30c-2b: the contextual ACTION-ICON CARD (RTS-30d-4: chip hover → requirement inspector) ──
@@ -3543,7 +3688,9 @@ export class IsoScene extends Phaser.Scene {
     // bank/spend reads as the number LANDING. Seeded to the real values on the first frame (no opening roll).
     const dtMs = this.game.loop.delta;
     if (!this.cashInit) { this.shownCash = p.cleanCash; this.shownNet = net; this.cashInit = true; }
-    else { this.shownCash = rollToward(this.shownCash, p.cleanCash, dtMs); this.shownNet = rollToward(this.shownNet, net, dtMs); }
+    // POLISH v2 · PKG5 — a windfall SPINS up fast then eases (cashRollRate shapes the EXISTING rollToward's
+    // rate by the gap size); it still lands exactly. Not a 2nd cash system — just a rate shaper.
+    else { this.shownCash = rollToward(this.shownCash, p.cleanCash, dtMs, cashRollRate(p.cleanCash - this.shownCash)); this.shownNet = rollToward(this.shownNet, net, dtMs, cashRollRate(net - this.shownNet)); }
     const cleanShown = Math.round(this.shownCash), netShown = Math.round(this.shownNet);
 
     const heatCellW = 300;
@@ -3886,16 +4033,42 @@ export class IsoScene extends Phaser.Scene {
     }
     if (this.lastPhase && this.lastPhase !== phase) {
       this.flashPhaseChange(phase);
-      // RTS-27: crossfade the adaptive music to the new phase bed + a phase sting.
-      this.audio?.setPhase(phase as MusicPhase);
+      // RTS-27: a phase STING on the narrative beat change. The BED itself is now requested by the audio
+      // CONDUCTOR (updateConductor) so the score swells with the action, not just the stage.
       this.audio?.play(this.audio.stingForPhaseKey(phase as MusicPhase));
       if (phase === 'CONTEST' || phase === 'FIRST BLOOD') this.fireTipOnce('war');
     }
     this.lastPhase = phase;
+    // POLISH v2 · PKG5 — request the intensity-driven bed THROUGH the existing RTS-31 conductBeds path.
+    this.updateConductor(phase as MusicPhase, p.federalTier);
     // RTS-27/30e: the teletype escalation + a one-shot edge flash only when the federal tier CROSSES
     // up a rung (50/70/85) — amber→danger by tier, motion-only.
     if (p.federalTier > this.lastFederalTier) { this.audio?.federal(p.federalTier); this.flashFederalCross(p.federalTier); }
     this.lastFederalTier = p.federalTier;
+  }
+
+  /** POLISH v2 · PKG5 — the AUDIO CONDUCTOR: blend the EXISTING signals (threat / federal tier 50-70-85 /
+   * active combat / week pacing) into a 0..1 intensity and request the matching in-match bed with hysteresis
+   * — so the score swells with the action instead of flipping on jitter. Terminal phases (TITLE/GAMEOVER)
+   * and FIRST BLOOD are stage-driven directly; the endgame stage floors the bed at DECAPITATE. The bed is
+   * ALWAYS requested through AudioManager.setPhase (→ conductBeds): this never starts/stops a bed itself,
+   * never bypasses the crossfade lock, and never breaks the ≤1-bed guarantee. */
+  private updateConductor(matchPhase: MusicPhase, federalTier: number): void {
+    if (!this.audioConductEnabled) return;
+    const now = this.time.now;
+    let bed: MusicPhase;
+    if (!isIntensityBed(matchPhase)) {
+      bed = matchPhase; // TITLE / GAMEOVER / FIRST BLOOD — stage-driven (FIRST BLOOD keeps its own bed)
+    } else {
+      const threat = threatenedCollectors(this.state).reduce(
+        (m, t) => Math.max(m, t.level === 'ambush' ? 1 : t.level === 'threatened' ? 0.5 : 0), 0);
+      const activeCombat = Math.max(0, 1 - (now - this.lastCombatMs) / 3000);
+      const weekPacing = (this.state.weekElapsed ?? 0) / SCENE_WEEK_SECONDS;
+      const intensity = conductorIntensity({ threat, federalTier, activeCombat, weekPacing });
+      this.conductor = conductWithHysteresis(this.conductor, intensity, now);
+      bed = matchPhase === 'DECAPITATE' ? 'DECAPITATE' : this.conductor.phase; // the endgame floors the bed
+    }
+    if (this.requestedBedPhase !== bed) { this.audio?.setPhase(bed); this.requestedBedPhase = bed; }
   }
 
   // ── RTS-27 audio settings surface ──────────────────────────────────────────────────────────
@@ -4039,7 +4212,12 @@ export class IsoScene extends Phaser.Scene {
     // §4: unread "NEEDS YOU" count — danger/warning incidents past what the player last focused.
     const unread = this.state.incidents.filter((r) => r.seq > this.lastSeenWireSeq && incidentNeedsYou(r.severity)).length;
     const title = unread > 0 ? `THE WIRE  [L] · ${unread} NEEDS YOU` : (flashing ? 'THE WIRE  [L]  ◂ NEW' : 'THE WIRE  [L]');
-    if (this.feedTitle) this.setTC(this.feedTitle, title, unread > 0 || flashing ? SPEC.danger : NOIR_PALETTE.brass).setPosition(right, 66);
+    if (this.feedTitle) {
+      this.setTC(this.feedTitle, title, unread > 0 || flashing ? SPEC.danger : NOIR_PALETTE.brass).setPosition(right, 66);
+      // POLISH v2 · PKG5 — an unread crisis THROBS (crisisPulse) so it pulls the eye; quiet = steady.
+      const crisis = unread > 0 || flashing;
+      this.feedTitle.setAlpha(crisis ? 0.7 + 0.3 * crisisPulse(this.time.now) : 1);
+    }
     const recent: IncidentRecord[] = recentIncidents(this.state, this.feedLines.length);
     const g = this.hudGfx; // dots drawn after refreshHud's clear, persist through the frame
     for (let i = 0; i < this.feedLines.length; i++) {
