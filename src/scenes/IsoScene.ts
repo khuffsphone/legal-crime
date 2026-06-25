@@ -2373,13 +2373,30 @@ export class IsoScene extends Phaser.Scene {
   /** [4] LOCKOUT the weakest rival via The Bureau — freeze and bleed them. */
   private commandLockout(): void {
     const w = weakestRival(this.state);
-    if (!w) { this.setStatus('no rival to lock down'); return; }
+    if (!w) { this.setStatus('LOCKOUT: no rival left to lock down'); return; }
     const g = canLockout(this.state, w.familyId);
     if (!g.ok) { this.setStatus(`LOCKOUT ${w.name}: ${g.reason}`); return; }
     resolveLockout(this.state, w.familyId);
     this.state = harvestIncidents(this.state);
     this.audio?.combat('lockout'); this.audio?.lockoutEntry(); this.audio?.confirm(); // RTS-27 siren + RTS-34 door-slam forced entry
-    this.setStatus(`the Bureau is locking down ${w.name}`);
+    // FIX — a FELT success beat at the rival's HQ so the lockout reads as DELIVERING (it used to play only
+    // SFX + a one-line status, so a successful lockout looked like a dead button). Federal-green pulse +
+    // a lock stamp + a kick — MOTION, no static wash.
+    const ht = hqTileOf(this.layout, w.familyId);
+    if (ht) { const p = gridToScreen(ht.gx, ht.gy); this.lockoutBeat(p.x, p.y); }
+    this.signalBeat('federal');
+    this.setStatus(`the Bureau is locking down ${w.name} — they can't expand & they bleed while it holds`);
+  }
+
+  /** FIX — the LOCKOUT beat: the Bureau moves in. A federal-green shock-ring + a "🔒 LOCKED DOWN" stamp
+   * over the rival HQ + a short camera kick. Federal-green (#5b7d6a, the canon Bureau accent), MOTION-only. */
+  private lockoutBeat(wx: number, wy: number): void {
+    const FED = 0x5b7d6a;
+    const ring = this.add.circle(wx, wy - 8, 8).setStrokeStyle(3, FED, 0.9).setDepth(100001);
+    this.worldFx(ring);
+    this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 620, ease: 'Quad.Out', onComplete: () => ring.destroy() });
+    this.floatText(wx, wy - 34, '🔒 LOCKED DOWN', '#7da890');
+    this.cameras.main.shake(150, 0.004);
   }
 
   /**
@@ -3643,7 +3660,7 @@ export class IsoScene extends Phaser.Scene {
       { ch: 'police', name: 'THE BEAT', buys: 'fewer raids' },
       { ch: 'judges', name: 'THE BENCH', buys: 'survive a bust · −raid heat' },
       { ch: 'politicians', name: 'CITY HALL', buys: 'heat cools · hit cover' },
-      { ch: 'feds', name: 'THE BUREAU', buys: 'fed shield · unlocks lockout' },
+      { ch: 'feds', name: 'THE BUREAU', buys: 'fed shield · arms LOCKOUT [4] ($800 + a rival)' },
     ];
     const bribes = this.state.player.bribes;
     defs.forEach((d, i) => {
