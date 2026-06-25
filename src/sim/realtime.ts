@@ -10,6 +10,7 @@ import { advanceClock } from './clock';
 import { advanceUnits } from './movement';
 import { resolveInterceptions, type InterceptionEvent } from './interception';
 import { resolveProximityCombat, type CombatEvent } from './combat';
+import { advanceDownedBodies, recordDownedBody } from './downedBodies';
 import { advanceEmbodiedExtortion, type EmbodiedExtortionEvent } from './extortionEmbodied';
 import { advanceStrategy, type StrategicEvent } from './strategy';
 import { evaluateEndgame, type EndgameResult } from './endgame';
@@ -54,6 +55,11 @@ export function update(
   // on the freshly-advanced positions, before the week settles). Collectors are untouched (robbed via
   // interception above); this only fights factioned non-collector units.
   const combat = resolveProximityCombat(state, dt);
+  // COMBAT READABILITY — ⚠ SIM-ADJACENT (unit lifecycle, kept in this WRAPPER; the combat resolver + tick
+  // are untouched): a downed unit leaves a DESATURATED body for a few seconds instead of vanishing the
+  // instant it falls. Age existing bodies, then capture any new ones from this step's `down` beats.
+  state.downedBodies = advanceDownedBodies(state.downedBodies ?? [], dt);
+  for (const ev of combat) state.downedBodies = recordDownedBody(state.downedBodies, ev);
   // RTS-35b: drive the embodied-extortion acts (walk → shake down → convert via the EXISTING path).
   // Runs on the freshly-advanced positions + the combat signal; the economic tick is untouched.
   const extortion = advanceEmbodiedExtortion(state, dt);

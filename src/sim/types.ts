@@ -5,6 +5,7 @@ import type { MovableUnit } from './movement';
 import type { IncidentRecord } from './ledger';
 import type { Trait } from './traits';
 import type { EmbodiedExtortionAct } from './extortionEmbodied';
+import type { DownedBody } from './downedBodies';
 import type { CrewTie } from './crew';
 
 export type GameStatus = 'playing' | 'won' | 'lost';
@@ -223,6 +224,9 @@ export interface GameState {
   /** RTS-35b — active EMBODIED-EXTORTION acts (a thug walking to + shaking down a front). Additive;
    * absent ⇒ none. Driven by the real-time wrapper (advanceEmbodiedExtortion); the tick never sees them. */
   extortionActs?: EmbodiedExtortionAct[];
+  /** COMBAT READABILITY — downed units persist as DESATURATED bodies for a few seconds before cleanup
+   * (sim-adjacent lifecycle; driven by the real-time wrapper, NOT the tick). Additive; absent ⇒ none. */
+  downedBodies?: DownedBody[];
   /** RTS-24 — THE MARKET (trade mini-game). Additive; absent ⇒ no market yet. */
   market?: MarketState;
   /** RTS-29 — the week before which rival TERRITORIAL aggression is dormant (the peaceful runway).

@@ -140,6 +140,9 @@ export {
   unitHealth, isCombatant, hostile, enemyInRange, damageUnit, resolveProximityCombat, type CombatEvent,
 } from './combat';
 export {
+  recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
+} from './downedBodies';
+export {
   tickEmbodiedExtortionAct, advanceEmbodiedExtortion, applyCommandWithEmbodiedExtortion,
   canIssueMoveAndShakedown, createMoveAndShakedownAct, frontInteractionPoint, isAtFront, isPresentForShakedown,
   isRivalHeldFront, frontGuard, isRetakeableFront,

@@ -163,6 +163,10 @@ import {
   type MapLayout,
   type Selection,
   COMBAT_SEEK_RANGE,
+  isCombatant,
+  enemyInRange,
+  downedBodyDecay,
+  type DownedBody,
   type NavGrid,
   type MovableUnit,
   type ThreatView,
@@ -195,6 +199,7 @@ import {
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
+import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -324,6 +329,7 @@ interface UnitView {
   attackFaceRight?: boolean; // recoil direction (away from the target)
   hitUntil?: number; // time.now ms until the hit-react flinch finishes
   occA?: number; // POLISH v2 · PKG4 — eased occlusion alpha (1 visible → 0 hidden behind a building)
+  hpBar?: Phaser.GameObjects.Graphics; // COMBAT READABILITY — the small over-unit health bar (lazy)
   // RTS-32 procedural rig (thug-role units only): the live-posed articulated figure + its gait clock.
   rig?: Phaser.GameObjects.Graphics;       // the posed silhouette (CLOSE/MID); undefined for un-rigged roles
   rigDebug?: Phaser.GameObjects.Graphics;  // ?debugRig=1 joint/plant overlay
@@ -382,6 +388,8 @@ export class IsoScene extends Phaser.Scene {
   // POLISH v2 · PKG4 — static building occlusion hulls (buildings don't move; computed once in drawCity).
   private buildingHulls: BuildingHull[] = [];
   private occEnabled = true; // independently toggleable
+  // COMBAT READABILITY (4) — persistent downed-body sprites, keyed by the downed unit's id.
+  private downedBodyViews = new Map<string, Phaser.GameObjects.Image>();
   // POLISH v2 · PKG3 — camera FEEL state (the "clunk"): a hit-stop that freezes WORLD visual time + a
   // decaying-sine screen-nudge on the WORLD camera. The fixed HUD camera is never touched.
   private hitStop: HitStopState = initHitStop();
@@ -1357,6 +1365,25 @@ export class IsoScene extends Phaser.Scene {
         }
       }
 
+      // COMBAT READABILITY — a small faction-tinted HEALTH BAR over a fighter that has taken damage OR is in
+      // combat (hidden at full health / out of combat, and hidden when occluded away — restraint). A critical
+      // unit's bar PULSES (motion = threat; never a static danger-red fill, per the red-discipline law).
+      if (isCombatant(v.unit) || v.unit.health !== undefined) {
+        const inCombat = (!!v.hitUntil && now < v.hitUntil) || (!!v.attackUntil && now < v.attackUntil) || !!enemyInRange(v.unit, this.state.units);
+        const show = shouldShowHealthBar(v.unit, inCombat) && (v.occA ?? 1) > 0.15;
+        if (!v.hpBar) { v.hpBar = this.add.graphics(); this.worldFx(v.hpBar); }
+        v.hpBar.setVisible(show).setDepth(depth + 3);
+        if (show) {
+          const frac = healthFraction(v.unit);
+          const W = 24, H = 3, bx = s.x - W / 2, by = s.y - 52;
+          const col = v.faction === 'player' ? PAL.brass : hexNum(SPEC.rival); // faction read (rival = static #9E1B1B)
+          const fillA = isCritical(v.unit) ? 0.5 + 0.45 * Math.abs(Math.sin(now / 130)) : 0.95; // critical PULSES
+          v.hpBar.clear();
+          v.hpBar.fillStyle(hexNum(SPEC.soot), 0.8).fillRect(bx - 1, by - 1, W + 2, H + 2); // dark backing
+          v.hpBar.fillStyle(col, fillA).fillRect(bx, by, W * frac, H);
+        }
+      }
+
       if (v.cashTag && v.dangerRing) {
         const carry = collectorCarryView(v.unit);
         // The satchel grows in 3 tiers with the take; the tag scales with it (state = brass).
@@ -1392,6 +1419,7 @@ export class IsoScene extends Phaser.Scene {
     }
 
     this.drawExtortOverlay(now);
+    this.syncDownedBodies(); // COMBAT READABILITY (4) — persistent desaturated downed bodies
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
     // (earning) — and HIDDEN under the fog (so shrouded blocks/rivals stay unseen).
@@ -2336,7 +2364,8 @@ export class IsoScene extends Phaser.Scene {
     const attacker = this.units.find((v) => v.unit.id === ev.attackerId);
     if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x); // melee swing / ranged recoil by weapon
     if (ev.kind === 'hit') {
-      this.triggerHitReact(ev.unitId);
+      this.triggerHitReact(ev.unitId);         // COMBAT READABILITY (3) — the stagger/flinch (RTS-30e motion)
+      this.hitPip(c.x, c.y);                   // COMBAT READABILITY (2) — a restrained damage-flash pip (no numbers)
       this.cameraBeat('normalHit');            // POLISH v2 · PKG3 — a small punch on every trade
       if (ev.weapon) { this.combatContact(c.x, c.y, 'muzzle'); this.audio?.combat('attack'); } // ranged report (melee has no committed punch SFX yet)
     } else {
@@ -2346,6 +2375,41 @@ export class IsoScene extends Phaser.Scene {
       this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
       this.audio?.combat('assassinate');       // a decisive report punctuates the down
       this.setStatus(faction === 'player' ? 'one of your thugs went DOWN — pull back or reinforce' : 'a rival thug went DOWN in the brawl');
+    }
+  }
+
+  /** COMBAT READABILITY (2) — a RESTRAINED hit pip: a brief danger tick that pops up off the struck unit and
+   * fades (~180ms). No floating damage numbers — a single motion-danger mark, viewport-culled. */
+  private hitPip(wx: number, wy: number): void {
+    if (!this.onScreen(wx, wy)) return;
+    const pip = this.add.rectangle(wx + Phaser.Math.Between(-6, 6), wy - 30, 2.5, 7, hexNum(dangerColor(true)), 1).setDepth(100001);
+    this.worldFx(pip);
+    this.tweens.add({ targets: pip, y: pip.y - 14, alpha: 0, duration: 180, ease: 'Quad.Out', onComplete: () => pip.destroy() });
+  }
+
+  /** COMBAT READABILITY (4) — render the persistent DOWNED BODIES (state.downedBodies, driven by the sim
+   * wrapper). A downed unit leaves a DESATURATED, slumped body (canon: desat, never rival-red) that fades
+   * out over its persist window, then is cleaned up — instead of the unit vanishing the instant it falls.
+   * Pools one image per body; syncs create/fade/destroy against the sim list each frame. */
+  private syncDownedBodies(): void {
+    const bodies: DownedBody[] = this.state.downedBodies ?? [];
+    const live = new Set(bodies.map((b) => b.id));
+    // drop views whose body the sim has cleaned up
+    for (const [id, img] of this.downedBodyViews) {
+      if (!live.has(id)) { img.destroy(); this.downedBodyViews.delete(id); }
+    }
+    for (const b of bodies) {
+      const sp = gridToScreen(b.gx, b.gy);
+      let img = this.downedBodyViews.get(b.id);
+      if (!img) {
+        // a flattened, DESATURATED figure on the ground (grey — never rival-red), behind the living units.
+        img = this.add.image(sp.x, sp.y + 4, figureKeyFor(undefined, b.factionId === this.state.player.id ? 'player' : 'rival', 1))
+          .setOrigin(0.5, 0.9).setTint(0x6b6358).setScale(1.05, 0.5)
+          .setDepth(depthValue(Math.round(b.gx), Math.round(b.gy)) * 10 + 3);
+        this.worldFx(img);
+        this.downedBodyViews.set(b.id, img);
+      }
+      img.setAlpha(0.7 * (1 - downedBodyDecay(b))); // fade out toward cleanup
     }
   }
 
