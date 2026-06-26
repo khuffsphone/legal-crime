@@ -227,6 +227,10 @@ import {
   worldToMinimap, minimapToWorld, isInMinimap, districtControlColor, minimapPlayerBlips, minimapRivalBlips,
   type MiniRect, type MiniUnit, type ControlStatus,
 } from './info/minimapMath';
+// HUD PHASE 1 — the one-drawer panel system + the dossier strip that REPLACE the always-on side stack.
+import { PanelManager } from './hud/PanelManager';
+import { type PanelId } from './hud/panelState';
+import { buildDossierChips, dirtyPercent, type DossierChip } from './hud/dossierStrip';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -486,6 +490,13 @@ export class IsoScene extends Phaser.Scene {
   private feedTitle?: Phaser.GameObjects.Text;
   private feedLines: Phaser.GameObjects.Text[] = [];
   private feedVisible = true;
+  // HUD PHASE 1 — the panel system + dossier strip that COLLAPSE the always-on side stack. `hudCollapsed`
+  // retires the legacy side panels (feed dock / channels / route pill / control / crew) so the city viewport
+  // dominates; their summaries live in the strip and their detail in the on-demand drawers (scaffolds now).
+  private panels?: PanelManager;
+  private hudCollapsed = true;
+  private dossierG?: Phaser.GameObjects.Container;
+  private dossierHits: { x: number; y: number; w: number; h: number; id: PanelId }[] = [];
   private crewTitle?: Phaser.GameObjects.Text;
   private crewRows: Phaser.GameObjects.Text[] = [];
   private crewWrong: Phaser.GameObjects.Rectangle[] = [];
@@ -1641,7 +1652,7 @@ export class IsoScene extends Phaser.Scene {
     // INFO-FEEDBACK — the minimap, the screen-edge alerts, and THE WIRE — LOG (all read sim state only).
     this.drawMinimap(now);
     this.drawEdgeAlerts(now);
-    this.drawWireLog();
+    if (!this.hudCollapsed) this.drawWireLog(); // HUD PHASE 1 — full log lives in the [L] Wire drawer when collapsed
     this.drawOpPreview(); // OPERATION-OUTCOME PREVIEWS — the hover GLANCE/DETAIL card (read-only)
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
@@ -1865,6 +1876,10 @@ export class IsoScene extends Phaser.Scene {
       // also box-select/deselect units beneath the HUD.
       if (this.toolbarClick) { this.toolbarClick = false; return; }
       if (this.legend?.visible) { this.hideLegend(); return; }
+      // HUD PHASE 1 — the dossier strip + the open drawer OVERLAY the world: a click on a chip toggles its
+      // panel; a click anywhere inside the open drawer is swallowed (so it never box-selects the city beneath).
+      if (this.handleDossierClick(p.x, p.y)) return;
+      if (this.panels?.capturesPointer(p.x, p.y)) return;
       // RTS-30d-3: a left-drag marquee just finished — resolve the box-selection (NOT a click/pan).
       if (this.marqueeActive) { const shift = !!(p.event as MouseEvent | undefined)?.shiftKey; this.resolveMarquee(p, shift); this.endMarquee(); return; }
       // A real drag panned the camera — not a click.
@@ -3354,24 +3369,32 @@ export class IsoScene extends Phaser.Scene {
       const wp = cam.getWorldPoint(p.x, p.y);
       this.zoomAnchor = { sx: p.x, sy: p.y, wx: wp.x, wy: wp.y };
     });
-    this.input.keyboard?.on('keydown-F', () => this.centerOnSelection());
+    // HUD PHASE 1 — [F] now opens the FINANCE drawer; the camera CENTRE-ON-SELECTION it displaced moves to
+    // [I] (the only collision the L/T/V/K/F bindings introduce; the larger remap is deferred).
+    this.input.keyboard?.on('keydown-F', () => this.panels?.toggle('finance'));
+    this.input.keyboard?.on('keydown-I', () => this.centerOnSelection());
     this.input.keyboard?.on('keydown-Z', () => this.frameCity());
     // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).
     this.input.keyboard?.on('keydown-PLUS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-EQUALS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-MINUS', () => this.cycleZoom(-1));
-    // RTS-29: collectors are AUTOMATIC now (one per extorted front) — no player routing. [T] just informs.
-    this.input.keyboard?.on('keydown-T', () => this.setStatus('collectors are automatic — one spawns per front you extort ([E]); no routing needed'));
+    // HUD PHASE 1 — [T] opens the TURF drawer (the old [T] no-op status hint is retired).
+    this.input.keyboard?.on('keydown-T', () => this.panels?.toggle('turf'));
     this.input.keyboard?.on('keydown-E', () => this.commandExtort());
     this.input.keyboard?.on('keydown-C', () => this.commandCollect());
     this.input.keyboard?.on('keydown-R', () => this.commandReinvest());
     this.input.keyboard?.on('keydown-G', () => this.commandGrease());
-    this.input.keyboard?.on('keydown-L', () => this.toggleFeed());
-    this.input.keyboard?.on('keydown-K', () => this.toggleCrew());
+    // HUD PHASE 1 — [L] Wire / [K] Crew now open their DRAWERS (the old always-on feed/crew panels are retired).
+    this.input.keyboard?.on('keydown-L', () => this.panels?.toggle('wire'));
+    this.input.keyboard?.on('keydown-K', () => this.panels?.toggle('crew'));
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
     // FOOTGUN FIX — [B] no longer wipes the game on a single press; it ARMS a confirm prompt.
     this.input.keyboard?.on('keydown-B', () => this.armRestartPrompt());
-    this.input.keyboard?.on('keydown-ESC', () => { if (this.restartGate.armed) this.doCancelRestart(); });
+    // HUD PHASE 1 — ESC closes the open drawer first (the common case); else cancels an armed restart prompt.
+    this.input.keyboard?.on('keydown-ESC', () => {
+      if (this.panels?.isOpen()) { this.panels.close(); return; }
+      if (this.restartGate.armed) this.doCancelRestart();
+    });
     // RTS-17 — the offensive. RTS-27: when the audio panel is open, 1–5 adjust the volume buses
     // instead of firing offense/build verbs (so the settings surface is keyboard-drivable).
     this.input.keyboard?.on('keydown-ONE', () => this.audioPanelOpen ? this.cycleAudioBus(0) : this.commandRaid());
@@ -3385,7 +3408,8 @@ export class IsoScene extends Phaser.Scene {
     // INFO-FEEDBACK (canon ruling #1): [Q] = jump to the last/highest-priority unread alert (NOT Space=pause,
     // NOT Tab=idle cycle). PATROL keeps its action-card chip (the [Q] hotkey moved to jump-to-alert).
     this.input.keyboard?.on('keydown-Q', () => this.jumpToLastAlert());
-    this.input.keyboard?.on('keydown-V', () => this.commandSabotage()); // DEMOLISH = the wreck of a rival node
+    // HUD PHASE 1 — fix the [V]/[2] dupe: [V] opens the PATHS drawer; [2] remains the sole sabotage key.
+    this.input.keyboard?.on('keydown-V', () => this.panels?.toggle('paths'));
     // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
     this.input.keyboard?.on('keydown-O', () => this.toggleAudioPanel());
     this.input.keyboard?.on('keydown-ZERO', () => { this.audio?.toggleMute(); this.refreshAudioPanel(); });
@@ -3420,8 +3444,8 @@ export class IsoScene extends Phaser.Scene {
     this.ambient?.update(this.pause.paused ? 0 : dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
     this.refreshHud();
     this.refreshObjective();
-    this.refreshFeed();
-    this.refreshCrew();
+    if (!this.hudCollapsed) { this.refreshFeed(); this.refreshCrew(); } // HUD PHASE 1 — legacy side panels retired
+    this.refreshPanels(); // HUD PHASE 1 — the dossier strip + the open drawer's body
     this.refreshStrategy();
     this.refreshToolbar(); // RTS-30b-ui: clickable hotkey toolbar (states + progressive disclosure)
     this.refreshActionCard(); // RTS-30c-2b: the selected-unit action-icon chips
@@ -3573,6 +3597,107 @@ export class IsoScene extends Phaser.Scene {
     this.perfText = this.mkText(this.scale.width / 2, 6, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: '#7CFC8A', backgroundColor: '#000000cc' })
       .setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002).setPadding(6, 3, 6, 3).setVisible(false);
     this.refreshFastForward(); // initial label + placement
+
+    // HUD PHASE 1 — stand up the one-drawer panel system + the dossier strip, then COLLAPSE the always-on
+    // side stack so the city viewport dominates. The legacy panels' summaries now live in the strip; their
+    // detail lives in the on-demand drawers. (OVERLAY only — nothing here touches the world camera.)
+    this.panels = new PanelManager(this);
+    this.hudFx(this.panels.root); // the WORLD camera must ignore the drawer (fixed-HUD layer), or it double-renders
+    this.scale.on('resize', () => this.panels?.layout()); // re-derive the drawer rect (OVERLAY only — never the world)
+    this.dossierG = this.add.container(0, 0).setScrollFactor(0).setDepth(100110);
+    this.hudFx(this.dossierG);
+    if (this.hudCollapsed) this.collapseLegacyPanels();
+  }
+
+  /** HUD PHASE 1 — retire the always-on side panels the strip/drawers replace: hide their persistent text
+   * objects (the per-frame draws are gated on `hudCollapsed` in refreshHud/refreshFeed/refreshCrew/render). */
+  private collapseLegacyPanels(): void {
+    const objs: (Phaser.GameObjects.Text | undefined)[] = [
+      this.feedTitle, this.crewTitle, this.channelTitle, this.controlTitle, this.controlBody, this.routePill,
+      ...this.feedLines, ...this.crewRows, ...this.channelRows,
+    ];
+    for (const o of objs) o?.setVisible(false);
+    this.feedVisible = false;
+    this.crewVisible = false;
+  }
+
+  /** HUD PHASE 1 — per frame: build the dossier chips from live state, draw the bottom strip, and render the
+   * open drawer's body. Reads sim/HUD state only; never resizes the world camera. */
+  private refreshPanels(): void {
+    if (!this.panels || !this.dossierG) return;
+    const W = this.scale.width, H = this.scale.height;
+    const hud = realtimeHudView(this.state, SCENE_WEEK_SECONDS);
+    const pid = this.state.player.id;
+    const earnDistricts = new Set<string>();
+    for (const d of this.state.districts) for (const b of d.businesses) if (businessEarner(b) === pid) earnDistricts.add(d.id);
+    const idle = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed && u.path.length === 0).length;
+    const chips = buildDossierChips({
+      wireUnread: unreadCount(this.wireLog),
+      turfHeld: districtsHeld(this.state, pid).length,
+      turfTotal: this.state.districts.length,
+      turfContested: this.state.contests?.length ?? 0,
+      pathsDom: earnDistricts.size,
+      pathsTotal: this.state.districts.length,
+      crewIdle: idle,
+      ledgerDirtyPct: dirtyPercent(hud.player.cleanCash, hud.player.dirtyCash),
+    });
+    this.drawDossierStrip(chips, W, H);
+    this.panels.render((id) => this.panelBody(id));
+  }
+
+  /** Draw the ~28px bottom dossier strip: one clickable chip per drawer (keycap + summary; the open one
+   * reads brass). REPLACES the permanent side panels. */
+  private drawDossierStrip(chips: DossierChip[], W: number, H: number): void {
+    const g = this.dossierG!;
+    g.removeAll(true);
+    this.dossierHits = [];
+    const stripH = 28, y = H - stripH;
+    const bg = this.add.graphics().setScrollFactor(0);
+    bg.fillStyle(PAL.ink, 0.92).fillRect(0, y, W, stripH);
+    bg.lineStyle(1, hexNum(SPEC.brass), 0.35).beginPath(); bg.moveTo(0, y + 0.5); bg.lineTo(W, y + 0.5); bg.strokePath();
+    g.add(bg);
+    let x = 10;
+    for (const chip of chips) {
+      const open = !!this.panels?.isOpen(chip.id);
+      const t = this.mkText(x, y + stripH / 2, `[${chip.key}] ${chip.label}`, {
+        fontFamily: NOIR_FONT, fontSize: '12px', color: open ? NOIR_PALETTE.brass : NOIR_PALETTE.bone, fontStyle: open ? 'bold' : 'normal',
+      }).setOrigin(0, 0.5);
+      g.add(t);
+      const w = t.width + 16;
+      this.dossierHits.push({ x: x - 6, y, w, h: stripH, id: chip.id });
+      x += w + 6;
+    }
+  }
+
+  /** The (scaffold) body lines for an open drawer. Wire shows trivial real log data; the rest are labelled
+   * stubs until later HUD phases wire their real content in. */
+  private panelBody(id: PanelId): string[] {
+    const pid = this.state.player.id;
+    switch (id) {
+      case 'wire': {
+        const rows = this.wireLog.entries.slice(0, 14).map((e) => `• ${e.message}${e.count > 1 ? ` ×${e.count}` : ''}`);
+        return rows.length ? rows : ['No slips on the wire yet.'];
+      }
+      case 'turf':
+        return [`Districts held: ${districtsHeld(this.state, pid).length}/${this.state.districts.length}`,
+          `Contested: ${this.state.contests?.length ?? 0}`, '', '(full turf board lands in a later HUD phase)'];
+      case 'paths':
+        return ['Collection routes + dominance.', '', '(full paths view lands in a later HUD phase)'];
+      case 'crew': {
+        const muscle = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed).length;
+        return [`Muscle on the street: ${muscle}`, '', '(full crew roster lands in a later HUD phase)'];
+      }
+      case 'finance':
+        return ['The ledger — clean / dirty / laundering.', '', '(full finance view lands in a later HUD phase)'];
+    }
+  }
+
+  /** Resolve a click on the dossier strip → toggle that drawer. Returns true if it consumed the click. */
+  private handleDossierClick(sx: number, sy: number): boolean {
+    for (const h of this.dossierHits) {
+      if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) { this.panels?.toggle(h.id); return true; }
+    }
+    return false;
   }
 
   // ── RTS-30b-ui: the clickable hotkey TOOLBAR ───────────────────────────────────────────────────
@@ -4167,23 +4292,21 @@ export class IsoScene extends Phaser.Scene {
     // week progress sliver along the bottom edge of the top bar
     g.fillStyle(PAL.brass, 0.85).fillRect(barX + 1, barY + barH - 2, (barW - 2) * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 2);
 
-    // ── FOUR CHANNEL DIALS (left, under the top bar) ──
-    this.drawChannels(g, p);
+    // ── LEGACY SIDE STACK (HUD PHASE 1: retired when collapsed — summaries moved to the dossier strip) ──
+    if (!this.hudCollapsed) {
+      this.drawChannels(g, p);   // FOUR CHANNEL DIALS (→ Finance drawer, later phase)
+      this.drawRoutePill(g, p);  // ROUTE PILL (→ Paths drawer, later phase)
+      this.drawControl(g);       // CONTROL readout (→ Turf drawer, later phase)
+    }
 
-    // ── ROUTE PILL (prominent, under the channels) ──
-    this.drawRoutePill(g, p);
-
-    // ── CONTROL readout (RTS-29, the freed Market tab) ──
-    this.drawControl(g);
-
-    // ── CONTEXT CARD (selected thug) ──
+    // ── CONTEXT CARD (selected thug) — kept: a transient selection readout, not part of the side stack ──
     this.drawContextCard(g);
 
     // ── THE MARKET tab (right dock, when open) ──
     this.drawMarket(g);
 
     // ── THE WIRE frame (behind the feed, under the top bar) — hidden while the Market replaces the dock ──
-    if (this.feedVisible && !this.marketOpen) {
+    if (!this.hudCollapsed && this.feedVisible && !this.marketOpen) {
       const fw = 306, fx = W - fw - 6, fy = 60;
       this.decoFrame(g, fx, fy, fw, 184, PAL.brass, 0.5);
       if (now < this.wireFlashUntil) { g.lineStyle(2, hexNum(SPEC.danger), 0.4 + 0.4 * Math.abs(Math.sin(now / 120))); g.strokeRect(fx + 1, fy + 1, fw - 2, 182); }
@@ -4194,7 +4317,7 @@ export class IsoScene extends Phaser.Scene {
     const warn = p.federalTier > 0 ? this.fedLine(p.federalTier) : danger ? 'A COLLECTOR IS UNDER THREAT — get it to HQ' : null;
     if (this.warningBanner) {
       this.warningBanner.setVisible(!!warn);
-      if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.scale.height - 26).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280)));
+      if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.scale.height - 26 - 30).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280))); // HUD PHASE 1 — above the dossier strip
     }
     this.detectHudBeats(p, phase.phase);
     this.lastHeat = p.federalExposure; // for the next frame's heat-direction arrow
@@ -4906,7 +5029,7 @@ export class IsoScene extends Phaser.Scene {
   /** Position + label the FF/skip controls (bottom-centre, always visible). */
   private refreshFastForward(): void {
     if (!this.ffButton || !this.skipButton) return;
-    const cy = this.scale.height - 12, cx = this.scale.width / 2;
+    const cy = this.scale.height - 12 - 30, cx = this.scale.width / 2; // HUD PHASE 1 — clear the 28px dossier strip
     const glyph = this.timeScale === 1 ? '▶' : this.timeScale === 2 ? '▶▶' : '▶▶▶';
     this.setT(this.ffButton, `${glyph} ${this.timeScale}× SPEED`).setColor(this.timeScale > 1 ? SPEC.cashGreen : NOIR_PALETTE.brass)
       .setPosition(cx - this.ffButton.width / 2 - 6, cy);
@@ -4965,15 +5088,6 @@ export class IsoScene extends Phaser.Scene {
     const sh = this.state.activeShocks.map((s) => shockFlavor(s.kind as ShockKind)).join(', ');
     const hint = '  ·  right-click a shop → EXTORT/ATTACK · [T] route · WASD/middle-drag/wheel camera · [F] follow · [6] recruit · [5] expand';
     this.statusText.setText((action ? `${base}  ·  ${action}` : base + hint) + (sh ? `   |  ${sh}` : ''));
-  }
-
-  private toggleFeed(): void {
-    this.feedVisible = !this.feedVisible;
-    this.feedTitle?.setVisible(this.feedVisible);
-    for (const l of this.feedLines) l.setVisible(this.feedVisible);
-    // §4: focusing The Wire marks everything read (clears the NEEDS-YOU count).
-    const last = this.state.incidents[this.state.incidents.length - 1];
-    if (last) this.lastSeenWireSeq = last.seq;
   }
 
   /** RTS-21 legibility: a compact "when can I afford it" tag for the build/offence boards. */
