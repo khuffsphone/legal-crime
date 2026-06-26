@@ -107,7 +107,7 @@ export function firstObjective(state: GameState): Objective {
       step: 'extort',
       title: 'EXTORT THE NEIGHBOURHOOD',
       detail: target
-        ? `RIGHT-CLICK the glowing storefront in ${target.districtName} → EXTORT (or press [E]). Then shake down EVERY cheap front on your block — breadth is your early economy.`
+        ? `SELECT one of your thugs, then RIGHT-CLICK the glowing storefront in ${target.districtName} → EXTORT (or press [E]) — that thug walks over and shakes it down. Then shake down EVERY cheap front on your block — breadth is your early economy.`
         : 'Expand your turf, then shake down the storefronts for protection money.',
       targetBusinessId: target?.businessId ?? null,
       done: false,

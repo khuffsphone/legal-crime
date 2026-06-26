@@ -109,7 +109,6 @@ import {
   businessEarner,
   isShutDown,
   businessActions,
-  resolveAttack,
   advanceRoutes,
   ensureBusinessCollector,
   cityRoster,
@@ -117,6 +116,7 @@ import {
   rivalsDormant,
   recruitEnforcer,
   recruitableEnforcers,
+  enforcerUnitSkill,
   unitMusclePresence,
   unitActionChips,
   multiSelectChips,
@@ -145,6 +145,13 @@ import {
   type PropPlacement,
   extortProgress,
   canIssueMoveAndShakedown,
+  canIssueMoveAndSabotage,
+  isRivalHeldFront,
+  previewAttackRival,
+  previewExtortFront,
+  previewRetakeFront,
+  previewFederalAction,
+  type OpPreview,
   frontInteractionPoint,
   applyCommandWithEmbodiedExtortion,
   type EmbodiedExtortionAct,
@@ -162,6 +169,10 @@ import {
   type MapLayout,
   type Selection,
   COMBAT_SEEK_RANGE,
+  isCombatant,
+  enemyInRange,
+  downedBodyDecay,
+  type DownedBody,
   type NavGrid,
   type MovableUnit,
   type ThreatView,
@@ -181,6 +192,7 @@ import {
   richArt,
   drawIsoBuilding,
   BUILDING_STYLES,
+  ENV_HEIGHT_SCALE,
   TEX,
   PAL,
 } from './cityArt';
@@ -190,13 +202,57 @@ import type { MusicPhase } from './audioMap';
 import {
   nextTimeScale, scaledDt, skipWeekDt, flagEnabled,
 } from './playability';
-import { pickIdleMuscle, type MuscleCandidate } from './dispatch';
+import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
+import { orderVerbFor, type OrderTarget } from './orderRouting';
+import { formatPreviewLines, type PreviewPalette } from './operationPreview';
+import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
+import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
+import { initPause, togglePause as togglePauseState, type PauseState } from './pauseGate';
+import {
+  listSaveSlots, writeSaveSlot, readSaveSlot, deleteSaveSlot, quickSave, quickLoad,
+  exportSaveFile, importSaveFile, type SlotInfo,
+} from './saveStore';
+import type { LoadResult } from '../sim';
+// COMBAT DEPTH · PART 2 + FINALIZE — the rival offensive planner (conservative; ⚠ needs a human balance
+// playtest) + accuracy/telegraph/retreat helpers (all pure).
+import {
+  planRivalOffense, committedForce, planTelegraph, shouldRetreat, unitCombatStrength,
+  RIVAL_OFFENSE_TUNING, type RivalOffenseInput, type RivalStrikeReason,
+} from '../sim';
+// INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
+import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
+import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
+import { edgeAlertMarker } from './info/edgeAlerts';
+import {
+  worldToMinimap, minimapToWorld, isInMinimap, districtControlColor, minimapPlayerBlips, minimapRivalBlips,
+  type MiniRect, type MiniUnit, type ControlStatus,
+} from './info/minimapMath';
+// HUD PHASE 1 — the one-drawer panel system + the dossier strip that REPLACE the always-on side stack.
+import { PanelManager } from './hud/PanelManager';
+import { type PanelId } from './hud/panelState';
+import { buildDossierChips, dirtyPercent, type DossierChip } from './hud/dossierStrip';
 import { AmbientLife } from './ambientLife';
-import { rollToward, winLossCompass } from './fx';
+import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
+// POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
+import { lampFalloff, wetSheenAlpha, ownershipWindowTint } from './noirLightingMath';
+import { smokeCurve, smokeAllowed, dangerColor, MUZZLE_FLASH_MS, SMOKE_MS } from './vfx/vfxMotionCurves';
+import {
+  initHitStop, requestHitStop, worldFrozen, initNudge, requestNudge, nudgeOffset,
+  type BeatSeverity, type HitStopState, type NudgeState,
+} from './cameraFeel';
+import {
+  isOccluded, criticalVisualState, occlusionDisplay, occlusionTargetAlpha, xRayRim, type BuildingHull,
+} from './render/isoOcclusion';
+import {
+  conductorIntensity, conductWithHysteresis, initConductor, isIntensityBed, type ConductorState,
+} from './audio/conductorIntensity';
 import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
 } from './gait';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
+import {
+  rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
+} from './weaponAttackPose';
 import {
   SPEC,
   MOTION,
@@ -290,6 +346,20 @@ const FOUNTAIN_WATER = 0x2e3a3a; // muted water (never bright)
 // RTS-30a — the three discrete zoom stops (CLOSE / MID resting / FAR strategy).
 const ZOOM_STOPS = [1.0, 0.6, 0.35] as const;
 
+/** COMBAT DEPTH FINALIZE (Part C) — a rival's in-flight offensive: telegraphed (warning shown, lead counting
+ * down before the muscle moves) then active (force committed, monitored for retreat). */
+interface RivalStrike {
+  phase: 'telegraphed' | 'active';
+  kind: 'contestFront' | 'interceptUnit';
+  gx: number;
+  gy: number;
+  fireAtMs: number;    // when the committed force actually moves (end of the telegraph lead)
+  expireAtMs: number;  // commitment window end (set when it fires)
+  unitIds: string[];   // the committed force (for survivor/loss tracking + retreat)
+  initialCount: number;
+  reason: RivalStrikeReason;
+}
+
 interface UnitView {
   unit: MovableUnit;
   faction: 'player' | 'rival';
@@ -303,9 +373,13 @@ interface UnitView {
   // RTS-30e action-motion state: a per-unit idle phase (desync) + transient attack/hit one-shots.
   idleSeed?: number;
   attackUntil?: number; // time.now ms until the attack recoil/swing finishes
+  attackStartedAt?: number;
   attackKind?: 'melee' | 'ranged';
+  attackRigWeapon?: RigAttackWeapon;
   attackFaceRight?: boolean; // recoil direction (away from the target)
   hitUntil?: number; // time.now ms until the hit-react flinch finishes
+  occA?: number; // POLISH v2 · PKG4 — eased occlusion alpha (1 visible → 0 hidden behind a building)
+  hpBar?: Phaser.GameObjects.Graphics; // COMBAT READABILITY — the small over-unit health bar (lazy)
   // RTS-32 procedural rig (thug-role units only): the live-posed articulated figure + its gait clock.
   rig?: Phaser.GameObjects.Graphics;       // the posed silhouette (CLOSE/MID); undefined for un-rigged roles
   rigDebug?: Phaser.GameObjects.Graphics;  // ?debugRig=1 joint/plant overlay
@@ -357,6 +431,27 @@ export class IsoScene extends Phaser.Scene {
   private units: UnitView[] = [];
   private bizMarkers = new Map<string, BizMarker>();
   private bizPlates = new Map<string, Phaser.GameObjects.Polygon>(); // RTS-22 allegiance plate per business
+  // POLISH v2 · PKG1 — per-building OWNERSHIP WINDOW glow (tinted per frame by the building's DISTRICT
+  // holder — CANON: district control only, never a per-building owner), + the static biz→district map.
+  private bizOwnerGlow = new Map<string, Phaser.GameObjects.Image>();
+  private bizDistrict = new Map<string, string>();
+  // POLISH v2 · PKG4 — static building occlusion hulls (buildings don't move; computed once in drawCity).
+  private buildingHulls: BuildingHull[] = [];
+  private occEnabled = true; // independently toggleable
+  // COMBAT READABILITY (4) — persistent downed-body sprites, keyed by the downed unit's id.
+  private downedBodyViews = new Map<string, Phaser.GameObjects.Image>();
+  // POLISH v2 · PKG3 — camera FEEL state (the "clunk"): a hit-stop that freezes WORLD visual time + a
+  // decaying-sine screen-nudge on the WORLD camera. The fixed HUD camera is never touched.
+  private hitStop: HitStopState = initHitStop();
+  private nudge: NudgeState = initNudge();
+  private appliedNudgeX = 0;
+  private appliedNudgeY = 0;
+  private feelEnabled = true; // independently toggleable
+  // POLISH v2 · PKG5 — the audio conductor's intensity-driven bed state (requested via the RTS-31 path).
+  private conductor: ConductorState = initConductor('ESTABLISH');
+  private lastCombatMs = Number.NEGATIVE_INFINITY; // when unit combat last fired (the activeCombat signal)
+  private lastWireRoutineMs = Number.NEGATIVE_INFINITY; // throttle the routine Wire soft-tick (no incident-burst rattle)
+  private audioConductEnabled = true; // independently toggleable
   // RTS-26: the drawn building per business + its current style key + tile, so a vice upgrade can
   // MORPH it (speakeasy → casino) by redrawing on the event (cached between events, never per-frame).
   private bizBuildings = new Map<string, { gfx: Phaser.GameObjects.Graphics; styleKey: string; gx: number; gy: number; depth: number; shut: boolean; boards?: Phaser.GameObjects.Graphics }>();
@@ -400,6 +495,13 @@ export class IsoScene extends Phaser.Scene {
   private feedTitle?: Phaser.GameObjects.Text;
   private feedLines: Phaser.GameObjects.Text[] = [];
   private feedVisible = true;
+  // HUD PHASE 1 — the panel system + dossier strip that COLLAPSE the always-on side stack. `hudCollapsed`
+  // retires the legacy side panels (feed dock / channels / route pill / control / crew) so the city viewport
+  // dominates; their summaries live in the strip and their detail in the on-demand drawers (scaffolds now).
+  private panels?: PanelManager;
+  private hudCollapsed = true;
+  private dossierG?: Phaser.GameObjects.Container;
+  private dossierHits: { x: number; y: number; w: number; h: number; id: PanelId }[] = [];
   private crewTitle?: Phaser.GameObjects.Text;
   private crewRows: Phaser.GameObjects.Text[] = [];
   private crewWrong: Phaser.GameObjects.Rectangle[] = [];
@@ -432,8 +534,32 @@ export class IsoScene extends Phaser.Scene {
   private rushUsed = false; // RTS-34.1: once the player uses [C] RUSH, the collect tutorial prompt retires
   private audioPanelOpen = false;
   private audioPanel?: Phaser.GameObjects.Text;
+  // FOOTGUN FIX — restart-to-Boot now requires explicit confirmation (the gate state + its modal).
+  private restartGate: RestartGate = initRestartGate();
+  private restartPrompt?: Phaser.GameObjects.Container;
   // RTS-28 playability
   private timeScale = 1;            // fast-forward multiplier (1× / 2× / 4×)
+  private pause: PauseState = initPause(); // GLOBAL ACTIVE-PAUSE — halts the sim tick; camera/UI stay live
+  private pausedBanner?: Phaser.GameObjects.Container; // the PAUSED indicator
+  private saveMenu?: Phaser.GameObjects.Container;     // SAVE/LOAD menu (fixed HUD camera)
+  private saveButton?: Phaser.GameObjects.Text;        // the HUD entry point
+  // INFO-FEEDBACK — SESSION-ONLY event log (#6), live edge alerts, minimap pings (all render-side).
+  private wireLog: LogStore = initLog();
+  private alerts: { id: number; gx: number; gy: number; tier: EventTier; until: number }[] = [];
+  private pings: { gx: number; gy: number; tier: EventTier; until: number }[] = [];
+  private wireLogG?: Phaser.GameObjects.Container;
+  private wireLogHits: { x: number; y: number; w: number; h: number; gx?: number; gy?: number; id: number }[] = [];
+  private edgeAlertG?: Phaser.GameObjects.Graphics;
+  private edgeAlertHits: { x: number; y: number; r: number; gx: number; gy: number; id: number }[] = [];
+  private minimapG?: Phaser.GameObjects.Graphics;
+  private minimapRect: MiniRect = { x: 0, y: 0, w: 176, h: 176 };
+  // COMBAT DEPTH · PART 2 — rival-offense cadence + per-rival cooldown/commitment state (scene-side; the
+  // planner stays pure). ⚠ CONSERVATIVE — biased timid; needs a human balance playtest before any increase.
+  private rivalOffenseAcc = 0;
+  private rivalLastOffenseSec = new Map<string, number>();
+  // COMBAT DEPTH FINALIZE (Part C) — one in-flight strike per rival: telegraphed (warning shown, lead
+  // counting down) then active (force dispatched, monitored for retreat). Holds the rival's commitment slot.
+  private rivalStrikes = new Map<string, RivalStrike>();
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
   private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
   private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
@@ -453,6 +579,12 @@ export class IsoScene extends Phaser.Scene {
   private vignette?: Phaser.GameObjects.Graphics;
   private shownCash = 0; private shownNet = 0; private cashInit = false; // RTS-34 top-bar count-up state
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
+  // OPERATION-OUTCOME PREVIEWS — a read-only, hover-driven projection card for the four player verbs. The
+  // pure selectors compute it; this scene only resolves the cursor target, holds the result, and draws it.
+  private opPreview?: OpPreview;                    // the live preview under the cursor (undefined = nothing to show)
+  private opPreviewG?: Phaser.GameObjects.Container; // the GLANCE/DETAIL card (fixed-camera HUD overlay)
+  private opAltHeld = false;                        // HOLD-ALT expands the glance card to its detail rows
+  private opCursor = { x: 0, y: 0 };                // last hover screen pos (to place the card)
   private actionTitle?: Phaser.GameObjects.Text; // RTS-28 ACTION BOARD (retired by the rts30b-ui toolbar)
   private actionBody?: Phaser.GameObjects.Text;
   // RTS-30b-ui — the clickable hotkey TOOLBAR: every key verb as a mouse-clickable button with its
@@ -540,10 +672,18 @@ export class IsoScene extends Phaser.Scene {
     // RTS-11: start with a small loyal crew so the opening is fair (muscle + defense).
     // RTS-12/16: a fair opening (loyal crew + one protected run) on the BIG contested city —
     // a 9-district turf war against two active rival families.
-    this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
-    // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
-    this.state.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
-    this.applyDebugScenario();
+    // SAVE/LOAD — if a save was loaded, restart() left the deserialized state in the registry; adopt it (a
+    // full clean re-init of every view layer from the saved tree) instead of starting a fresh game.
+    const loaded = this.registry.get('lcr_loaded_state') as GameState | undefined;
+    if (loaded) {
+      this.registry.remove('lcr_loaded_state');
+      this.state = loaded;
+    } else {
+      this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
+      // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
+      this.state.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
+      this.applyDebugScenario();
+    }
     // RTS-30a: the SPARSE LARGER world — buildings placed apart with setbacks across a 96² map,
     // partitioned into districts. WorldLayout extends MapLayout, so collectors/routes consume it
     // unchanged. The ground/streets/parks are CULLED to the viewport (drawGround), not 4096 Images.
@@ -598,6 +738,7 @@ export class IsoScene extends Phaser.Scene {
     this.setupUiCamera();
     // RTS-34: the noir mood overlay (grain + vignette) on the fixed UI camera, below every HUD element.
     this.buildFxOverlay();
+    this.buildSaveButton(); // SAVE/LOAD entry point (fixed HUD camera)
     // consigliere: the extort-first tip on a fresh load (gated to once)
     this.fireTipOnce('extort');
   }
@@ -686,7 +827,13 @@ export class IsoScene extends Phaser.Scene {
         const styleKey = upgraded ? 'casino'
           : biz.kind === 'front' ? 'storefront' : biz.kind === 'speakeasy' || biz.kind === 'numbers' ? 'speakeasy' : 'warehouse';
         const bdepth = depthValue(t.gx, t.gy) * 10 + 5;
-        const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[styleKey], bdepth, { lit: !isShutDown(biz) });
+        const bstyle = BUILDING_STYLES[styleKey];
+        // POLISH v2 · PKG4 — the static occlusion HULL (screen-space silhouette): footprint extent + the
+        // scaled height. CANON: this affects ONLY occlusion/silhouette/draw-depth — never the unit anchor,
+        // footprint, pathing, or sim position (all untouched).
+        const bhw = bstyle.footHalfW ?? 54, bhh = bstyle.footHalfH ?? 27, bh = bstyle.height * ENV_HEIGHT_SCALE;
+        this.buildingHulls.push({ cx: c.x, footY: c.y + bhh, roofY: c.y + bhh - bh, halfW: bhw, depth: bdepth });
+        const roof = drawIsoBuilding(this, c.x, c.y, bstyle, bdepth, { lit: !isShutDown(biz) });
         this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth, shut: isShutDown(biz) });
         const glow = this.add
           .image(roof.roofX, roof.roofY - 6, TEX.glow)
@@ -697,6 +844,14 @@ export class IsoScene extends Phaser.Scene {
           .setDepth(depthValue(t.gx, t.gy) * 10 + 7)
           .setVisible(false);
         this.bizMarkers.set(biz.id, { coin, glow, roofX: roof.roofX, roofY: roof.roofY });
+        // POLISH v2 · PKG1 — the ownership WINDOW glow: a faint warm/cooled wash on the facade that reads
+        // who CONTROLS this block's district. Created once + fog-gated; tint/alpha set per frame from the
+        // district holder. Sits just under the coin so the [$] marker still reads on top.
+        const owner = this.add.image(roof.roofX, roof.roofY + 8, TEX.glow)
+          .setDepth(depthValue(t.gx, t.gy) * 10 + 4).setScale(1.4, 1.9)
+          .setBlendMode(Phaser.BlendModes.ADD).setVisible(false);
+        this.bizOwnerGlow.set(biz.id, owner);
+        this.bizDistrict.set(biz.id, d.id);
       }
       // RTS-16: a district nameplate at its first tile, recoloured each frame by who holds it.
       const first = d.businesses[0] && businessTileOf(this.layout, d.businesses[0].id);
@@ -757,13 +912,25 @@ export class IsoScene extends Phaser.Scene {
       // SAME fog-reveal / FAR-cull lifecycle as the prop (pushed into the dressing lists). Depth sits just
       // above the ground so units + the lamp draw OVER the pool.
       if (p.kind === 'lamppost' && this.fxEnabled) {
+        // POLISH v2 · PKG1 — the RTS-34 "faint lamp" flag (~0.15) → a real warm pool seeded at the noir
+        // peak (lampFalloff(0,R) = LAMP_SEED_ALPHA = 0.31). The baked TEX.glow already carries the soft
+        // (1−r/R)² radial falloff, so the pool reads as gaslight catching the rain-slick street.
         const pool = this.add.image(c.x, c.y + 6, TEX.glow).setOrigin(0.5)
-          .setScale(2.4, 1.25).setTint(PAL.lamp).setAlpha(0.15)
+          .setScale(2.4, 1.25).setTint(PAL.lamp).setAlpha(lampFalloff(0, 1))
           .setBlendMode(Phaser.BlendModes.ADD)
           .setDepth(depthValue(p.gx, p.gy) * 10 + 1).setVisible(false);
         const poolRec = { img: pool, gx: p.gx, gy: p.gy };
         this.dressing.push(poolRec);
         this.dressingDark.push(poolRec);
+        // POLISH v2 · PKG1 — a WET-ASPHALT SHEEN: a faint, longer, tinted streak smeared down-slope from
+        // the pool (cheap additive image, NOT a real reflection). Gentler than the pool (wetSheenAlpha).
+        const sheen = this.add.image(c.x, c.y + 16, TEX.glow).setOrigin(0.5, 0.2)
+          .setScale(0.9, 2.6).setTint(PAL.lamp).setAlpha(wetSheenAlpha(0, 1))
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(depthValue(p.gx, p.gy) * 10 + 1).setVisible(false);
+        const sheenRec = { img: sheen, gx: p.gx, gy: p.gy };
+        this.dressing.push(sheenRec);
+        this.dressingDark.push(sheenRec);
       }
     }
   }
@@ -930,6 +1097,13 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private addUnit(unit: MovableUnit, faction: 'player' | 'rival'): void {
+    // ⭐ BUG FIX (the dead combat): spawnUnit() makes player muscle with NO factionId — but the 35a combat
+    // only fights isCombatant() units, which REQUIRES a factionId. Without this, every player thug failed
+    // isCombatant(), so resolveProximityCombat never engaged them (player↔rival) — the thug walked up to the
+    // rival and nothing happened. Stamp the player's faction on the sim unit so it can actually FIGHT. (The
+    // VIEW-layer faction the dispatch/selection seam reads is separate + unchanged; rival units already get
+    // their factionId from spawnEnforcer. role stays undefined — isCombatant only needs !collector.)
+    if (faction === 'player' && unit.factionId === undefined) unit.factionId = this.state.player.id;
     this.state.units.push(unit);
     this.attachView(unit, faction);
   }
@@ -994,6 +1168,10 @@ export class IsoScene extends Phaser.Scene {
   private tickWar(stepDt: number): void {
     if (!this.world || rivalsDormant(this.state)) return;
     this.steerWarMuscle();
+    // COMBAT DEPTH · PART 2 — evaluate the rival OFFENSIVE planner on a slow cadence (every ~2 sim-seconds, so
+    // the timid commit roll is a real per-interval decision, not a per-frame one). ⚠ conservative; playtest.
+    this.rivalOffenseAcc += stepDt;
+    if (this.rivalOffenseAcc >= 2) { this.rivalOffenseAcc = 0; this.tickRivalOffense(); }
     this.state.contestElapsed = (this.state.contestElapsed ?? 0) + stepDt;
     let guard = 0;
     while ((this.state.contestElapsed ?? 0) >= CONTEST_PULSE_SECONDS && guard++ < 64) {
@@ -1077,6 +1255,121 @@ export class IsoScene extends Phaser.Scene {
     }
   }
 
+  /** COMBAT DEPTH · PART 2 — apply the rival offensive PLANNER (pure) per alive rival: gather the inputs from
+   * live state, run planRivalOffense (timid/conservative), and APPLY an emitted order by moving the rival's
+   * nearest free muscle toward the target tile — the existing 35a combat / contest then resolve it. NO new
+   * verbs; reuses movement. ⚠ BALANCE-GATED — conservative seeds; needs a HUMAN PLAYTEST before any increase. */
+  private tickRivalOffense(): void {
+    const nowMs = this.time.now;
+    const nowSec = nowMs / 1000;
+    const pid = this.state.player.id;
+    const playerUnits = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed);
+    // COMBAT DEPTH FINALIZE (Part B) — local DEFENDER strength is now weapon-tier + skill WEIGHTED (a tommy
+    // counts more than a fist), not a raw head-count, so the rival's odds reflect the fight it will get.
+    const strengthNear = (gx: number, gy: number): number => {
+      let s = 0;
+      for (const u of playerUnits) if (Math.hypot(u.pos.gx - gx, u.pos.gy - gy) <= 4) s += unitCombatStrength(u);
+      return s;
+    };
+    for (const rival of this.state.rivals) {
+      if (!rival.alive) continue;
+      const rid = rival.id;
+
+      // 1) an in-flight strike (telegraphed → fired → monitored) owns this rival's commitment slot.
+      const strike = this.rivalStrikes.get(rid);
+      if (strike && this.advanceRivalStrike(rid, strike, nowMs, strengthNear)) continue;
+
+      // 2) otherwise plan a NEW commit. The odds are scored on the ACTUALLY-committed force (committedForce,
+      //    garrison reserve withheld) — not the whole idle pool — so the rival stops over-crediting itself.
+      const muscle = this.state.units.filter((u) => u.factionId === rid && u.role !== 'collector' && !u.downed);
+      if (muscle.length === 0) continue;
+      const free = muscle.filter((u) => u.path.length === 0);
+      const cf = committedForce(free, RIVAL_OFFENSE_TUNING.minMuscle);
+      const fronts = allBusinesses(this.state)
+        .filter((b) => b.kind === 'front' && b.extortedBy === pid)
+        .map((b) => { const t = businessTileOf(this.layout, b.id); return t ? { frontId: b.id, gx: t.gx, gy: t.gy, defenderStrength: Math.max(1, strengthNear(t.gx, t.gy)) } : undefined; })
+        .filter((f): f is { frontId: string; gx: number; gy: number; defenderStrength: number } => !!f);
+      const units = playerUnits.map((u) => ({ id: u.id, gx: u.pos.gx, gy: u.pos.gy, defenderStrength: Math.max(1, strengthNear(u.pos.gx, u.pos.gy)) }));
+      const input: RivalOffenseInput = {
+        rivalId: rid, nowSec,
+        lastOffenseSec: this.rivalLastOffenseSec.get(rid) ?? Number.NEGATIVE_INFINITY,
+        activeOrders: this.rivalStrikes.has(rid) ? 1 : 0, // a telegraphed/active strike IS the one in flight
+        freeMuscle: free.length, attackerStrength: cf.strength,
+        fronts, units, rngState: this.state.rngState,
+      };
+      const plan = planRivalOffense(input);
+      this.state.rngState = plan.rngState; // keep the world deterministic (no-op unless the commit roll drew)
+      const order = plan.orders[0];
+      if (!order || cf.units.length === 0) continue;
+      // TELEGRAPH first — emit the pre-strike beat + schedule the dispatch; the muscle does NOT move yet.
+      this.telegraphRivalStrike(rid, order, cf.units);
+      this.rivalLastOffenseSec.set(rid, nowSec);
+    }
+  }
+
+  /** COMBAT DEPTH FINALIZE (Part C) — drive one rival's in-flight strike. Returns true while it still owns the
+   * commitment slot. Telegraphed → holds until the lead elapses, then FIRES (dispatches the committed force).
+   * Active → re-checks the local edge each frame and RETREATS (recalls the survivors to the rival HQ) when the
+   * odds collapse or losses pass the cap; expires after a commitment window. Reuses movement/35a — no new verb. */
+  private advanceRivalStrike(rid: string, strike: RivalStrike, nowMs: number, strengthNear: (gx: number, gy: number) => number): boolean {
+    const surviving = strike.unitIds
+      .map((id) => this.state.units.find((u) => u.id === id))
+      .filter((u): u is MovableUnit => !!u && !u.downed);
+    if (surviving.length === 0) { this.rivalStrikes.delete(rid); return false; } // the strike force is gone
+
+    if (strike.phase === 'telegraphed') {
+      if (nowMs < strike.fireAtMs) return true;             // still inside the player's defensive window
+      for (const u of surviving) issueMove(u, { gx: strike.gx, gy: strike.gy }, this.navGrid); // FIRE
+      strike.phase = 'active';
+      strike.expireAtMs = nowMs + 20000;                    // ~20s commitment window
+      return true;
+    }
+
+    // ACTIVE — fair retreat: break off if the edge collapsed or losses exceeded the cap (reserve already held).
+    let atk = 0; for (const u of surviving) atk += unitCombatStrength(u);
+    const localAdvantage = atk / Math.max(0.0001, strengthNear(strike.gx, strike.gy));
+    const lossFraction = (strike.initialCount - surviving.length) / Math.max(1, strike.initialCount);
+    if (shouldRetreat(localAdvantage, lossFraction)) {
+      const home = hqTileOf(this.layout, rid) ?? unitTile(surviving[0]);
+      for (const u of surviving) issueMove(u, home, this.navGrid); // RECALL — pull back, don't grind it down
+      this.rivalStrikes.delete(rid);
+      return true;
+    }
+    if (nowMs > strike.expireAtMs) { this.rivalStrikes.delete(rid); return false; } // window elapsed → free again
+    return true;
+  }
+
+  /** COMBAT DEPTH FINALIZE (Part C-1) — TELEGRAPH a committed strike through q7: a WIRE line + an edge alert +
+   * a ping, with a 'why' reason and a consequence-scaled LEAD (higher stakes ⇒ longer warning). Records the
+   * pending strike so advanceRivalStrike fires it after the lead. The pre-strike beat is the player's one
+   * meaningful defensive decision. */
+  private telegraphRivalStrike(rid: string, order: { kind: 'contestFront' | 'interceptUnit'; gx: number; gy: number; frontId?: string; targetUnitId?: string }, units: MovableUnit[]): void {
+    let consequence01 = 0.3; let carrying = false; let escorted = false;
+    const size = this.world.size;
+    const inb = order.gx >= 0 && order.gy >= 0 && order.gx < size && order.gy < size;
+    const did = inb ? this.world.districtOfTile[Math.round(order.gy) * size + Math.round(order.gx)] : undefined;
+    const where = did ? this.districtName(did) : 'the open street';
+    if (order.kind === 'contestFront') {
+      const biz = allBusinesses(this.state).find((b) => b.id === order.frontId);
+      consequence01 = Math.min(1, (biz?.baseIncome ?? 0) / 200); // richer block = higher stakes = longer lead
+    } else {
+      const target = this.state.units.find((u) => u.id === order.targetUnitId);
+      carrying = !!target && (target.carrying ?? 0) > 0;
+      consequence01 = carrying ? Math.min(1, (target!.carrying ?? 0) / 600) : 0.2;
+      escorted = carrying && this.nearestPlayerThug(target!) !== undefined; // a thug guarding the carrier
+    }
+    const tg = planTelegraph(order.kind, { consequence01, carrying, escorted });
+    const message = order.kind === 'interceptUnit' && carrying
+      ? `Your collector is being watched on ${where} — ${tg.reason}`
+      : `Rival lookouts near ${where} — ${tg.reason}`;
+    this.recordInfoEvent('rival.telegraph', message, order.gx, order.gy);
+    this.rivalStrikes.set(rid, {
+      phase: 'telegraphed', kind: order.kind, gx: order.gx, gy: order.gy,
+      fireAtMs: this.time.now + tg.leadMs, expireAtMs: 0,
+      unitIds: units.map((u) => u.id), initialCount: units.length, reason: tg.reason,
+    });
+  }
+
   private nearestCarrierInDistrict(districtId: string): MovableUnit | undefined {
     const size = this.world.size;
     for (const v of this.units) {
@@ -1106,7 +1399,11 @@ export class IsoScene extends Phaser.Scene {
     const idx = this.units.findIndex((v) => v.unit.id === id);
     if (idx >= 0) {
       const v = this.units[idx];
-      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.rig, v.rigDebug, v.rigText]) o?.destroy();
+      // PLAYTEST FIX (Part 2) — release the health bar WITH the rest of the view. v.hpBar is a single Graphics
+      // holding BOTH the fill AND the dark backing/track; it was missing from this list, so on death (when the
+      // fill is ~0) the frozen backing leaked on screen as an orphaned "shadow". Tying it to the unit's render
+      // lifecycle here destroys fill + shadow together when the unit/downed-body is finally removed.
+      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.hpBar, v.rig, v.rigDebug, v.rigText]) o?.destroy();
       this.units.splice(idx, 1);
     }
     this.state.units = this.state.units.filter((u) => u.id !== id);
@@ -1121,6 +1418,11 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30c-1.1: compute the simulated step FIRST and drive the turf war with the SAME stepDt as the
     // economy/strategy — so the contest meter keeps pace with skipped/fast-forwarded weeks (it used to
     // run on raw real-time dt, so a skipped week advanced the background capture but froze the meter).
+    // GLOBAL ACTIVE-PAUSE — while paused, the loop simply does NOT advance the sim (no tickWar / observeWorld
+    // / routes): the world freezes in place. The render block below + the camera/HUD still run every frame,
+    // and input still flows, so the player can look around and issue/queue orders (an active pause). This is
+    // a LOOP-level gate; tick()/applyCommand() are untouched.
+    if (!this.pause.paused) {
     let stepDt = scaledDt(dt, this.timeScale);
     if (this.skipWeekPending) { stepDt = skipWeekDt(this.state.weekElapsed ?? 0, SCENE_WEEK_SECONDS); this.skipWeekPending = false; }
 
@@ -1149,20 +1451,34 @@ export class IsoScene extends Phaser.Scene {
     // EXISTING conversion on resolve); ensure a collector exists for every business we earn from.
     this.processExtortionEvents(obs.result.extortion);
     if (obs.result.weeksFired > 0) this.syncBusinessCollectors();
-    for (const ev of obs.result.interceptions) this.flashAmbush(ev);
+    for (const ev of obs.result.interceptions) {
+      this.flashAmbush(ev);
+      // INFO-FEEDBACK — collector.robbed (state change → log + edge alert + ping) at the collector's tile.
+      const col = this.state.units.find((u) => u.id === ev.collectorId);
+      this.recordInfoEvent('collector.robbed', `a collector was robbed of $${ev.amount}`, col?.pos.gx, col?.pos.gy);
+    }
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
+    if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
-    for (const cap of obs.strategy.captures) this.flashTerritory(cap.districtId, cap.before === 'player');
-    for (const fid of obs.strategy.fallen) this.setStatus(`${fid} has been driven out of the city`);
+    for (const cap of obs.strategy.captures) {
+      this.flashTerritory(cap.districtId, cap.before === 'player');
+      const wd = this.world.districts.find((d) => d.id === cap.districtId);
+      const lost = cap.before === 'player';
+      this.recordInfoEvent(captureEventKind(lost), `${wd?.name ?? cap.districtId} ${lost ? 'LOST to a rival' : 'captured'}`, wd?.centroid.gx, wd?.centroid.gy);
+    }
+    for (const fid of obs.strategy.fallen) { this.setStatus(`${fid} has been driven out of the city`); this.recordInfoEvent('rival.fallen', `${fid} driven out of the city`); }
     // RTS-17: a rival struck our HQ — telegraph the blow.
     if (obs.strategy.hqStrikes.length > 0) {
       this.cameras.main.shake(220, 0.006);
       this.setStatus('OUR HQ IS UNDER ATTACK');
+      const hq = hqTileOf(this.layout, 'player');
+      this.recordInfoEvent('hq.attack', 'OUR HQ IS UNDER ATTACK', hq?.gx, hq?.gy);
     }
     this.state = harvestIncidents(this.state);
     // RTS-17: the contest resolved — surface the win/lose readout.
     if (obs.endgame || this.state.status !== 'playing') this.showEndgame();
+    } // end !paused — sim advancement gate
 
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
     const now = this.time.now;
@@ -1171,6 +1487,10 @@ export class IsoScene extends Phaser.Scene {
     // RTS-35b — the live embodied-extortion acts, keyed by their thug, so the unit loop can pose the
     // intimidate-lean + throw the cadence shoves while a thug is squared up at a front.
     const extortByThug = new Map<string, EmbodiedExtortionAct>((this.state.extortionActs ?? []).map((a) => [a.thugId, a]));
+
+    // POLISH v2 · PKG4 — the unit the cursor is over (kept findable behind buildings via the x-ray).
+    const ptr = this.input.activePointer;
+    const hoveredId = this.occEnabled ? pickUnit(this.units.map((u) => u.unit), screenToGrid(ptr.worldX, ptr.worldY))?.id : undefined;
 
     for (const v of this.units) {
       const s = unitScreenPos(v.unit);
@@ -1193,11 +1513,16 @@ export class IsoScene extends Phaser.Scene {
       // RTS-30e ATTACK recoil (one-shot): aim→fire kicks the figure back from its target; a melee
       // wind-up→swing lunges in then settles. RTS-30e HIT flinch: a short knock-back nudge when struck.
       let kick = 0, lift = 0;
+      const attackSample = v.attackStartedAt !== undefined && v.attackRigWeapon && v.attackUntil && now < v.attackUntil
+        ? sampleWeaponAttackPose(v.attackRigWeapon, now - v.attackStartedAt)
+        : undefined;
       if (v.attackUntil && now < v.attackUntil) {
-        const t = 1 - (v.attackUntil - now) / MOTION.attackRecoil; // 0→1 over the beat
+        const duration = Math.max(1, (v.attackUntil - (v.attackStartedAt ?? (v.attackUntil - MOTION.attackRecoil))));
+        const t = 1 - (v.attackUntil - now) / duration; // 0→1 over the beat
         const env = Math.sin(Math.min(1, t) * Math.PI); // ease in/out
         const dir = v.attackFaceRight ? 1 : -1;
-        if (v.attackKind === 'ranged') { kick = -dir * 5 * env; lift = -1.5 * env; } // recoil back + up
+        if (attackSample) { kick = dir * attackSample.bodyKickPx; lift = attackSample.bodyLiftPx; }
+        else if (v.attackKind === 'ranged') { kick = -dir * 5 * env; lift = -1.5 * env; } // recoil back + up
         else { kick = dir * 6 * env; lift = -3 * env; } // melee lunge in + up
       }
       if (v.hitUntil && now < v.hitUntil) {
@@ -1236,7 +1561,7 @@ export class IsoScene extends Phaser.Scene {
           const pose: RigPose = poseFor(v.gaitPhase, v.loco, now + seed * 7);
           const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? 1 : -1, 1);
           g.clear();
-          drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG);
+          drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG, attackSample);
           if (v.rigDebug && v.rigText) {
             const dg = v.rigDebug.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth + 1).setScale(faceRight ? 1 : -1, 1);
             dg.clear(); drawRigDebug(dg, pose);
@@ -1252,6 +1577,51 @@ export class IsoScene extends Phaser.Scene {
 
       const selected = isSelected(this.selection, v.unit.id);
       v.selRing.setPosition(s.x, s.y + 2).setDepth(depth - 1).setVisible(selected).setAlpha(pulse);
+
+      // POLISH v2 · PKG4 — ISO OCCLUSION: a unit slipping behind a taller building dims→hides; a unit the
+      // player needs to track (fighting / mid-shakedown / selected / hovered) keeps a faction-rimmed x-ray
+      // so it stays findable. NEVER x-ray a fog-hidden unit (a shrouded rival stays shrouded).
+      if (this.occEnabled) {
+        const occluded = this.buildingHulls.length > 0 && isOccluded(s.x, s.y, depth, this.buildingHulls);
+        const revealed = isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
+        const xact = extortByThug.get(v.unit.id);
+        const critical = criticalVisualState({
+          fighting: (!!v.attackUntil && now < v.attackUntil) || (!!v.hitUntil && now < v.hitUntil),
+          shakedown: xact?.state === 'engage' || xact?.state === 'shakedown',
+          selected,
+          hovered: v.unit.id === hoveredId,
+        });
+        const display = occlusionDisplay(occluded, critical, revealed);
+        const target = occlusionTargetAlpha(display);
+        v.occA = v.occA === undefined ? target : v.occA + (target - v.occA) * 0.25; // ease dim→hide
+        const a = v.occA;
+        v.sprite.setAlpha(a); v.rig?.setAlpha(a); v.shadow.setAlpha(0.5 * a);
+        // the x-ray rim: a bright faction silhouette ring lifted ABOVE the buildings so it reads through them.
+        if (display === 'xray') {
+          v.factionRing.setVisible(true).setStrokeStyle(2.5, hexNum(xRayRim(v.faction, !!v.unit.downed)), 0.95).setDepth(99000);
+        } else {
+          v.factionRing.setStrokeStyle(2, v.faction === 'player' ? PAL.brass : PAL.blood, 0.9).setDepth(depth - 1).setAlpha(a);
+        }
+      }
+
+      // COMBAT READABILITY — a small faction-tinted HEALTH BAR over a fighter that has taken damage OR is in
+      // combat (hidden at full health / out of combat, and hidden when occluded away — restraint). A critical
+      // unit's bar PULSES (motion = threat; never a static danger-red fill, per the red-discipline law).
+      if (isCombatant(v.unit) || v.unit.health !== undefined) {
+        const inCombat = (!!v.hitUntil && now < v.hitUntil) || (!!v.attackUntil && now < v.attackUntil) || !!enemyInRange(v.unit, this.state.units);
+        const show = shouldShowHealthBar(v.unit, inCombat) && (v.occA ?? 1) > 0.15;
+        if (!v.hpBar) { v.hpBar = this.add.graphics(); this.worldFx(v.hpBar); }
+        v.hpBar.setVisible(show).setDepth(depth + 3);
+        if (show) {
+          const frac = healthFraction(v.unit);
+          const W = 24, H = 3, bx = s.x - W / 2, by = s.y - 52;
+          const col = v.faction === 'player' ? PAL.brass : hexNum(SPEC.rival); // faction read (rival = static #9E1B1B)
+          const fillA = isCritical(v.unit) ? 0.5 + 0.45 * Math.abs(Math.sin(now / 130)) : 0.95; // critical PULSES
+          v.hpBar.clear();
+          v.hpBar.fillStyle(hexNum(SPEC.soot), 0.8).fillRect(bx - 1, by - 1, W + 2, H + 2); // dark backing
+          v.hpBar.fillStyle(col, fillA).fillRect(bx, by, W * frac, H);
+        }
+      }
 
       if (v.cashTag && v.dangerRing) {
         const carry = collectorCarryView(v.unit);
@@ -1288,13 +1658,29 @@ export class IsoScene extends Phaser.Scene {
     }
 
     this.drawExtortOverlay(now);
+    this.syncDownedBodies(); // COMBAT READABILITY (4) — persistent desaturated downed bodies
+    // INFO-FEEDBACK — the minimap, the screen-edge alerts, and THE WIRE — LOG (all read sim state only).
+    this.drawMinimap(now);
+    this.drawEdgeAlerts(now);
+    if (!this.hudCollapsed) this.drawWireLog(); // HUD PHASE 1 — full log lives in the [L] Wire drawer when collapsed
+    this.drawOpPreview(); // OPERATION-OUTCOME PREVIEWS — the hover GLANCE/DETAIL card (read-only)
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
     // (earning) — and HIDDEN under the fog (so shrouded blocks/rivals stay unseen).
     const spinAngle = ((now % MOTION.coinSpin) / MOTION.coinSpin) * 360;
+    // POLISH v2 · PKG1 — district holders this frame (CANON: district control only) for the ownership windows.
+    const holderByDistrict = new Map<string, string | undefined>(this.state.districts.map((d) => [d.id, districtHolder(d)]));
+    const breathe = 0.85 + 0.15 * Math.sin(now / 1300); // a slow window breath (never a static alarm)
     for (const [bid, m] of this.bizMarkers) {
       const t = businessTileOf(this.layout, bid);
-      if (t && !isRevealed(this.fog, t.gx, t.gy)) { m.coin.setVisible(false); if (m.glow) m.glow.setVisible(false); continue; }
+      const owner = this.bizOwnerGlow.get(bid);
+      if (t && !isRevealed(this.fog, t.gx, t.gy)) { m.coin.setVisible(false); if (m.glow) m.glow.setVisible(false); owner?.setVisible(false); continue; }
+      // ownership window glow: tint by the building's DISTRICT holder (player brass / rival cooled #9E1B1B).
+      if (owner) {
+        const tint = ownershipWindowTint(holderByDistrict.get(this.bizDistrict.get(bid) ?? ''), this.state.player.id);
+        if (tint) owner.setVisible(true).setTint(hexNum(tint.color)).setAlpha(tint.alpha * breathe);
+        else owner.setVisible(false);
+      }
       const insp = inspectBusiness(this.state, bid);
       const earning = !!insp?.payingProtection;
       const extortable = !earning && !!extortProgress(this.state, bid)?.extortable; // only for revealed fronts
@@ -1500,6 +1886,10 @@ export class IsoScene extends Phaser.Scene {
       // also box-select/deselect units beneath the HUD.
       if (this.toolbarClick) { this.toolbarClick = false; return; }
       if (this.legend?.visible) { this.hideLegend(); return; }
+      // HUD PHASE 1 — the dossier strip + the open drawer OVERLAY the world: a click on a chip toggles its
+      // panel; a click anywhere inside the open drawer is swallowed (so it never box-selects the city beneath).
+      if (this.handleDossierClick(p.x, p.y)) return;
+      if (this.panels?.capturesPointer(p.x, p.y)) return;
       // RTS-30d-3: a left-drag marquee just finished — resolve the box-selection (NOT a click/pan).
       if (this.marqueeActive) { const shift = !!(p.event as MouseEvent | undefined)?.shiftKey; this.resolveMarquee(p, shift); this.endMarquee(); return; }
       // A real drag panned the camera — not a click.
@@ -1507,6 +1897,8 @@ export class IsoScene extends Phaser.Scene {
       // RTS-30a: a click on a CITY-roster row flies the camera to that district.
       const row = this.cityRowHits.find((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
       if (row) { this.flyToDistrict(row.districtId); return; }
+      // INFO-FEEDBACK — a click on the minimap / a log row / an edge arrow jumps the camera (consume it).
+      if (this.handleInfoClick(p.x, p.y)) return;
       const shift = !!(p.event as MouseEvent | undefined)?.shiftKey;
       // An open menu consumes the next click: a row runs its action, anywhere else dismisses it.
       if (this.ctxMenu) {
@@ -1516,10 +1908,9 @@ export class IsoScene extends Phaser.Scene {
         return;
       }
       if (p.rightButtonReleased()) {
-        // RTS-22/23: right-click a BUILDING (base tile OR its roof) → EXTORT/ATTACK menu; else MOVE.
-        const bizId = this.businessAtScreen(p.worldX, p.worldY);
-        if (bizId && this.selection.ids.length > 0) this.openBizMenu(bizId, p.x, p.y);
-        else this.commandMove(p);
+        // RTS-35c VERB SPLIT: route the right-click by TARGET TYPE — a rival UNIT → ATTACK, a BUILDING →
+        // the extort/attack menu, empty ground → MOVE (RTS-22/23 building rule preserved within).
+        this.commandContextual(p);
       } else {
         this.commandSelect(p, shift);
       }
@@ -1568,8 +1959,18 @@ export class IsoScene extends Phaser.Scene {
     const title = b ? `${b.name}` : 'business';
     const sub = acts.earner === 'player' ? 'yours' : acts.earner ? `${acts.earner}'s` : 'un-shaken';
 
+    // RTS-35d — the EXTORT row reflects the AUTHORITATIVE 35b/35d gate (un-taken front OR a guard-cleared
+    // RIVAL-HELD retake), not the legacy control-foothold gate. A rival-held front reads RETAKE; the gate
+    // hint surfaces "clear the guard first" while a rival still watches the block.
+    const exTile = businessTileOf(this.layout, businessId);
+    const exThug = this.selectedPlayerThug();
+    const exGate = exThug && exTile
+      ? canIssueMoveAndShakedown(this.state, exThug.id, businessId, exTile)
+      : { ok: false, reason: 'select one of your thugs first' };
+    const retakeLabel = isRivalHeldFront(this.state, businessId) ? 'RETAKE' : 'EXTORT';
+
     const rows: { label: string; color: string; enabled: boolean; hint: string; act: () => void }[] = [
-      { label: 'EXTORT', color: acts.extort.ok ? SPEC.brass : NOIR_PALETTE.fog, enabled: acts.extort.ok, hint: acts.extort.reason, act: () => this.commandExtortBusiness(businessId) },
+      { label: retakeLabel, color: exGate.ok ? SPEC.brass : NOIR_PALETTE.fog, enabled: exGate.ok, hint: exGate.reason, act: () => this.commandExtortBusiness(businessId) },
       { label: 'ATTACK', color: acts.attack.ok ? SPEC.danger : NOIR_PALETTE.fog, enabled: acts.attack.ok, hint: acts.attack.reason, act: () => this.commandAttackBusiness(businessId) },
     ];
 
@@ -1599,14 +2000,20 @@ export class IsoScene extends Phaser.Scene {
    * order is gated by canIssueMoveAndShakedown and, on resolve, the wrapper invokes the EXISTING
    * recordExtortVisit conversion. Cost = time + a thug occupied, NOT cash. */
   private commandExtortBusiness(businessId: string): void {
-    const prog = extortProgress(this.state, businessId);
-    if (!prog || !prog.extortable) { this.setStatus('that block already pays — pick an un-shaken [%] front'); return; }
-    const thug = this.idlePlayerThug();
-    if (!thug) { this.setStatus('no free muscle — wait for a thug to finish, or recruit [6]'); return; }
-    const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId);
-    if (!gate.ok) { this.setStatus(gate.reason); return; }
     const tile = businessTileOf(this.layout, businessId);
     if (!tile) return;
+    // RTS-35b.1 — SELECTION IS AUTHORITATIVE: the order goes to the SELECTED thug, never an arbitrary
+    // free one. No selection → require one (the right-click menu is already selection-gated; this matches).
+    const thug = this.selectedPlayerThug();
+    if (!thug) { this.setStatus('select one of your thugs first, then order the shakedown'); return; }
+    // RTS-35d — the gate now allows a RETAKE (a rival-held front whose guard is cleared) when given the
+    // front tile, as well as the 35b un-taken front; it states the reason (incl. "clear the guard first").
+    const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId, tile);
+    if (!gate.ok) { this.setStatus(gate.reason); return; }
+    const retake = isRivalHeldFront(this.state, businessId);
+    // RTS-35b.1 — a busy selected thug is RE-TASKED (not silently handed off): the wrapper replaces his
+    // existing act (dedup by thugId) and issueMove re-paths him — consistent with a MOVE order overriding.
+    const wasBusy = this.extortBusyThugIds().has(thug.id);
     // resolution 2: the interaction point is the building-CENTER seed. Walk the thug there; the act
     // accrues the shakedown only once he is AT the door (the positional gate).
     const interaction = frontInteractionPoint(tile);
@@ -1614,25 +2021,32 @@ export class IsoScene extends Phaser.Scene {
     // create the act through the WRAPPER (proves applyCommand is untouched) — it pushes onto state.extortionActs.
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndShakedown', familyId: 'player', thugId: thug.id, frontId: businessId }, () => {}, interaction);
     this.focusBizId = businessId;
-    this.setStatus(`muscle on the way to shake down ${inspectBusiness(this.state, businessId)?.name ?? 'the block'} — he leans on it once he's at the door`);
+    const name = inspectBusiness(this.state, businessId)?.name ?? 'the block';
+    const verb = retake ? 'muscle' : 'shake down';
+    this.setStatus(wasBusy
+      ? `pulled your man off his last job — he's on the way to ${verb} ${name}`
+      : retake
+        ? `your man is moving in to muscle ${name} back off the rival — he leans on it once he's at the door`
+        : `your man is on the way to shake down ${name} — he leans on it once he's at the door`);
   }
 
-  /** RTS-35b — the thug ids currently committed to an embodied-extortion act (so they're not re-tasked). */
+  /** RTS-35b — the thug ids currently committed to an embodied-extortion act (for the re-task readout). */
   private extortBusyThugIds(): Set<string> {
     return new Set((this.state.extortionActs ?? []).map((a) => a.thugId));
   }
 
-  /** An idle player button-man (no path, not a collector, not already tasked) free to be sent on a
-   * job. RTS-29.1: faction is resolved from the VIEW layer (sim muscle units carry no factionId/role —
-   * that was the dead-dispatch blocker); the pure pickIdleMuscle helper makes the seam testable. */
-  private idlePlayerThug(): MovableUnit | undefined {
+  /** RTS-35b.1 — the SELECTED player thug an embodied order is issued to (selection is AUTHORITATIVE).
+   * Faction/role are resolved from the VIEW layer (sim muscle units carry no factionId/role); the pure
+   * pickSelectedMuscle seam makes it testable. A busy selected thug is still returned — the caller
+   * RE-TASKS it (never a silent hand-off to a different thug). */
+  private selectedPlayerThug(): MovableUnit | undefined {
     const candidates: MuscleCandidate[] = this.units.map((v) => ({
       id: v.unit.id,
       faction: v.faction,
       isCollector: v.unit.role === 'collector',
       idle: v.unit.path.length === 0,
     }));
-    const pick = pickIdleMuscle(candidates, this.extortBusyThugIds());
+    const pick = pickSelectedMuscle(candidates, this.selection.ids);
     return pick ? this.state.units.find((u) => u.id === pick.id) : undefined;
   }
 
@@ -1648,6 +2062,29 @@ export class IsoScene extends Phaser.Scene {
       const c = tile ? gridToScreen(tile.gx, tile.gy) : undefined;
       const name = inspectBusiness(this.state, ev.frontId)?.name ?? 'the block';
       const thugView = this.units.find((v) => v.unit.id === ev.thugId);
+      // INFO-FEEDBACK — log the embodied transition (front.converted / front.retaken / extort.failed). The
+      // 'extort.failed' wording is kind-aware (a blown shakedown vs a hit that fell through).
+      const ik = extortionEventKind(ev);
+      if (ik) {
+        const msg = ik === 'extort.failed'
+          ? (ev.kind === 'sabotage' ? `the hit on ${name} fell through` : `shakedown on ${name} blown`)
+          : `${name} ${ev.retook ? 'muscled back' : 'now pays protection'}`;
+        this.recordInfoEvent(ik, msg, tile?.gx, tile?.gy);
+      }
+      // EMBODIMENT — the embodied building-ATTACK landed: the thug reached the racket and shut it down (the
+      // EXISTING resolveAttack already fired in the sim). Surface the danger-MOTION beat + the shutdown read.
+      if (ev.sabotaged) {
+        this.state = harvestIncidents(this.state);
+        if (c) {
+          this.triggerAttackMotion(thugView, thugView?.unit.weapon, c.x);
+          this.combatContact(c.x, c.y, combatVfxForVerb('attack'));
+          this.floatText(c.x, c.y - 30, 'SHUT DOWN', SPEC.danger);
+        }
+        this.signalBeat('attack');
+        this.setStatus(`${name} shut down — it stops producing`);
+        this.extortShoveAt.delete(ev.thugId);
+        continue;
+      }
       if (ev.converted) {
         // the EXISTING conversion already set extortedBy — surface the felt beat (mirror of the old flow).
         this.state = harvestIncidents(this.state);
@@ -1658,13 +2095,18 @@ export class IsoScene extends Phaser.Scene {
         }
         const setup = ensureBusinessCollector(this.state, this.layout, 'player', ev.frontId, this.navGrid);
         if (setup) this.attachView(setup.unit, 'player');
-        this.setStatus(`${name} folded — it pays protection now (a collector is on the way)`);
+        // RTS-35d — a RETAKE reads as muscling the block back off the rival (ownership flipped rival→player).
+        this.setStatus(ev.retook
+          ? `${name} is yours again — muscled it back off the rival (a collector is on the way)`
+          : `${name} folded — it pays protection now (a collector is on the way)`);
         this.extortShoveAt.delete(ev.thugId);
         continue;
       }
       if (ev.failed) {
-        if (c) this.floatText(c.x, c.y - 30, 'SHAKEDOWN BLOWN', SPEC.danger);
-        this.setStatus(`the shakedown on ${name} fell through — send muscle again when the block's clear`);
+        if (c) this.floatText(c.x, c.y - 30, ev.kind === 'sabotage' ? 'HIT BLOWN' : 'SHAKEDOWN BLOWN', SPEC.danger);
+        this.setStatus(ev.kind === 'sabotage'
+          ? `the hit on ${name} fell through — send muscle again when it's clear`
+          : `the shakedown on ${name} fell through — send muscle again when the block's clear`);
         this.extortShoveAt.delete(ev.thugId);
         continue;
       }
@@ -1735,23 +2177,30 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** ATTACK a specific building: temporarily shut it down (interdict a rival's racket). */
+  /** EMBODIMENT CONSISTENCY — ATTACK a business is now POSITIONAL (the mirror of the embodied shakedown):
+   * the SELECTED thug WALKS to the racket and dwells in proximity before it shuts down — no instant-at-range
+   * effect. The shutdown (the EXISTING resolveAttack) fires on arrival inside the sim (processExtortionEvents
+   * renders the beat). Selection is authoritative (consistent with 35b.1). */
   private commandAttackBusiness(businessId: string): void {
-    const res = resolveAttack(this.state, businessId, 'player');
-    this.state = harvestIncidents(this.state);
-    if (!res.ok) { this.setStatus(`can't attack: ${res.reason}`); return; }
     const tile = businessTileOf(this.layout, businessId);
-    if (tile) { this.sendSelectedTo(tile); const c = gridToScreen(tile.gx, tile.gy); this.floatText(c.x, c.y - 30, `SHUT DOWN ${res.weeks}wk`, SPEC.danger);
-      // RTS-30e: a muzzle-clash on the racket + the attacker's recoil.
-      const actor = this.actingUnitView(c.x, c.y); this.triggerAttackMotion(actor, actor?.unit.weapon, c.x); this.combatContact(c.x, c.y, combatVfxForVerb('attack')); }
+    if (!tile) return;
+    const thug = this.selectedPlayerThug();
+    if (!thug) { this.setStatus('select one of your thugs first, then send them to wreck the racket'); return; }
+    const gate = canIssueMoveAndSabotage(this.state, thug.id, businessId, 'player');
+    if (!gate.ok) { this.setStatus(`can't attack: ${gate.reason}`); return; }
+    const wasBusy = this.extortBusyThugIds().has(thug.id);
+    const interaction = frontInteractionPoint(tile);
+    issueMove(thug, interaction, this.navGrid);
+    // create the embodied act through the WRAPPER (applyCommand untouched) — it shuts the racket down on resolve.
+    applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndSabotage', familyId: 'player', thugId: thug.id, businessId }, () => {}, interaction);
+    this.focusBizId = businessId;
+    const c = gridToScreen(tile.gx, tile.gy);
+    this.flashAttackIntent(unitScreenPos(thug).x, unitScreenPos(thug).y, c.x, c.y); // the danger-MOTION intent tether (no static wash)
     this.signalBeat('attack');
-    const insp = inspectBusiness(this.state, businessId);
-    this.setStatus(`${insp?.name ?? 'business'} shut down for ${res.weeks} weeks — it stops producing`);
-  }
-
-  /** Walk the selected thugs to a tile (flavour for extort/attack; also a plain order). */
-  private sendSelectedTo(tile: { gx: number; gy: number }): void {
-    if (this.selection.ids.length === 0) return;
-    resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, tile, this.navGrid);
+    const name = inspectBusiness(this.state, businessId)?.name ?? 'the racket';
+    this.setStatus(wasBusy
+      ? `pulled your man off his last job — he's moving in to wreck ${name}`
+      : `your man is moving in to wreck ${name} — it shuts down once he's leaned on it`);
   }
 
   /** [T] — set up (or refresh) the automated collection route over your protected businesses. */
@@ -1770,6 +2219,16 @@ export class IsoScene extends Phaser.Scene {
     const col = pickUnit(this.units.filter((v) => v.faction === 'player' && v.unit.role === 'collector').map((v) => v.unit), point);
     if (col) { this.focusBizId = undefined; if (!shift) this.selection = clearSelection(); this.showCollectorInfo(col); return; }
     this.hideCollectorInfo();
+    // ⭐ DISCOVERABILITY: a LEFT-click on a RIVAL fighter (not selectable — it's the enemy) tells the player
+    // the ATTACK gesture instead of silently deselecting, and KEEPS the crew selected so they can right-click
+    // it straight away. (The player report was "the attack function doesn't work / is locked" — make it obvious.)
+    const foe = pickUnit(this.units.filter((v) => v.faction === 'rival' && v.unit.role !== 'collector').map((v) => v.unit), point);
+    if (foe) {
+      this.setStatus(this.selection.ids.length > 0
+        ? "that's a rival — RIGHT-CLICK it to send your crew in (they trade blows on contact)"
+        : "that's a rival — select one of your thugs, then RIGHT-CLICK it to ATTACK");
+      return;
+    }
     // RTS-28: no unit under the cursor → try a BUILDING (height-aware hit-test). A click selects the
     // building under the cursor (its card sticks in the context panel; [E]/[U] target it).
     const bizId = this.businessAtScreen(p.worldX, p.worldY);
@@ -1783,6 +2242,65 @@ export class IsoScene extends Phaser.Scene {
     this.focusBizId = undefined;
     if (!shift) this.selection = clearSelection();
     this.setStatus();
+  }
+
+  /** RTS-35c — the contextual right-click: ROUTE the order by TARGET TYPE (the pure orderVerbFor seam),
+   * so attacking a rival and extorting a front are never confused. A RIVAL UNIT under the cursor → ATTACK
+   * (move-to-engage; 35a proximity combat resolves it); a BUILDING → the EXTORT/ATTACK menu (RTS-22/23,
+   * gated on a selection); empty GROUND → MOVE. No new combat/extortion — pure dispatch to the existing
+   * systems. Selection gating lives in each command (consistent with 35b.1 — selection is authoritative). */
+  private commandContextual(p: Phaser.Input.Pointer): void {
+    const gpoint = screenToGrid(p.worldX, p.worldY);
+    const hitUnit = pickUnit(this.units.map((v) => v.unit), gpoint);
+    const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
+    // a RIVAL COMBATANT (non-collector) is the attack target; collectors stay autonomous (robbed via
+    // interception, never a unit-attack target).
+    const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
+    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    const target: OrderTarget = rival
+      ? { kind: 'rival', unitId: rival.id }
+      : bizId
+        ? { kind: 'front', businessId: bizId }
+        : { kind: 'ground', tile: screenToTile(p.worldX, p.worldY) };
+    const verb = orderVerbFor(target);
+    if (verb === 'attack' && target.kind === 'rival') this.commandAttackUnit(target.unitId);
+    else if (verb === 'extort' && target.kind === 'front') {
+      if (this.selection.ids.length > 0) this.openBizMenu(target.businessId, p.x, p.y);
+      else this.commandMove(p); // no crew selected → a right-click on a building just walks there (legacy rule)
+    } else this.commandMove(p);
+  }
+
+  /** RTS-35c — ATTACK a RIVAL UNIT: order the SELECTED crew to MOVE-TO-ENGAGE it. No new combat — the
+   * thug paths onto the rival and the 35a proximity combat trades blows on contact. Selection is the
+   * actor (consistent with 35b.1); the danger-red intent line + reticle are the attack analog of the
+   * brass extort intent. */
+  private commandAttackUnit(rivalId: string): void {
+    const rival = this.state.units.find((u) => u.id === rivalId);
+    const rivalView = this.units.find((v) => v.unit.id === rivalId);
+    if (!rival || !rivalView || rivalView.faction !== 'rival') return;
+    const thug = this.selectedPlayerThug();
+    if (!thug) { this.setStatus('select one of your thugs first, then order the hit'); return; }
+    // move-to-engage: walk the selected crew onto the rival's tile — auto-engage does the rest.
+    const dest = unitTile(rival);
+    const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, dest, this.navGrid);
+    const from = unitScreenPos(thug), to = unitScreenPos(rival);
+    this.flashAttackIntent(from.x, from.y, to.x, to.y);
+    this.signalBeat('attack');
+    this.setStatus(`${res.moved.length > 1 ? `${res.moved.length} thugs` : 'your man'} moving in on the rival — they trade blows on contact`);
+  }
+
+  /** RTS-35c — the ATTACK intent feedback: the danger-red analog of the brass extort intent line. A
+   * pulsing tether from the thug to the rival + a reticle that snaps onto the target then fades. MOTION
+   * only (a brief fading line + shrinking ring), never a static red wash. */
+  private flashAttackIntent(fromWx: number, fromWy: number, toWx: number, toWy: number): void {
+    const line = this.add.graphics().setDepth(100001);
+    this.worldFx(line);
+    line.lineStyle(2, hexNum(SPEC.danger), 0.9);
+    line.beginPath(); line.moveTo(fromWx, fromWy - 4); line.lineTo(toWx, toWy - 8); line.strokePath();
+    this.tweens.add({ targets: line, alpha: 0, duration: 600, onComplete: () => line.destroy() });
+    const reticle = this.add.circle(toWx, toWy - 8, 16).setStrokeStyle(3, hexNum(SPEC.danger), 0.95).setDepth(100001);
+    this.worldFx(reticle);
+    this.tweens.add({ targets: reticle, scale: 0.5, alpha: 0, duration: 600, ease: 'Quad.Out', onComplete: () => reticle.destroy() });
   }
 
   private commandMove(p: Phaser.Input.Pointer): void {
@@ -1940,6 +2458,10 @@ export class IsoScene extends Phaser.Scene {
     if (!hq) return;
     const u = spawnUnit(`muscle-${weapon ?? 'thug'}-${this.state.tick}-${this.units.length}`, hq.gx, hq.gy, STROLL_SPEED);
     u.weapon = weapon;
+    // COMBAT DEPTH FINALIZE (Part A) — copy the enforcer's combat SKILL (= the recruited gangster's skill)
+    // onto the on-map unit so the already-built+tested tuning modifiers fire. The caps guarantee no
+    // burst-delete even at skill 10, so this is a safe realization of the intended depth, not a new mechanic.
+    u.skill = enforcerUnitSkill(weapon);
     this.addUnit(u, 'player');
     const c = gridToScreen(hq.gx, hq.gy);
     this.floatText(c.x, c.y - 30, weapon ? `NEW ${weapon.toUpperCase()}` : 'NEW MUSCLE', NOIR_PALETTE.brass);
@@ -2107,8 +2629,10 @@ export class IsoScene extends Phaser.Scene {
   private triggerAttackMotion(view: UnitView | undefined, weapon: WeaponTier | undefined, targetWx: number): void {
     if (!view) return;
     const s = unitScreenPos(view.unit);
-    view.attackUntil = this.time.now + MOTION.attackRecoil;
+    view.attackStartedAt = this.time.now;
+    view.attackUntil = this.time.now + weaponAttackDurationMs(weapon);
     view.attackKind = attackMotionForWeapon(weapon);
+    view.attackRigWeapon = rigAttackWeaponFromTier(weapon);
     view.attackFaceRight = targetWx >= s.x;
   }
 
@@ -2125,17 +2649,58 @@ export class IsoScene extends Phaser.Scene {
    * + a "down" line rides The Wire. Combat SFX punctuate the beats. */
   private playCombatBeat(ev: CombatEvent): void {
     const c = gridToScreen(ev.gx, ev.gy);
+    // INFO-FEEDBACK — a DOWN is a state change (unit.down, logged always); a HIT is a combat beat (combat.hit,
+    // throttled inside the log so swings don't spam). Both carry the event tile.
+    const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
+    this.recordInfoEvent(combatEventKind(ev.kind), ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`, ev.gx, ev.gy);
     const attacker = this.units.find((v) => v.unit.id === ev.attackerId);
     if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x); // melee swing / ranged recoil by weapon
     if (ev.kind === 'hit') {
-      this.triggerHitReact(ev.unitId);
+      this.triggerHitReact(ev.unitId);         // COMBAT READABILITY (3) — the stagger/flinch (RTS-30e motion)
+      this.hitPip(c.x, c.y);                   // COMBAT READABILITY (2) — a restrained damage-flash pip (no numbers)
+      this.cameraBeat('normalHit');            // POLISH v2 · PKG3 — a small punch on every trade
       if (ev.weapon) { this.combatContact(c.x, c.y, 'muzzle'); this.audio?.combat('attack'); } // ranged report (melee has no committed punch SFX yet)
     } else {
-      const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
+      this.cameraBeat('kill');                 // POLISH v2 · PKG3 — a heavier hit-stop on a down
       this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool)
       this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
       this.audio?.combat('assassinate');       // a decisive report punctuates the down
       this.setStatus(faction === 'player' ? 'one of your thugs went DOWN — pull back or reinforce' : 'a rival thug went DOWN in the brawl');
+    }
+  }
+
+  /** COMBAT READABILITY (2) — a RESTRAINED hit pip: a brief danger tick that pops up off the struck unit and
+   * fades (~180ms). No floating damage numbers — a single motion-danger mark, viewport-culled. */
+  private hitPip(wx: number, wy: number): void {
+    if (!this.onScreen(wx, wy)) return;
+    const pip = this.add.rectangle(wx + Phaser.Math.Between(-6, 6), wy - 30, 2.5, 7, hexNum(dangerColor(true)), 1).setDepth(100001);
+    this.worldFx(pip);
+    this.tweens.add({ targets: pip, y: pip.y - 14, alpha: 0, duration: 180, ease: 'Quad.Out', onComplete: () => pip.destroy() });
+  }
+
+  /** COMBAT READABILITY (4) — render the persistent DOWNED BODIES (state.downedBodies, driven by the sim
+   * wrapper). A downed unit leaves a DESATURATED, slumped body (canon: desat, never rival-red) that fades
+   * out over its persist window, then is cleaned up — instead of the unit vanishing the instant it falls.
+   * Pools one image per body; syncs create/fade/destroy against the sim list each frame. */
+  private syncDownedBodies(): void {
+    const bodies: DownedBody[] = this.state.downedBodies ?? [];
+    const live = new Set(bodies.map((b) => b.id));
+    // drop views whose body the sim has cleaned up
+    for (const [id, img] of this.downedBodyViews) {
+      if (!live.has(id)) { img.destroy(); this.downedBodyViews.delete(id); }
+    }
+    for (const b of bodies) {
+      const sp = gridToScreen(b.gx, b.gy);
+      let img = this.downedBodyViews.get(b.id);
+      if (!img) {
+        // a flattened, DESATURATED figure on the ground (grey — never rival-red), behind the living units.
+        img = this.add.image(sp.x, sp.y + 4, figureKeyFor(undefined, b.factionId === this.state.player.id ? 'player' : 'rival', 1))
+          .setOrigin(0.5, 0.9).setTint(0x6b6358).setScale(1.05, 0.5)
+          .setDepth(depthValue(Math.round(b.gx), Math.round(b.gy)) * 10 + 3);
+        this.worldFx(img);
+        this.downedBodyViews.set(b.id, img);
+      }
+      img.setAlpha(0.7 * (1 - downedBodyDecay(b))); // fade out toward cleanup
     }
   }
 
@@ -2144,24 +2709,26 @@ export class IsoScene extends Phaser.Scene {
    *  + debris + shock-ring (the heaviest). Bounded particle counts; world-layer, viewport-culled. */
   private combatContact(wx: number, wy: number, kind: CombatVfx): void {
     if (!this.onScreen(wx, wy)) return; // cost bounded by the viewport, not the map
-    const cam = this.cameras.main;
+    // POLISH v2 · PKG3 — the contact's camera FEEL now flows through the tested cameraBeat (hit-stop +
+    // decaying-sine nudge) instead of an ad-hoc random shake. dust = a demolition; muzzle/shatter = a hit.
+    this.cameraBeat(kind === 'dust' ? 'demolition' : 'normalHit');
     if (kind === 'muzzle') {
-      const flash = this.add.image(wx, wy - 16, TEX.glow).setTint(hexNum('#ff5a2c')).setScale(0.35).setDepth(100001); // muzzle #FF5A2C, motion-only
+      // POLISH v2 · PKG2 — the muzzle SNAPS (≤120ms) in the STANDARD danger #FF5A2C; the live spark is the
+      // hotter #E11D1D (the active-danger frame). dangerColor() keeps that discipline in one place.
+      const flash = this.add.image(wx, wy - 16, TEX.glow).setTint(hexNum(dangerColor(false))).setScale(0.35).setDepth(100001);
       this.worldFx(flash);
-      this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: 150, onComplete: () => flash.destroy() });
+      this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: MUZZLE_FLASH_MS, ease: 'Quad.Out', onComplete: () => flash.destroy() });
       for (let i = 0; i < 5; i++) {
-        const spark = this.add.rectangle(wx, wy - 16, 3, 1.5, hexNum(SPEC.danger), 1).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
+        const spark = this.add.rectangle(wx, wy - 16, 3, 1.5, hexNum(dangerColor(true)), 1).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
         this.worldFx(spark);
         this.tweens.add({ targets: spark, x: wx + Phaser.Math.Between(-26, 26), y: wy - 16 + Phaser.Math.Between(-18, 10), alpha: 0, duration: 220 + i * 20, onComplete: () => spark.destroy() });
       }
-      cam.shake(70, 0.004);
     } else if (kind === 'shatter') {
       for (let i = 0; i < 9; i++) { // brass-line glass shards (NOT red)
         const shard = this.add.rectangle(wx, wy - 14, Phaser.Math.Between(2, 5), 1.5, hexNum(SPEC.brass), 0.95).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
         this.worldFx(shard);
         this.tweens.add({ targets: shard, x: wx + Phaser.Math.Between(-34, 34), y: wy + Phaser.Math.Between(-6, 28), angle: Phaser.Math.Between(-220, 220), alpha: 0, duration: 520 + i * 25, ease: 'Cubic.Out', onComplete: () => shard.destroy() });
       }
-      cam.shake(60, 0.003);
     } else { // 'dust' — the demolish mushroom: debris + soot shock-ring + a heavier kick
       const ring = this.add.circle(wx, wy - 6, 6).setStrokeStyle(3, hexNum(SPEC.fog), 0.6).setDepth(100001);
       this.worldFx(ring);
@@ -2172,8 +2739,27 @@ export class IsoScene extends Phaser.Scene {
         this.worldFx(dust);
         this.tweens.add({ targets: dust, x: dust.x + Phaser.Math.Between(-30, 30), y: wy - 6 - Phaser.Math.Between(20, 58), scale: { from: 1, to: 1.8 }, alpha: 0, duration: 800 + i * 30, ease: 'Quad.Out', onComplete: () => dust.destroy() });
       }
-      cam.shake(150, 0.006);
+      // POLISH v2 · PKG2 — a slow SMOKE column rides ONLY this lingering-damage beat (smokeAllowed('dust'));
+      // a clean muzzle/shatter never smokes. Shaped by smokeCurve (peak ~0.6, long rise→fall).
+      if (smokeAllowed('dust')) {
+        const peak = smokeCurve(0.2).alpha;
+        for (let i = 0; i < 3; i++) {
+          const smoke = this.add.circle(wx + Phaser.Math.Between(-8, 8), wy - 8, Phaser.Math.Between(5, 9), hexNum(SPEC.fog), peak).setDepth(100000);
+          this.worldFx(smoke);
+          this.tweens.add({ targets: smoke, y: wy - 8 - Phaser.Math.Between(40, 80), scale: { from: 1, to: 2.6 }, alpha: 0, duration: SMOKE_MS + i * 140, ease: 'Sine.Out', onComplete: () => smoke.destroy() });
+        }
+      }
     }
+  }
+
+  /** POLISH v2 · PKG3 — register a camera-feel BEAT: arm the severity-banded hit-stop (no-stack + lockout)
+   * + the screen-nudge impulse. Both are applied to the WORLD camera in update(); the fixed HUD camera is
+   * never touched. Maps onto EXISTING events — adds no new beats. */
+  private cameraBeat(severity: BeatSeverity): void {
+    if (!this.feelEnabled) return;
+    const now = this.time.now;
+    this.hitStop = requestHitStop(this.hitStop, severity, now);
+    this.nudge = requestNudge(this.nudge, severity, now);
   }
 
   /** Whether a world point is within the (padded) camera view — viewport culling for FX cost. */
@@ -2287,13 +2873,30 @@ export class IsoScene extends Phaser.Scene {
   /** [4] LOCKOUT the weakest rival via The Bureau — freeze and bleed them. */
   private commandLockout(): void {
     const w = weakestRival(this.state);
-    if (!w) { this.setStatus('no rival to lock down'); return; }
+    if (!w) { this.setStatus('LOCKOUT: no rival left to lock down'); return; }
     const g = canLockout(this.state, w.familyId);
     if (!g.ok) { this.setStatus(`LOCKOUT ${w.name}: ${g.reason}`); return; }
     resolveLockout(this.state, w.familyId);
     this.state = harvestIncidents(this.state);
     this.audio?.combat('lockout'); this.audio?.lockoutEntry(); this.audio?.confirm(); // RTS-27 siren + RTS-34 door-slam forced entry
-    this.setStatus(`the Bureau is locking down ${w.name}`);
+    // FIX — a FELT success beat at the rival's HQ so the lockout reads as DELIVERING (it used to play only
+    // SFX + a one-line status, so a successful lockout looked like a dead button). Federal-green pulse +
+    // a lock stamp + a kick — MOTION, no static wash.
+    const ht = hqTileOf(this.layout, w.familyId);
+    if (ht) { const p = gridToScreen(ht.gx, ht.gy); this.lockoutBeat(p.x, p.y); }
+    this.signalBeat('federal');
+    this.setStatus(`the Bureau is locking down ${w.name} — they can't expand & they bleed while it holds`);
+  }
+
+  /** FIX — the LOCKOUT beat: the Bureau moves in. A federal-green shock-ring + a "🔒 LOCKED DOWN" stamp
+   * over the rival HQ + a short camera kick. Federal-green (#5b7d6a, the canon Bureau accent), MOTION-only. */
+  private lockoutBeat(wx: number, wy: number): void {
+    const FED = 0x5b7d6a;
+    const ring = this.add.circle(wx, wy - 8, 8).setStrokeStyle(3, FED, 0.9).setDepth(100001);
+    this.worldFx(ring);
+    this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 620, ease: 'Quad.Out', onComplete: () => ring.destroy() });
+    this.floatText(wx, wy - 34, '🔒 LOCKED DOWN', '#7da890');
+    this.cameraBeat('federalRaid'); // POLISH v2 · PKG3 — the Bureau's blow lands with a banded hit-stop
   }
 
   /**
@@ -2357,6 +2960,7 @@ export class IsoScene extends Phaser.Scene {
   private showEndgame(): void {
     if (this.endgameShown) return;
     this.endgameShown = true;
+    this.cameraBeat('winLoss'); // POLISH v2 · PKG3 — the decisive sting gets the longest hit-stop
     const won = this.state.status === 'won';
     // RTS-27: the win/lose STING + a VO one-liner, and switch the music bed (theme swell / defeat).
     this.audio?.play(won ? 'sting_win' : 'sting_lose');
@@ -2422,9 +3026,46 @@ export class IsoScene extends Phaser.Scene {
     this.tooltipText = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100051).setVisible(false);
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (p.isDown) { this.hideTooltip(); return; }
+      if (p.isDown) { this.hideTooltip(); this.opPreview = undefined; return; }
       this.updateTooltip(p);
+      this.resolveOpPreview(p);
     });
+  }
+
+  /** OPERATION-OUTCOME PREVIEWS — resolve the read-only preview under the cursor. Reuses the SAME target
+   * routing as the contextual right-click (rival unit → attack; un-taken front → extort; rival-held front →
+   * retake), and falls back to the federal LOCKOUT projection on a rival when no muscle is selected to hit
+   * with — so the cursor always answers "what would committing here do?". Pure selectors do the work; this
+   * only picks which one and passes the fog predicate (NO-X-RAY). */
+  private resolveOpPreview(p: Phaser.Input.Pointer): void {
+    this.opCursor = { x: p.x, y: p.y };
+    // a HUD region owns this pixel (the tooltip explains it) — don't also pop a world preview over it.
+    if (this.hudRegionExplain(p.x, p.y) !== null) { this.opPreview = undefined; return; }
+    const isVis = (pos: { gx: number; gy: number }) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
+    const hitUnit = pickUnit(this.units.map((v) => v.unit), screenToGrid(p.worldX, p.worldY));
+    const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
+    const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
+    const thug = this.selectedPlayerThug();
+
+    if (rival) {
+      // a rival fighter: with muscle selected, preview the ATTACK; otherwise show what the Bureau could do.
+      this.opPreview = thug
+        ? previewAttackRival(this.state, thug.id, rival.id, isVis)
+        : (rival.factionId ? previewFederalAction(this.state, rival.factionId) : undefined);
+      return;
+    }
+    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    if (bizId) {
+      const tile = businessTileOf(this.layout, bizId);
+      // never preview a fogged building (NO-X-RAY) — and we need a tile for the spatial guard/retake checks.
+      if (!tile || !isVis(tile)) { this.opPreview = undefined; return; }
+      const actorId = thug?.id ?? '';
+      this.opPreview = isRivalHeldFront(this.state, bizId)
+        ? previewRetakeFront(this.state, actorId, bizId, tile, isVis)
+        : previewExtortFront(this.state, actorId, bizId, tile, isVis);
+      return;
+    }
+    this.opPreview = undefined; // empty ground — nothing to project
   }
 
   /** RTS-23: the plain-English explanation for a HUD region under the cursor (the anti-Gangsters
@@ -2454,11 +3095,17 @@ export class IsoScene extends Phaser.Scene {
     const gpoint = screenToGrid(p.worldX, p.worldY);
     const hit = pickUnit(this.units.map((v) => v.unit), gpoint);
     if (hit) {
+      const view = this.units.find((v) => v.unit.id === hit.id);
       const i = inspectUnit(this.state, hit.id);
       if (i) {
         const lines = [`${i.kind}${i.ownerName ? ` · ${i.ownerName}` : ''}`];
         if (i.vulnerable) lines.push(`carrying $${i.carrying}  ${i.threat === 'ambush' ? '⚠ AMBUSH' : i.threat === 'threatened' ? '⚠ in danger' : 'in transit'}`);
         else lines.push('idle / no cash');
+        // ⭐ DISCOVERABILITY: a RIVAL fighter is an ATTACK target — surface the right-click gesture (the
+        // combat half of the game was unreachable; make the gesture obvious on hover).
+        if (view?.faction === 'rival' && hit.role !== 'collector') {
+          lines.push(this.selection.ids.length > 0 ? '⚔ right-click → ATTACK' : '⚔ select a thug, then right-click → ATTACK');
+        }
         return lines.join('\n');
       }
     }
@@ -2604,6 +3251,57 @@ export class IsoScene extends Phaser.Scene {
     this.grain?.setVisible(this.fxEnabled);
   }
 
+  // ── FOOTGUN FIX — confirm before restart-to-Boot ──────────────────────────────────────────────
+
+  /** [B] — ARM the restart (never restarts on the press itself) and raise the confirm modal. */
+  private armRestartPrompt(): void {
+    const r = armRestart(this.restartGate);
+    this.restartGate = r.gate;
+    this.showRestartPrompt();
+  }
+
+  /** [Y] while armed — confirm: restart to Boot ONLY because the gate says so (pure decision). */
+  private doConfirmRestart(): void {
+    const r = confirmRestart(this.restartGate);
+    this.restartGate = r.gate;
+    this.hideRestartPrompt();
+    if (r.restart) this.scene.start('BootScene');
+  }
+
+  /** [Esc] / cancel button while armed — back out, leave the game running. */
+  private doCancelRestart(): void {
+    const r = cancelRestart(this.restartGate);
+    this.restartGate = r.gate;
+    this.hideRestartPrompt();
+  }
+
+  /** The restart confirm dialog: a dim backdrop + a brass-framed panel reading the consequence, with
+   * clickable CONFIRM / CANCEL buttons (keyboard [Y]/[Esc] do the same). Fixed-HUD camera, top depth. */
+  private showRestartPrompt(): void {
+    if (this.restartPrompt) return;
+    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
+    const pw = 460, ph = 150;
+    const backdrop = this.add.rectangle(0, 0, w, h, PAL.soot, 0.72).setOrigin(0, 0);
+    const panel = this.add.rectangle(cx, cy, pw, ph, PAL.ink, 0.98).setStrokeStyle(2, PAL.brass, 0.95);
+    const title = this.mkText(cx, cy - 44, 'RESTART?', { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0.5);
+    const body = this.mkText(cx, cy - 12, 'This ENDS your current game.', { fontFamily: NOIR_FONT, fontSize: '14px', color: NOIR_PALETTE.bone }).setOrigin(0.5, 0.5);
+    const confirm = this.mkText(cx - 92, cy + 34, '[Y] RESTART', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold', backgroundColor: '#1a0a09' })
+      .setOrigin(0.5, 0.5).setPadding(10, 6, 10, 6).setInteractive({ useHandCursor: true });
+    const cancel = this.mkText(cx + 92, cy + 34, '[Esc] CANCEL', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807' })
+      .setOrigin(0.5, 0.5).setPadding(10, 6, 10, 6).setInteractive({ useHandCursor: true });
+    confirm.on('pointerdown', () => this.doConfirmRestart());
+    cancel.on('pointerdown', () => this.doCancelRestart());
+    backdrop.setInteractive().on('pointerdown', () => this.doCancelRestart()); // click-off cancels (safe default)
+    const c = this.add.container(0, 0, [backdrop, panel, title, body, confirm, cancel]).setScrollFactor(0).setDepth(300000);
+    this.hudFx(c); // fixed HUD camera only (the main camera ignores it — never renders in world space)
+    this.restartPrompt = c;
+  }
+
+  private hideRestartPrompt(): void {
+    this.restartPrompt?.destroy(true);
+    this.restartPrompt = undefined;
+  }
+
   /** RTS-30a — snap to the next/prev of the 3 zoom stops (CLOSE/MID/FAR), anchored to the cursor. */
   private cycleZoom(dir: 1 | -1): void {
     const cur = this.targetZoom;
@@ -2683,22 +3381,32 @@ export class IsoScene extends Phaser.Scene {
       const wp = cam.getWorldPoint(p.x, p.y);
       this.zoomAnchor = { sx: p.x, sy: p.y, wx: wp.x, wy: wp.y };
     });
-    this.input.keyboard?.on('keydown-F', () => this.centerOnSelection());
+    // HUD PHASE 1 — [F] now opens the FINANCE drawer; the camera CENTRE-ON-SELECTION it displaced moves to
+    // [I] (the only collision the L/T/V/K/F bindings introduce; the larger remap is deferred).
+    this.input.keyboard?.on('keydown-F', () => this.panels?.toggle('finance'));
+    this.input.keyboard?.on('keydown-I', () => this.centerOnSelection());
     this.input.keyboard?.on('keydown-Z', () => this.frameCity());
     // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).
     this.input.keyboard?.on('keydown-PLUS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-EQUALS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-MINUS', () => this.cycleZoom(-1));
-    // RTS-29: collectors are AUTOMATIC now (one per extorted front) — no player routing. [T] just informs.
-    this.input.keyboard?.on('keydown-T', () => this.setStatus('collectors are automatic — one spawns per front you extort ([E]); no routing needed'));
+    // HUD PHASE 1 — [T] opens the TURF drawer (the old [T] no-op status hint is retired).
+    this.input.keyboard?.on('keydown-T', () => this.panels?.toggle('turf'));
     this.input.keyboard?.on('keydown-E', () => this.commandExtort());
     this.input.keyboard?.on('keydown-C', () => this.commandCollect());
     this.input.keyboard?.on('keydown-R', () => this.commandReinvest());
     this.input.keyboard?.on('keydown-G', () => this.commandGrease());
-    this.input.keyboard?.on('keydown-L', () => this.toggleFeed());
-    this.input.keyboard?.on('keydown-K', () => this.toggleCrew());
+    // HUD PHASE 1 — [L] Wire / [K] Crew now open their DRAWERS (the old always-on feed/crew panels are retired).
+    this.input.keyboard?.on('keydown-L', () => this.panels?.toggle('wire'));
+    this.input.keyboard?.on('keydown-K', () => this.panels?.toggle('crew'));
     this.input.keyboard?.on('keydown-H', () => this.toggleLegend());
-    this.input.keyboard?.on('keydown-B', () => this.scene.start('BootScene'));
+    // FOOTGUN FIX — [B] no longer wipes the game on a single press; it ARMS a confirm prompt.
+    this.input.keyboard?.on('keydown-B', () => this.armRestartPrompt());
+    // HUD PHASE 1 — ESC closes the open drawer first (the common case); else cancels an armed restart prompt.
+    this.input.keyboard?.on('keydown-ESC', () => {
+      if (this.panels?.isOpen()) { this.panels.close(); return; }
+      if (this.restartGate.armed) this.doCancelRestart();
+    });
     // RTS-17 — the offensive. RTS-27: when the audio panel is open, 1–5 adjust the volume buses
     // instead of firing offense/build verbs (so the settings surface is keyboard-drivable).
     this.input.keyboard?.on('keydown-ONE', () => this.audioPanelOpen ? this.cycleAudioBus(0) : this.commandRaid());
@@ -2709,24 +3417,32 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-FIVE', () => this.audioPanelOpen ? this.cycleAudioBus(4) : this.commandExpand());
     this.input.keyboard?.on('keydown-SIX', () => this.commandRecruit());
     // RTS-30c-2b — the two glyphs that shipped without a canon key: PATROL [Q], DEMOLISH [V].
-    this.input.keyboard?.on('keydown-Q', () => this.commandPatrol());
-    this.input.keyboard?.on('keydown-V', () => this.commandSabotage()); // DEMOLISH = the wreck of a rival node
+    // INFO-FEEDBACK (canon ruling #1): [Q] = jump to the last/highest-priority unread alert (NOT Space=pause,
+    // NOT Tab=idle cycle). PATROL keeps its action-card chip (the [Q] hotkey moved to jump-to-alert).
+    this.input.keyboard?.on('keydown-Q', () => this.jumpToLastAlert());
+    // HUD PHASE 1 — fix the [V]/[2] dupe: [V] opens the PATHS drawer; [2] remains the sole sabotage key.
+    this.input.keyboard?.on('keydown-V', () => this.panels?.toggle('paths'));
     // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
     this.input.keyboard?.on('keydown-O', () => this.toggleAudioPanel());
     this.input.keyboard?.on('keydown-ZERO', () => { this.audio?.toggleMute(); this.refreshAudioPanel(); });
     this.input.keyboard?.on('keydown-X', () => { this.toggleFx(); this.setStatus(this.fxEnabled ? 'film grain + vignette ON' : 'film grain + vignette OFF'); }); // RTS-34 mood toggle (also ?fx=off)
     // RTS-28 — pacing: [Space] cycle fast-forward, [>] (period) skip to the next week.
-    this.input.keyboard?.on('keydown-SPACE', () => this.cycleFastForward());
+    // [Space] is the conventional PAUSE (the keystone). Fast-forward moves to its always-visible button.
+    this.input.keyboard?.on('keydown-SPACE', () => this.togglePause());
     this.input.keyboard?.on('keydown-PERIOD', () => this.skipWeek());
     // RTS-24 — vice upgrade ([U] on the hovered racket) + THE MARKET ([M] toggle, [N] next good,
     // [Y] buy, [J] sell — buy/sell act only while the market tab is open).
     this.input.keyboard?.on('keydown-U', () => this.commandViceUpgrade());
     this.input.keyboard?.on('keydown-M', () => this.toggleMarket());
     this.input.keyboard?.on('keydown-N', () => { if (this.marketOpen) this.marketSel = (this.marketSel + 1) % 4; });
-    this.input.keyboard?.on('keydown-Y', () => this.commandTrade('buy'));
+    this.input.keyboard?.on('keydown-Y', () => { if (this.restartGate.armed) this.doConfirmRestart(); else this.commandTrade('buy'); });
     this.input.keyboard?.on('keydown-J', () => this.commandTrade('sell'));
     // RTS-25 — perf overlay: live FPS · frame ms · text rasterisations/sec (the cost this pass cut).
     this.input.keyboard?.on('keydown-P', () => { this.perfVisible = !this.perfVisible; this.perfText?.setVisible(this.perfVisible); });
+    // OPERATION-OUTCOME PREVIEWS — HOLD-ALT expands the hover GLANCE card into its DETAIL rows. [ALT] is
+    // free in the keymap (audited); preventDefault keeps the browser from stealing the Alt menu.
+    this.input.keyboard?.on('keydown-ALT', (e: KeyboardEvent) => { e.preventDefault?.(); this.opAltHeld = true; });
+    this.input.keyboard?.on('keyup-ALT', (e: KeyboardEvent) => { e.preventDefault?.(); this.opAltHeld = false; });
   }
 
   update(_t: number, delta: number): void {
@@ -2736,11 +3452,12 @@ export class IsoScene extends Phaser.Scene {
     this.drawGround(); // RTS-30a: culled ground/streets/parks/fog/washes for the visible tiles only
     this.updateDressingVisibility(); // RTS-30b-ground: fog-reveal + FAR-LOD bulk-hide of static props
     // RTS-34: fog-gate the ambient life — peds/cars only render on revealed tiles (no life through fog).
-    this.ambient?.update(dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
+    // GLOBAL ACTIVE-PAUSE — the living city freezes too (a paused frame advances ambient by 0).
+    this.ambient?.update(this.pause.paused ? 0 : dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
     this.refreshHud();
     this.refreshObjective();
-    this.refreshFeed();
-    this.refreshCrew();
+    if (!this.hudCollapsed) { this.refreshFeed(); this.refreshCrew(); } // HUD PHASE 1 — legacy side panels retired
+    this.refreshPanels(); // HUD PHASE 1 — the dossier strip + the open drawer's body
     this.refreshStrategy();
     this.refreshToolbar(); // RTS-30b-ui: clickable hotkey toolbar (states + progressive disclosure)
     this.refreshActionCard(); // RTS-30c-2b: the selected-unit action-icon chips
@@ -2752,6 +3469,15 @@ export class IsoScene extends Phaser.Scene {
     this.samplePerf(delta);
 
     const cam = this.cameras.main;
+    // POLISH v2 · PKG3 — HIT-STOP: freeze WORLD-VISUAL time (the VFX tweens) for the brief banded window so
+    // a blow READS. The sim (economy/combat) ran already in updateUnits and is untouched; the fixed HUD
+    // camera is untouched (this only gates tween time + the WORLD-camera nudge below). Auto-releases as the
+    // clock advances past the window.
+    this.tweens.timeScale = this.feelEnabled && worldFrozen(this.hitStop, this.time.now) ? 0 : 1;
+    // POLISH v2 · PKG3 — SCREEN-NUDGE: undo last frame's offset so the pan/zoom math sees the true scroll
+    // (no drift), then re-apply this frame's decaying-sine nudge at the end. WORLD camera only.
+    cam.scrollX -= this.appliedNudgeX; cam.scrollY -= this.appliedNudgeY;
+    this.appliedNudgeX = 0; this.appliedNudgeY = 0;
     // RTS-22/23: ease the zoom toward its target, keeping the cursor's world point pinned.
     if (Math.abs(cam.zoom - this.targetZoom) > 0.001) {
       cam.setZoom(Phaser.Math.Linear(cam.zoom, this.targetZoom, 0.22));
@@ -2775,6 +3501,13 @@ export class IsoScene extends Phaser.Scene {
     if (right) cam.scrollX += step;
     if (up) cam.scrollY -= step;
     if (down) cam.scrollY += step;
+    // POLISH v2 · PKG3 — apply this frame's screen-nudge to the WORLD camera (stored so the next frame can
+    // undo it cleanly; clamped + decaying inside nudgeOffset). The fixed HUD camera never sees it.
+    if (this.feelEnabled) {
+      const off = nudgeOffset(this.nudge, this.time.now);
+      this.appliedNudgeX = off.dx; this.appliedNudgeY = off.dy;
+      cam.scrollX += off.dx; cam.scrollY += off.dy;
+    }
   }
 
   // ── HUD ──────────────────────────────────────────────────────────────────────────────────
@@ -2876,6 +3609,107 @@ export class IsoScene extends Phaser.Scene {
     this.perfText = this.mkText(this.scale.width / 2, 6, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: '#7CFC8A', backgroundColor: '#000000cc' })
       .setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002).setPadding(6, 3, 6, 3).setVisible(false);
     this.refreshFastForward(); // initial label + placement
+
+    // HUD PHASE 1 — stand up the one-drawer panel system + the dossier strip, then COLLAPSE the always-on
+    // side stack so the city viewport dominates. The legacy panels' summaries now live in the strip; their
+    // detail lives in the on-demand drawers. (OVERLAY only — nothing here touches the world camera.)
+    this.panels = new PanelManager(this);
+    this.hudFx(this.panels.root); // the WORLD camera must ignore the drawer (fixed-HUD layer), or it double-renders
+    this.scale.on('resize', () => this.panels?.layout()); // re-derive the drawer rect (OVERLAY only — never the world)
+    this.dossierG = this.add.container(0, 0).setScrollFactor(0).setDepth(100110);
+    this.hudFx(this.dossierG);
+    if (this.hudCollapsed) this.collapseLegacyPanels();
+  }
+
+  /** HUD PHASE 1 — retire the always-on side panels the strip/drawers replace: hide their persistent text
+   * objects (the per-frame draws are gated on `hudCollapsed` in refreshHud/refreshFeed/refreshCrew/render). */
+  private collapseLegacyPanels(): void {
+    const objs: (Phaser.GameObjects.Text | undefined)[] = [
+      this.feedTitle, this.crewTitle, this.channelTitle, this.controlTitle, this.controlBody, this.routePill,
+      ...this.feedLines, ...this.crewRows, ...this.channelRows,
+    ];
+    for (const o of objs) o?.setVisible(false);
+    this.feedVisible = false;
+    this.crewVisible = false;
+  }
+
+  /** HUD PHASE 1 — per frame: build the dossier chips from live state, draw the bottom strip, and render the
+   * open drawer's body. Reads sim/HUD state only; never resizes the world camera. */
+  private refreshPanels(): void {
+    if (!this.panels || !this.dossierG) return;
+    const W = this.scale.width, H = this.scale.height;
+    const hud = realtimeHudView(this.state, SCENE_WEEK_SECONDS);
+    const pid = this.state.player.id;
+    const earnDistricts = new Set<string>();
+    for (const d of this.state.districts) for (const b of d.businesses) if (businessEarner(b) === pid) earnDistricts.add(d.id);
+    const idle = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed && u.path.length === 0).length;
+    const chips = buildDossierChips({
+      wireUnread: unreadCount(this.wireLog),
+      turfHeld: districtsHeld(this.state, pid).length,
+      turfTotal: this.state.districts.length,
+      turfContested: this.state.contests?.length ?? 0,
+      pathsDom: earnDistricts.size,
+      pathsTotal: this.state.districts.length,
+      crewIdle: idle,
+      ledgerDirtyPct: dirtyPercent(hud.player.cleanCash, hud.player.dirtyCash),
+    });
+    this.drawDossierStrip(chips, W, H);
+    this.panels.render((id) => this.panelBody(id));
+  }
+
+  /** Draw the ~28px bottom dossier strip: one clickable chip per drawer (keycap + summary; the open one
+   * reads brass). REPLACES the permanent side panels. */
+  private drawDossierStrip(chips: DossierChip[], W: number, H: number): void {
+    const g = this.dossierG!;
+    g.removeAll(true);
+    this.dossierHits = [];
+    const stripH = 28, y = H - stripH;
+    const bg = this.add.graphics().setScrollFactor(0);
+    bg.fillStyle(PAL.ink, 0.92).fillRect(0, y, W, stripH);
+    bg.lineStyle(1, hexNum(SPEC.brass), 0.35).beginPath(); bg.moveTo(0, y + 0.5); bg.lineTo(W, y + 0.5); bg.strokePath();
+    g.add(bg);
+    let x = 10;
+    for (const chip of chips) {
+      const open = !!this.panels?.isOpen(chip.id);
+      const t = this.mkText(x, y + stripH / 2, `[${chip.key}] ${chip.label}`, {
+        fontFamily: NOIR_FONT, fontSize: '12px', color: open ? NOIR_PALETTE.brass : NOIR_PALETTE.bone, fontStyle: open ? 'bold' : 'normal',
+      }).setOrigin(0, 0.5);
+      g.add(t);
+      const w = t.width + 16;
+      this.dossierHits.push({ x: x - 6, y, w, h: stripH, id: chip.id });
+      x += w + 6;
+    }
+  }
+
+  /** The (scaffold) body lines for an open drawer. Wire shows trivial real log data; the rest are labelled
+   * stubs until later HUD phases wire their real content in. */
+  private panelBody(id: PanelId): string[] {
+    const pid = this.state.player.id;
+    switch (id) {
+      case 'wire': {
+        const rows = this.wireLog.entries.slice(0, 14).map((e) => `• ${e.message}${e.count > 1 ? ` ×${e.count}` : ''}`);
+        return rows.length ? rows : ['No slips on the wire yet.'];
+      }
+      case 'turf':
+        return [`Districts held: ${districtsHeld(this.state, pid).length}/${this.state.districts.length}`,
+          `Contested: ${this.state.contests?.length ?? 0}`, '', '(full turf board lands in a later HUD phase)'];
+      case 'paths':
+        return ['Collection routes + dominance.', '', '(full paths view lands in a later HUD phase)'];
+      case 'crew': {
+        const muscle = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed).length;
+        return [`Muscle on the street: ${muscle}`, '', '(full crew roster lands in a later HUD phase)'];
+      }
+      case 'finance':
+        return ['The ledger — clean / dirty / laundering.', '', '(full finance view lands in a later HUD phase)'];
+    }
+  }
+
+  /** Resolve a click on the dossier strip → toggle that drawer. Returns true if it consumed the click. */
+  private handleDossierClick(sx: number, sy: number): boolean {
+    for (const h of this.dossierHits) {
+      if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) { this.panels?.toggle(h.id); return true; }
+    }
+    return false;
   }
 
   // ── RTS-30b-ui: the clickable hotkey TOOLBAR ───────────────────────────────────────────────────
@@ -2920,7 +3754,7 @@ export class IsoScene extends Phaser.Scene {
     }
     const ladder = this.ctxBizId ? viceLadder(this.state, this.ctxBizId) : null;
     return {
-      idleThug: !!this.idlePlayerThug(),
+      selectedThug: !!this.selectedPlayerThug(),
       extortTarget,
       viceCtx: !!(ladder && ladder.next),
       viceAfford: !!(ladder && ladder.next && ladder.next.state === 'READY'),
@@ -2966,6 +3800,10 @@ export class IsoScene extends Phaser.Scene {
     this.setT(this.toolbarTip, `${b.name} [${b.hotkey}] — ${b.tip}`);
     const tx = Phaser.Math.Clamp(b.label.x, 170, this.scale.width - 170);
     this.toolbarTip.setPosition(tx, b.label.y - b.label.height - 8).setVisible(true);
+    // POLISH v2 · PKG5 — the inspector tip SNAPS open (panelReveal eases scale 0.92→1 + alpha 0→1).
+    const from = panelReveal(0), to = panelReveal(1);
+    this.toolbarTip.setScale(from.scale).setAlpha(from.alpha);
+    this.tweens.add({ targets: this.toolbarTip, scale: to.scale, alpha: to.alpha, duration: 140, ease: 'Quad.Out' });
   }
 
   // ── RTS-30c-2b: the contextual ACTION-ICON CARD (RTS-30d-4: chip hover → requirement inspector) ──
@@ -3417,7 +4255,9 @@ export class IsoScene extends Phaser.Scene {
     // bank/spend reads as the number LANDING. Seeded to the real values on the first frame (no opening roll).
     const dtMs = this.game.loop.delta;
     if (!this.cashInit) { this.shownCash = p.cleanCash; this.shownNet = net; this.cashInit = true; }
-    else { this.shownCash = rollToward(this.shownCash, p.cleanCash, dtMs); this.shownNet = rollToward(this.shownNet, net, dtMs); }
+    // POLISH v2 · PKG5 — a windfall SPINS up fast then eases (cashRollRate shapes the EXISTING rollToward's
+    // rate by the gap size); it still lands exactly. Not a 2nd cash system — just a rate shaper.
+    else { this.shownCash = rollToward(this.shownCash, p.cleanCash, dtMs, cashRollRate(p.cleanCash - this.shownCash)); this.shownNet = rollToward(this.shownNet, net, dtMs, cashRollRate(net - this.shownNet)); }
     const cleanShown = Math.round(this.shownCash), netShown = Math.round(this.shownNet);
 
     const heatCellW = 300;
@@ -3464,23 +4304,21 @@ export class IsoScene extends Phaser.Scene {
     // week progress sliver along the bottom edge of the top bar
     g.fillStyle(PAL.brass, 0.85).fillRect(barX + 1, barY + barH - 2, (barW - 2) * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 2);
 
-    // ── FOUR CHANNEL DIALS (left, under the top bar) ──
-    this.drawChannels(g, p);
+    // ── LEGACY SIDE STACK (HUD PHASE 1: retired when collapsed — summaries moved to the dossier strip) ──
+    if (!this.hudCollapsed) {
+      this.drawChannels(g, p);   // FOUR CHANNEL DIALS (→ Finance drawer, later phase)
+      this.drawRoutePill(g, p);  // ROUTE PILL (→ Paths drawer, later phase)
+      this.drawControl(g);       // CONTROL readout (→ Turf drawer, later phase)
+    }
 
-    // ── ROUTE PILL (prominent, under the channels) ──
-    this.drawRoutePill(g, p);
-
-    // ── CONTROL readout (RTS-29, the freed Market tab) ──
-    this.drawControl(g);
-
-    // ── CONTEXT CARD (selected thug) ──
+    // ── CONTEXT CARD (selected thug) — kept: a transient selection readout, not part of the side stack ──
     this.drawContextCard(g);
 
     // ── THE MARKET tab (right dock, when open) ──
     this.drawMarket(g);
 
     // ── THE WIRE frame (behind the feed, under the top bar) — hidden while the Market replaces the dock ──
-    if (this.feedVisible && !this.marketOpen) {
+    if (!this.hudCollapsed && this.feedVisible && !this.marketOpen) {
       const fw = 306, fx = W - fw - 6, fy = 60;
       this.decoFrame(g, fx, fy, fw, 184, PAL.brass, 0.5);
       if (now < this.wireFlashUntil) { g.lineStyle(2, hexNum(SPEC.danger), 0.4 + 0.4 * Math.abs(Math.sin(now / 120))); g.strokeRect(fx + 1, fy + 1, fw - 2, 182); }
@@ -3491,7 +4329,7 @@ export class IsoScene extends Phaser.Scene {
     const warn = p.federalTier > 0 ? this.fedLine(p.federalTier) : danger ? 'A COLLECTOR IS UNDER THREAT — get it to HQ' : null;
     if (this.warningBanner) {
       this.warningBanner.setVisible(!!warn);
-      if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.scale.height - 26).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280)));
+      if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.scale.height - 26 - 30).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280))); // HUD PHASE 1 — above the dossier strip
     }
     this.detectHudBeats(p, phase.phase);
     this.lastHeat = p.federalExposure; // for the next frame's heat-direction arrow
@@ -3557,7 +4395,7 @@ export class IsoScene extends Phaser.Scene {
       { ch: 'police', name: 'THE BEAT', buys: 'fewer raids' },
       { ch: 'judges', name: 'THE BENCH', buys: 'survive a bust · −raid heat' },
       { ch: 'politicians', name: 'CITY HALL', buys: 'heat cools · hit cover' },
-      { ch: 'feds', name: 'THE BUREAU', buys: 'fed shield · unlocks lockout' },
+      { ch: 'feds', name: 'THE BUREAU', buys: 'fed shield · arms LOCKOUT [4] ($800 + a rival)' },
     ];
     const bribes = this.state.player.bribes;
     defs.forEach((d, i) => {
@@ -3754,22 +4592,59 @@ export class IsoScene extends Phaser.Scene {
     if (last && last.seq !== this.lastIncidentSeq) {
       this.lastIncidentSeq = last.seq;
       const needsYou = last.severity === 'danger' || last.severity === 'warning';
-      if (needsYou) this.wireFlashUntil = this.time.now + 900;
       // RTS-27 progressive disclosure for the ears: only needs-you slips RING (📞); routine = soft tick.
-      this.audio?.wire(needsYou ? 'crisis' : 'routine');
+      // AUDIO PASS — the routine tick is THROTTLED (≥1.5s apart) so an incident BURST (combat downs / rival
+      // telegraphs once the war heats up) can't rattle it into a scratchy tick-tick-tick. Crisis rings stay
+      // responsive (a needs-you slip always rings + flashes).
+      if (needsYou) { this.wireFlashUntil = this.time.now + 900; this.audio?.wire('crisis'); }
+      else if (this.time.now - this.lastWireRoutineMs > 1500) { this.audio?.wire('routine'); this.lastWireRoutineMs = this.time.now; }
     }
     if (this.lastPhase && this.lastPhase !== phase) {
       this.flashPhaseChange(phase);
-      // RTS-27: crossfade the adaptive music to the new phase bed + a phase sting.
-      this.audio?.setPhase(phase as MusicPhase);
+      // RTS-27: a phase STING on the narrative beat change. The BED itself is now requested by the audio
+      // CONDUCTOR (updateConductor) so the score swells with the action, not just the stage.
       this.audio?.play(this.audio.stingForPhaseKey(phase as MusicPhase));
       if (phase === 'CONTEST' || phase === 'FIRST BLOOD') this.fireTipOnce('war');
     }
     this.lastPhase = phase;
+    // POLISH v2 · PKG5 — request the intensity-driven bed THROUGH the existing RTS-31 conductBeds path.
+    this.updateConductor(phase as MusicPhase, p.federalTier);
     // RTS-27/30e: the teletype escalation + a one-shot edge flash only when the federal tier CROSSES
     // up a rung (50/70/85) — amber→danger by tier, motion-only.
-    if (p.federalTier > this.lastFederalTier) { this.audio?.federal(p.federalTier); this.flashFederalCross(p.federalTier); }
+    if (p.federalTier > this.lastFederalTier) {
+      this.audio?.federal(p.federalTier);
+      this.flashFederalCross(p.federalTier); // #3 — the GLOBAL, non-directional federal banner (no arrow/ping)
+      // INFO-FEEDBACK — federal.threshold is GLOBAL (#3): log it (no gx/gy → no edge arrow, no minimap ping).
+      this.recordInfoEvent('federal.threshold', `FEDERAL ${['', 'NOTICE', 'WATCH', 'RAID'][p.federalTier] ?? ''} — heat crossed a rung`);
+    }
     this.lastFederalTier = p.federalTier;
+  }
+
+  /** POLISH v2 · PKG5 — the AUDIO CONDUCTOR: blend the EXISTING signals (threat / federal tier 50-70-85 /
+   * active combat / week pacing) into a 0..1 intensity and request the matching in-match bed with hysteresis
+   * — so the score swells with the action instead of flipping on jitter. Terminal phases (TITLE/GAMEOVER)
+   * and FIRST BLOOD are stage-driven directly; the endgame stage floors the bed at DECAPITATE. The bed is
+   * ALWAYS requested through AudioManager.setPhase (→ conductBeds): this never starts/stops a bed itself,
+   * never bypasses the crossfade lock, and never breaks the ≤1-bed guarantee. */
+  private updateConductor(matchPhase: MusicPhase, federalTier: number): void {
+    if (!this.audioConductEnabled) return;
+    const now = this.time.now;
+    let bed: MusicPhase;
+    if (!isIntensityBed(matchPhase)) {
+      bed = matchPhase; // TITLE / GAMEOVER / FIRST BLOOD — stage-driven (FIRST BLOOD keeps its own bed)
+    } else {
+      const threat = threatenedCollectors(this.state).reduce(
+        (m, t) => Math.max(m, t.level === 'ambush' ? 1 : t.level === 'threatened' ? 0.5 : 0), 0);
+      const activeCombat = Math.max(0, 1 - (now - this.lastCombatMs) / 3000);
+      const weekPacing = (this.state.weekElapsed ?? 0) / SCENE_WEEK_SECONDS;
+      const intensity = conductorIntensity({ threat, federalTier, activeCombat, weekPacing });
+      this.conductor = conductWithHysteresis(this.conductor, intensity, now);
+      bed = matchPhase === 'DECAPITATE' ? 'DECAPITATE' : this.conductor.phase; // the endgame floors the bed
+    }
+    // Request the bed EVERY frame: setPhase is idempotent (same bed → no-op) AND sink-dwell-gated, so the
+    // stage overrides (FIRST BLOOD / the DECAPITATE floor) can no longer thrash it. No requestedBedPhase
+    // guard here — that would desync when the dwell HOLDS a requested change; the retry next frame applies it.
+    this.audio?.setPhase(bed);
   }
 
   // ── RTS-27 audio settings surface ──────────────────────────────────────────────────────────
@@ -3806,13 +4681,355 @@ export class IsoScene extends Phaser.Scene {
     this.setT(this.audioPanel, lines.join('\n')).setColor(s.muted ? SPEC.danger : NOIR_PALETTE.bone);
   }
 
+  // ── GLOBAL ACTIVE-PAUSE ───────────────────────────────────────────────────────────────────────
+
+  /** [Space] — toggle the GLOBAL PAUSE. While paused the sim tick is halted (updateUnits skips the whole
+   * advancement block), but the camera, HUD and INPUT stay live — an "active pause" where you can look
+   * around and issue/queue orders. Resumes at the current speed. */
+  private togglePause(): void {
+    this.pause = togglePauseState(this.pause);
+    this.refreshPausedBanner();
+    this.setStatus(this.pause.paused ? 'PAUSED — [Space] resume · you can still look around + give orders' : `resumed — speed ${this.timeScale}×`);
+  }
+
+  /** Show/hide the PAUSED indicator: a clear centred banner on the fixed HUD camera (top depth). */
+  private refreshPausedBanner(): void {
+    if (this.pause.paused) {
+      if (this.pausedBanner) return;
+      const cx = this.scale.width / 2, y = 110;
+      const strip = this.add.rectangle(cx, y, 320, 46, PAL.ink, 0.86).setStrokeStyle(2, PAL.brass, 0.9);
+      const label = this.mkText(cx, y, '⏸  PAUSED', { fontFamily: NOIR_DISPLAY, fontSize: '22px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0.5);
+      const hint = this.mkText(cx, y + 24, '[Space] resume', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone }).setOrigin(0.5, 0.5);
+      const c = this.add.container(0, 0, [strip, label, hint]).setScrollFactor(0).setDepth(120000);
+      this.hudFx(c); // fixed HUD camera only — never drifts with the world
+      this.pausedBanner = c;
+    } else {
+      this.pausedBanner?.destroy(true);
+      this.pausedBanner = undefined;
+    }
+  }
+
+  // ── SAVE / LOAD ───────────────────────────────────────────────────────────────────────────────
+
+  /** Adopt a deserialized save: stash it in the registry and RESTART the scene so every view layer is
+   * cleanly rebuilt from the loaded tree (create() picks it up). */
+  private loadGame(state: GameState): void {
+    this.registry.set('lcr_loaded_state', state);
+    this.scene.restart();
+  }
+
+  private handleLoadResult(r: LoadResult, sourceLabel: string): void {
+    if (r.ok) { this.closeSaveMenu(); this.loadGame(r.state); }
+    else this.setStatus(`load failed (${sourceLabel}): ${r.reason}`);
+  }
+
+  /** The HUD entry-point button (top-left, fixed camera). */
+  private buildSaveButton(): void {
+    this.saveButton = this.mkText(12, 12, '⛁ SAVE / LOAD', {
+      fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807ee',
+    }).setScrollFactor(0).setDepth(100050).setPadding(8, 5, 8, 5).setInteractive({ useHandCursor: true });
+    this.saveButton.on('pointerdown', () => this.toggleSaveMenu());
+    this.hudFx(this.saveButton);
+  }
+
+  private toggleSaveMenu(): void {
+    if (this.saveMenu) { this.closeSaveMenu(); return; }
+    this.buildSaveMenu();
+  }
+
+  private closeSaveMenu(): void {
+    this.saveMenu?.destroy(true);
+    this.saveMenu = undefined;
+  }
+
+  private nowMs(): number {
+    return typeof Date !== 'undefined' ? Date.now() : this.time.now;
+  }
+
+  /** Build the SAVE/LOAD menu on the fixed HUD camera: quick-save + new-save, the slot list (load/delete),
+   * and file export/import. Rebuilt fresh each open so the slot list is current. */
+  private buildSaveMenu(): void {
+    this.closeSaveMenu();
+    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
+    const pw = 460, ph = 380, px = cx - pw / 2, py = cy - ph / 2;
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const backdrop = this.add.rectangle(0, 0, w, h, PAL.soot, 0.7).setOrigin(0, 0).setInteractive();
+    backdrop.on('pointerdown', () => this.closeSaveMenu()); // click-off closes (the menu is non-destructive)
+    objs.push(backdrop);
+    objs.push(this.add.rectangle(cx, cy, pw, ph, PAL.ink, 0.98).setStrokeStyle(2, PAL.brass, 0.95).setInteractive()); // swallow clicks on the panel
+    objs.push(this.mkText(cx, py + 16, 'SAVE / LOAD', { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0));
+
+    const mkBtn = (bx: number, by: number, label: string, color: string, fn: () => void): Phaser.GameObjects.Text => {
+      const t = this.mkText(bx, by, label, { fontFamily: NOIR_DISPLAY, fontSize: '13px', color, fontStyle: 'bold', backgroundColor: '#0a0807' })
+        .setOrigin(0, 0).setPadding(8, 5, 8, 5).setInteractive({ useHandCursor: true });
+      t.on('pointerdown', fn);
+      objs.push(t);
+      return t;
+    };
+
+    // top action row: quick-save / new-save / export / import / close
+    mkBtn(px + 16, py + 50, '⚡ QUICK SAVE', NOIR_PALETTE.brass, () => this.doQuickSave());
+    mkBtn(px + 150, py + 50, '↺ QUICK LOAD', NOIR_PALETTE.brass, () => this.handleLoadResult(quickLoad(), 'quick'));
+    mkBtn(px + 284, py + 50, '＋ NEW', NOIR_PALETTE.brass, () => this.doNewSave());
+    mkBtn(px + pw - 44, py + 12, '✕', SPEC.danger, () => this.closeSaveMenu());
+    mkBtn(px + 16, py + 84, '⬆ IMPORT FILE', NOIR_PALETTE.bone, () => this.doImport());
+    mkBtn(px + 150, py + 84, '⇩ EXPORT FILE', NOIR_PALETTE.bone, () => { exportSaveFile(this.state, 'game', this.nowMs()); this.setStatus('save exported to a file'); });
+
+    // the slot list
+    const slots = listSaveSlots();
+    objs.push(this.mkText(px + 16, py + 122, slots.length ? 'SAVED GAMES' : 'no saves yet — QUICK SAVE or NEW SAVE', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setOrigin(0, 0));
+    slots.slice(0, 6).forEach((s, i) => {
+      const ry = py + 146 + i * 36;
+      objs.push(this.mkText(px + 16, ry, this.slotLine(s), { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone }).setOrigin(0, 0));
+      mkBtn(px + pw - 150, ry - 3, 'LOAD', NOIR_PALETTE.brass, () => this.handleLoadResult(readSaveSlot(s.slot), s.label));
+      mkBtn(px + pw - 84, ry - 3, 'DEL', SPEC.danger, () => { deleteSaveSlot(s.slot); this.buildSaveMenu(); });
+    });
+
+    const c = this.add.container(0, 0, objs).setScrollFactor(0).setDepth(130000);
+    this.hudFx(c);
+    this.saveMenu = c;
+  }
+
+  private slotLine(s: SlotInfo): string {
+    const when = s.savedAt > 0 ? new Date(s.savedAt).toLocaleString() : 'unknown time';
+    return `${s.label || s.slot}  ·  ${when}`;
+  }
+
+  private doQuickSave(): void {
+    const r = quickSave(this.state, this.nowMs());
+    this.setStatus(r.ok ? 'quick-saved' : `save failed: ${r.reason}`);
+    if (r.ok) this.buildSaveMenu();
+  }
+
+  private doNewSave(): void {
+    // auto-named numbered slots (slot-1..N); reuse the lowest free number, else overwrite the oldest.
+    const used = new Set(listSaveSlots().map((s) => s.slot));
+    let slot = '';
+    for (let i = 1; i <= 6; i++) { if (!used.has(`s${i}`)) { slot = `s${i}`; break; } }
+    if (!slot) slot = listSaveSlots().sort((a, b) => a.savedAt - b.savedAt)[0]?.slot ?? 's1';
+    const r = writeSaveSlot(slot, this.state, `Week ${this.state.tick} · $${Math.round(this.state.player.cash)}`, this.nowMs());
+    this.setStatus(r.ok ? `saved (${slot})` : `save failed: ${r.reason}`);
+    if (r.ok) this.buildSaveMenu();
+  }
+
+  private doImport(): void {
+    if (typeof document === 'undefined') { this.setStatus('file import needs a browser'); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (f) importSaveFile(f).then((r) => this.handleLoadResult(r, 'file'));
+    };
+    input.click();
+  }
+
+  // ── INFO-FEEDBACK — THE WIRE — LOG + screen-edge alerts + minimap ─────────────────────────────
+
+  /** Record a taxonomy event into the session log, and (per the taxonomy) raise an edge ALERT + a minimap
+   * PING for positional events. Federal events are non-positional (#3): they log + fire the global federal
+   * banner (the existing flashFederalCross), with NO arrow/ping. Combat beats throttle inside pushLog (#4). */
+  private recordInfoEvent(kind: EventKind, message: string, gx?: number, gy?: number): void {
+    const now = this.time.now;
+    this.wireLog = pushLog(this.wireLog, { kind, message, gx, gy, t: now });
+    const meta = metaFor(kind);
+    const id = this.wireLog.entries[0]?.id ?? 0;
+    if (meta.alert && gx !== undefined && gy !== undefined) {
+      this.alerts.push({ id, gx, gy, tier: meta.tier, until: meta.tier === 'critical' ? Number.POSITIVE_INFINITY : now + 12000 });
+    }
+    if (meta.ping && gx !== undefined && gy !== undefined) {
+      this.pings.push({ gx, gy, tier: meta.tier, until: now + 6000 });
+    }
+  }
+
+  /** Centre the world camera on a tile (click-to-jump for a log row / edge arrow / minimap). */
+  private jumpToTile(gx: number, gy: number): void {
+    const c = gridToScreen(gx, gy);
+    this.cameras.main.centerOn(c.x, c.y);
+  }
+
+  /** [Q] — jump to the most recent unread POSITIONAL alert (highest-priority unread), and mark it read. */
+  private jumpToLastAlert(): void {
+    // prefer a live critical alert, else the latest unread positional log entry.
+    const crit = this.alerts.filter((a) => a.tier === 'critical');
+    const target = crit.length ? crit[crit.length - 1] : undefined;
+    if (target) {
+      this.jumpToTile(target.gx, target.gy);
+      this.wireLog = markRead(this.wireLog, target.id);
+      this.alerts = this.alerts.filter((a) => a !== target);
+      return;
+    }
+    const e = latestUnreadPositional(this.wireLog);
+    if (e && e.gx !== undefined && e.gy !== undefined) {
+      this.jumpToTile(e.gx, e.gy);
+      this.wireLog = markRead(this.wireLog, e.id);
+      this.alerts = this.alerts.filter((a) => a.id !== e.id);
+    } else {
+      this.setStatus('no unread alerts');
+    }
+  }
+
+  /** A district's control status for the minimap (player / rival / contested / neutral). */
+  private districtControlStatus(districtId: string): ControlStatus {
+    if (new Set(contestedDistrictIds(this.state)).has(districtId)) return 'contested';
+    const d = this.state.districts.find((x) => x.id === districtId);
+    const holder = d ? districtHolder(d) : undefined;
+    if (!holder) return 'neutral';
+    return holder === this.state.player.id ? 'player' : 'rival';
+  }
+
+  /** Per-frame: draw the minimap (district control, viewport rect, blips, pings) + click-to-move. */
+  private drawMinimap(now: number): void {
+    if (!this.minimapG) { this.minimapG = this.add.graphics().setScrollFactor(0).setDepth(100040); this.hudFx(this.minimapG); }
+    const r = this.minimapRect;
+    r.x = this.scale.width - r.w - 12;
+    r.y = this.scale.height - r.h - 12;
+    const g = this.minimapG;
+    g.clear();
+    g.fillStyle(hexNum(SPEC.soot), 0.82).fillRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
+    g.lineStyle(2, hexNum(SPEC.brass), 0.9).strokeRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
+    // district control fills (static palette; contested amber)
+    for (const wd of this.world.districts) {
+      const status = this.districtControlStatus(wd.id);
+      const a = worldToMinimap(wd.minX, wd.minY, r, WORLD_SIZE);
+      const b = worldToMinimap(wd.maxX + 1, wd.maxY + 1, r, WORLD_SIZE);
+      const col = hexNum(districtControlColor(status));
+      g.fillStyle(col, status === 'neutral' ? 0.16 : status === 'contested' ? 0.28 + 0.14 * Math.abs(Math.sin(now / 320)) : 0.32);
+      g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+    // camera viewport rectangle (world-px view → tiles → minimap)
+    const view = this.cameras.main.worldView;
+    const tl = screenToGrid(view.x, view.y), br = screenToGrid(view.right, view.bottom);
+    const va = worldToMinimap(Math.min(tl.gx, br.gx), Math.min(tl.gy, br.gy), r, WORLD_SIZE);
+    const vb = worldToMinimap(Math.max(tl.gx, br.gx), Math.max(tl.gy, br.gy), r, WORLD_SIZE);
+    g.lineStyle(1.5, hexNum(SPEC.bone), 0.9).strokeRect(va.x, va.y, vb.x - va.x, vb.y - va.y);
+    // blips — player always; collectors distinct; ⚠ rivals ONLY if their tile is revealed (#5 — no x-ray)
+    const minis: MiniUnit[] = this.units.map((v) => ({ gx: v.unit.pos.gx, gy: v.unit.pos.gy, faction: v.faction, isCollector: v.unit.role === 'collector' }));
+    for (const u of minimapPlayerBlips(minis)) {
+      const p = worldToMinimap(u.gx, u.gy, r, WORLD_SIZE);
+      g.fillStyle(hexNum(u.isCollector ? SPEC.brassDim : SPEC.brass), 1).fillCircle(p.x, p.y, u.isCollector ? 1.6 : 2.2);
+    }
+    for (const u of minimapRivalBlips(minis, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy))) {
+      const p = worldToMinimap(u.gx, u.gy, r, WORLD_SIZE);
+      g.fillStyle(hexNum(SPEC.rival), 1).fillCircle(p.x, p.y, 2.2); // static rival identity
+    }
+    // alert pings — MOTION (danger pulse), expire on their own
+    this.pings = this.pings.filter((p) => now < p.until);
+    for (const ping of this.pings) {
+      const p = worldToMinimap(ping.gx, ping.gy, r, WORLD_SIZE);
+      const t = 1 - (ping.until - now) / 6000;
+      g.lineStyle(1.5, hexNum(ping.tier === 'critical' ? SPEC.danger : '#ff5a2c'), Math.max(0, 1 - t)).strokeCircle(p.x, p.y, 2 + t * 8);
+    }
+  }
+
+  /** Per-frame: draw the screen-edge alerts (off-screen warning/critical events) — arrow + danger pulse. */
+  private drawEdgeAlerts(now: number): void {
+    if (!this.edgeAlertG) { this.edgeAlertG = this.add.graphics().setScrollFactor(0).setDepth(100045); this.hudFx(this.edgeAlertG); }
+    this.alerts = this.alerts.filter((a) => now < a.until);
+    const g = this.edgeAlertG;
+    g.clear();
+    this.edgeAlertHits = [];
+    const W = this.scale.width, H = this.scale.height;
+    for (const a of this.alerts) {
+      const c = gridToScreen(a.gx, a.gy);
+      const sp = this.worldToScreenPx(c.x, c.y);
+      const m = edgeAlertMarker(sp.x, sp.y, W, H, 34);
+      if (m.onScreen) continue; // on-screen events read directly; no edge arrow
+      const pulse = 0.55 + 0.45 * Math.abs(Math.sin(now / 130));
+      const col = hexNum(a.tier === 'critical' ? SPEC.danger : '#ff5a2c');
+      g.fillStyle(col, pulse).fillCircle(m.x, m.y, 9);
+      // a little arrowhead pointing toward the event
+      const ax = m.x + Math.cos(m.angleRad) * 14, ay = m.y + Math.sin(m.angleRad) * 14;
+      const lx = m.x + Math.cos(m.angleRad + 2.5) * 8, ly = m.y + Math.sin(m.angleRad + 2.5) * 8;
+      const rx = m.x + Math.cos(m.angleRad - 2.5) * 8, ry = m.y + Math.sin(m.angleRad - 2.5) * 8;
+      g.fillStyle(col, pulse).fillTriangle(ax, ay, lx, ly, rx, ry);
+      this.edgeAlertHits.push({ x: m.x, y: m.y, r: 16, gx: a.gx, gy: a.gy, id: a.id });
+    }
+  }
+
+  /** Project a WORLD pixel point to SCREEN pixels (account for camera scroll + zoom) for edge clamping. */
+  private worldToScreenPx(wx: number, wy: number): { x: number; y: number } {
+    const cam = this.cameras.main;
+    return { x: (wx - cam.worldView.x) * cam.zoom, y: (wy - cam.worldView.y) * cam.zoom };
+  }
+
+  /** Per-frame: draw THE WIRE — LOG (recent-first, ~8 rows, unread count); rows are click-to-jump. */
+  private drawWireLog(): void {
+    if (!this.wireLogG) { this.wireLogG = this.add.container(0, 0).setScrollFactor(0).setDepth(100042); this.hudFx(this.wireLogG); }
+    this.wireLogG.removeAll(true);
+    this.wireLogHits = [];
+    const x = 12, top = 64, rowH = 18, rows = 8;
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const unread = unreadCount(this.wireLog);
+    objs.push(this.mkText(x, top, `THE WIRE — LOG${unread > 0 ? `  · ${unread} new` : ''}`, { fontFamily: NOIR_DISPLAY, fontSize: '12px', color: unread > 0 ? SPEC.danger : NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807cc' }).setOrigin(0, 0).setPadding(5, 3, 5, 3));
+    this.wireLog.entries.slice(0, rows).forEach((e, i) => {
+      const ry = top + 20 + i * rowH;
+      const col = e.tier === 'critical' ? SPEC.danger : e.tier === 'warning' ? WAR_AMBER_HEX : NOIR_PALETTE.bone;
+      const tag = e.count > 1 ? ` ×${e.count}` : '';
+      const t = this.mkText(x, ry, `• ${e.message}${tag}`, { fontFamily: NOIR_FONT, fontSize: '11px', color: e.unread ? col : NOIR_PALETTE.fog, backgroundColor: '#0a080799' }).setOrigin(0, 0).setPadding(4, 1, 4, 1);
+      objs.push(t);
+      if (e.gx !== undefined && e.gy !== undefined) this.wireLogHits.push({ x, y: ry, w: 280, h: rowH, gx: e.gx, gy: e.gy, id: e.id });
+    });
+    this.wireLogG.add(objs);
+  }
+
+  /** OPERATION-OUTCOME PREVIEWS — draw the hover card. The pure formatter resolves tone→colour (the colour
+   * law lives there); this only lays out the rows on the fixed camera near the cursor. Nothing here reads or
+   * mutates sim state beyond the already-resolved view-model. Clears itself when there is nothing to show. */
+  private drawOpPreview(): void {
+    if (!this.opPreviewG) { this.opPreviewG = this.add.container(0, 0).setScrollFactor(0).setDepth(100052); this.hudFx(this.opPreviewG); }
+    this.opPreviewG.removeAll(true);
+    const preview = this.opPreview;
+    if (!preview) { this.opPreviewG.setVisible(false); return; }
+    this.opPreviewG.setVisible(true);
+
+    const pal: PreviewPalette = { brass: NOIR_PALETTE.brass, amber: WAR_AMBER_HEX, danger: SPEC.danger, bone: NOIR_PALETTE.bone };
+    const lines = formatPreviewLines(preview, this.opAltHeld, pal);
+    const padX = 8, padY = 7, rowH = 16, cardW = 268;
+    const cardH = padY * 2 + lines.length * rowH;
+    // place to the lower-right of the cursor, clamped on-screen.
+    let x = this.opCursor.x + 18, y = this.opCursor.y + 14;
+    x = Math.min(x, this.scale.width - cardW - 8);
+    y = Math.min(y, this.scale.height - cardH - 8);
+
+    const bg = this.add.graphics().setScrollFactor(0);
+    bg.fillStyle(PAL.ink, 0.92).fillRect(x, y, cardW, cardH);
+    bg.lineStyle(1, hexNum(preview.blocked ? SPEC.danger : NOIR_PALETTE.brass), 0.85).strokeRect(x, y, cardW, cardH);
+    this.opPreviewG.add(bg);
+    lines.forEach((l, i) => {
+      const t = this.mkText(x + padX, y + padY + i * rowH, l.text, {
+        fontFamily: l.bold ? NOIR_DISPLAY : NOIR_FONT, fontSize: l.bold ? '12px' : '11px',
+        color: l.color, fontStyle: l.bold ? 'bold' : 'normal',
+      }).setOrigin(0, 0);
+      this.opPreviewG!.add(t);
+    });
+  }
+
+  /** Resolve a HUD click on the minimap / a log row / an edge arrow. Returns true if it consumed the click. */
+  private handleInfoClick(sx: number, sy: number): boolean {
+    for (const h of this.edgeAlertHits) {
+      if (Math.hypot(sx - h.x, sy - h.y) <= h.r) { this.jumpToTile(h.gx, h.gy); this.wireLog = markRead(this.wireLog, h.id); this.alerts = this.alerts.filter((a) => a.id !== h.id); return true; }
+    }
+    for (const h of this.wireLogHits) {
+      if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h && h.gx !== undefined && h.gy !== undefined) {
+        this.jumpToTile(h.gx, h.gy); this.wireLog = markRead(this.wireLog, h.id); return true;
+      }
+    }
+    if (isInMinimap(sx, sy, this.minimapRect)) {
+      const t = minimapToWorld(sx, sy, this.minimapRect, WORLD_SIZE);
+      this.jumpToTile(t.gx, t.gy);
+      return true;
+    }
+    return false;
+  }
+
   // ── RTS-28 fast-forward / skip-week ─────────────────────────────────────────────────────────
 
-  /** [Space] / the on-screen button — cycle the real-time speed 1× → 2× → 4×. */
+  /** The on-screen button — cycle the real-time speed 1× → 2× → 4×. */
   private cycleFastForward(): void {
     this.timeScale = nextTimeScale(this.timeScale);
     this.refreshFastForward();
-    this.setStatus(`speed ${this.timeScale}× — [Space] cycle · [>] skip week`);
+    this.setStatus(`speed ${this.timeScale}× — [>] skip week · [Space] pause`);
   }
 
   /** [>] / the on-screen button — jump straight to the next week settlement (exactly one). */
@@ -3824,9 +5041,9 @@ export class IsoScene extends Phaser.Scene {
   /** Position + label the FF/skip controls (bottom-centre, always visible). */
   private refreshFastForward(): void {
     if (!this.ffButton || !this.skipButton) return;
-    const cy = this.scale.height - 12, cx = this.scale.width / 2;
+    const cy = this.scale.height - 12 - 30, cx = this.scale.width / 2; // HUD PHASE 1 — clear the 28px dossier strip
     const glyph = this.timeScale === 1 ? '▶' : this.timeScale === 2 ? '▶▶' : '▶▶▶';
-    this.setT(this.ffButton, `${glyph} ${this.timeScale}×  [Space]`).setColor(this.timeScale > 1 ? SPEC.cashGreen : NOIR_PALETTE.brass)
+    this.setT(this.ffButton, `${glyph} ${this.timeScale}× SPEED`).setColor(this.timeScale > 1 ? SPEC.cashGreen : NOIR_PALETTE.brass)
       .setPosition(cx - this.ffButton.width / 2 - 6, cy);
     this.skipButton.setPosition(cx + this.skipButton.width / 2 + 6, cy);
   }
@@ -3885,15 +5102,6 @@ export class IsoScene extends Phaser.Scene {
     this.statusText.setText((action ? `${base}  ·  ${action}` : base + hint) + (sh ? `   |  ${sh}` : ''));
   }
 
-  private toggleFeed(): void {
-    this.feedVisible = !this.feedVisible;
-    this.feedTitle?.setVisible(this.feedVisible);
-    for (const l of this.feedLines) l.setVisible(this.feedVisible);
-    // §4: focusing The Wire marks everything read (clears the NEEDS-YOU count).
-    const last = this.state.incidents[this.state.incidents.length - 1];
-    if (last) this.lastSeenWireSeq = last.seq;
-  }
-
   /** RTS-21 legibility: a compact "when can I afford it" tag for the build/offence boards. */
   private static etaTag(weeks: number | null): string {
     if (weeks === null) return ' (income-)';
@@ -3913,7 +5121,12 @@ export class IsoScene extends Phaser.Scene {
     // §4: unread "NEEDS YOU" count — danger/warning incidents past what the player last focused.
     const unread = this.state.incidents.filter((r) => r.seq > this.lastSeenWireSeq && incidentNeedsYou(r.severity)).length;
     const title = unread > 0 ? `THE WIRE  [L] · ${unread} NEEDS YOU` : (flashing ? 'THE WIRE  [L]  ◂ NEW' : 'THE WIRE  [L]');
-    if (this.feedTitle) this.setTC(this.feedTitle, title, unread > 0 || flashing ? SPEC.danger : NOIR_PALETTE.brass).setPosition(right, 66);
+    if (this.feedTitle) {
+      this.setTC(this.feedTitle, title, unread > 0 || flashing ? SPEC.danger : NOIR_PALETTE.brass).setPosition(right, 66);
+      // POLISH v2 · PKG5 — an unread crisis THROBS (crisisPulse) so it pulls the eye; quiet = steady.
+      const crisis = unread > 0 || flashing;
+      this.feedTitle.setAlpha(crisis ? 0.7 + 0.3 * crisisPulse(this.time.now) : 1);
+    }
     const recent: IncidentRecord[] = recentIncidents(this.state, this.feedLines.length);
     const g = this.hudGfx; // dots drawn after refreshHud's clear, persist through the frame
     for (let i = 0; i < this.feedLines.length; i++) {

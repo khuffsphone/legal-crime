@@ -11,6 +11,7 @@ import { PAL } from './cityArt';
 import {
   type RigPose, HIP_H, TORSO_H, SHOULDER_HW, HIP_HW, HEAD_H, ARM_DROP, solveTwoBoneLegIK,
 } from './gait';
+import type { WeaponAttackPoseSample } from './weaponAttackPose';
 
 export interface RigStyle {
   accent: number;    // faction read — brass (player) / blood (rival). The hatband + pocket square.
@@ -43,11 +44,11 @@ function limb(g: Phaser.GameObjects.Graphics, a: Pt, j: Pt, b: Pt, color: number
  * ~0 trig here (gait.ts did the trig); just fills + strokes. Draw order is back→front so the swinging
  * limbs read depth correctly through the cycle.
  */
-export function drawThugRig(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigStyle): void {
+export function drawThugRig(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigStyle, atk?: WeaponAttackPoseSample): void {
   // pelvis (hips) + shoulders, with the opposed twist (hips lead the front leg; shoulders counter).
   const pelvisCx = p.bodyX + p.hipTwist;
   const pelvisCy = -HIP_H + p.bodyY;
-  const shoulderCx = p.bodyX + p.lean + p.shoulderTwist;
+  const shoulderCx = p.bodyX + p.lean + (atk?.leanPx ?? 0) + p.shoulderTwist + (atk?.shoulderTwistPx ?? 0);
   const shoulderCy = pelvisCy - TORSO_H;
 
   const hipL: Pt = { x: pelvisCx - HIP_HW, y: pelvisCy };
@@ -64,8 +65,10 @@ export function drawThugRig(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigS
   const kneeR = solveTwoBoneLegIK(hipR.x, hipR.y, footR.x, footR.y);
 
   // hands swing fore/aft from the shoulders; elbows bulge forward.
-  const handL: Pt = { x: shL.x + p.armL.handDX, y: shoulderCy + ARM_DROP - p.armL.handLift };
-  const handR: Pt = { x: shR.x + p.armR.handDX, y: shoulderCy + ARM_DROP - p.armR.handLift };
+  const armL = atk && atk.phase !== 'done' ? atk.armL : p.armL;
+  const armR = atk && atk.phase !== 'done' ? atk.armR : p.armR;
+  const handL: Pt = { x: shL.x + armL.handDX, y: shoulderCy + ARM_DROP - armL.handLift };
+  const handR: Pt = { x: shR.x + armR.handDX, y: shoulderCy + ARM_DROP - armR.handLift };
   const elbowL = joint(shL, handL, ELBOW_FWD, 0);
   const elbowR = joint(shR, handR, ELBOW_FWD, 0);
 
@@ -81,6 +84,28 @@ export function drawThugRig(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigS
   const drawArm = (sh: Pt, elbow: Pt, hand: Pt, lit: boolean) => {
     limb(g, sh, elbow, hand, lit ? st.suit : st.suitDark, 4);
     g.fillStyle(PAL.fleshDark, 1); g.fillCircle(hand.x, hand.y, 2.2); // fist
+  };
+  const drawWeaponProp = () => {
+    if (!atk || atk.phase === 'done' || atk.prop.kind === 'none' || atk.prop.length <= 0) return;
+    const brace = Math.max(0, Math.min(1, atk.prop.brace));
+    const grip: Pt = { x: handR.x * (1 - brace) + handL.x * brace, y: handR.y * (1 - brace) + handL.y * brace };
+    const muzzle: Pt = { x: handR.x + atk.prop.length, y: handR.y - atk.prop.length * 0.08 };
+    g.lineStyle(atk.prop.kind === 'pistol' ? 3 : 4, PAL.ink, 1);
+    if (atk.prop.kind === 'satchel') {
+      g.fillStyle(PAL.sootDeep, 1);
+      g.fillRoundedRect(handR.x - 2, handR.y - 1, 9, 7, 2);
+      g.lineStyle(1, st.accentDim, 0.8);
+      g.strokeRoundedRect(handR.x - 2, handR.y - 1, 9, 7, 2);
+      return;
+    }
+    g.beginPath(); g.moveTo(grip.x, grip.y); g.lineTo(muzzle.x, muzzle.y); g.strokePath();
+    if (atk.prop.kind === 'tommy') {
+      g.fillStyle(PAL.sootDeep, 1); g.fillCircle(grip.x + 4, grip.y + 4, 3.4); // drum read at 56px
+    } else if (atk.prop.kind === 'longGun') {
+      g.lineStyle(2, st.accentDim, 0.85); g.beginPath(); g.moveTo(handL.x - 3, handL.y + 2); g.lineTo(handL.x + 5, handL.y + 1); g.strokePath();
+    } else {
+      g.fillStyle(PAL.ink, 1); g.fillRect(muzzle.x - 1, muzzle.y - 1, 3, 2);
+    }
   };
 
   // ── back arm + back leg ──
@@ -107,6 +132,7 @@ export function drawThugRig(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigS
 
   // ── front arm ──
   if (armBackFirst) drawArm(shR, elbowR, handR, true); else drawArm(shL, elbowL, handL, true);
+  drawWeaponProp();
 
   // ── fedora — crown + brim + the BRASS HATBAND (the one bright accent) ──
   const hatY = headY - 4.2;

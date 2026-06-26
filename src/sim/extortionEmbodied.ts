@@ -12,12 +12,14 @@
 import {
   EXTORT_ABSENCE_GRACE_SECONDS, EXTORT_APPROACH_TIMEOUT_SECONDS, EXTORT_AT_FRONT_RADIUS,
   EXTORT_ENGAGE_SECONDS, EXTORT_INTERRUPT_GRACE_SECONDS, EXTORT_SHAKEDOWN_SECONDS, EXTORT_VISITS_BASE,
-  HARD_INTERRUPT_PROGRESS_RETAINED_RATIO,
+  HARD_INTERRUPT_PROGRESS_RETAINED_RATIO, RETAKE_GUARD_RADIUS,
 } from './constants';
 import { findBusiness } from './commands';
 import { extortProgress, extortResistance, recordExtortVisit } from './extortion';
-import { enemyInRange } from './combat';
+import { canAttack, resolveAttack } from './interdiction';
+import { enemyInRange, isCombatant } from './combat';
 import type { GameState } from './types';
+import type { MovableUnit } from './movement';
 import type { GridPos } from './iso';
 
 // ── states ───────────────────────────────────────────────────────────────────────────────────────
@@ -29,9 +31,18 @@ import type { GridPos } from './iso';
 // failed    : terminal failure (no conversion): downed / target gone / cancelled / long absence / lost the grace
 export type EmbodiedExtortionState = 'approach' | 'engage' | 'shakedown' | 'resolve' | 'interrupted' | 'failed';
 
+/** EMBODIMENT CONSISTENCY — the embodied act now covers more than one map-physical verb. 'shakedown' is the
+ * RTS-35b/35d extort/retake (walk → dwell → convert/flip a FRONT); 'sabotage' is the building-ATTACK
+ * (walk → dwell → SHUT THE BUSINESS DOWN via the EXISTING resolveAttack). The state machine is identical and
+ * effect-agnostic — only the resolve EFFECT + the target-validity predicate differ. Absent ⇒ 'shakedown'. */
+export type EmbodiedActKind = 'shakedown' | 'sabotage';
+
 export interface EmbodiedExtortionAct {
   id: string;
+  /** Which embodied verb this act delivers on resolve. Absent ⇒ 'shakedown' (back-compat). */
+  kind?: EmbodiedActKind;
   thugId: string;
+  /** The target business id (a FRONT for a shakedown; any rival racket for a sabotage). */
   frontId: string;
   familyId: string;
   /** The front's interaction point (RTS-35b resolution 2: the building-center seed). */
@@ -79,6 +90,37 @@ export function isAtFront(thug: GridPos, interaction: GridPos, radius: number = 
  * shakedown only advances while this holds (the "no extorting from a distance" rule). Pure. */
 export function isPresentForShakedown(input: ExtortionTickInput): boolean {
   return input.present && input.thugAlive && input.targetValid;
+}
+
+// ── RTS-35d — RETAKING RIVAL-HELD FRONTS ────────────────────────────────────────────────────────
+/** A front HELD by a RIVAL (extortedBy set to a non-player family) — the retake candidate. A front you
+ * already run, or an un-taken one, is NOT rival-held. Pure read. */
+export function isRivalHeldFront(state: GameState, frontId: string): boolean {
+  const b = findBusiness(state, frontId)?.business;
+  return !!b && b.kind === 'front' && b.extortedBy !== undefined && b.extortedBy !== state.player.id;
+}
+
+/** The rival GUARD watching a front: the nearest LIVE rival combatant (non-collector, not downed, not the
+ * player's) within `radius` of the front's tile. undefined ⇒ the guard is CLEARED (the front is open to a
+ * retake). Reuses the 35a combatant definition (isCombatant) — no new combat. Pure read. */
+export function frontGuard(
+  state: GameState, frontTile: GridPos, radius: number = RETAKE_GUARD_RADIUS,
+): MovableUnit | undefined {
+  let best: MovableUnit | undefined;
+  let bestD = radius + 1e-9;
+  for (const u of state.units) {
+    if (!isCombatant(u) || u.factionId === state.player.id) continue; // a live hostile (rival) fighter
+    const d = Math.hypot(u.pos.gx - frontTile.gx, u.pos.gy - frontTile.gy);
+    if (d <= radius && d < bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+
+/** RETAKE eligibility: a RIVAL-HELD front whose GUARD has been CLEARED is re-extortable — you muscle it
+ * back through the existing embodied shakedown. Needs the front's tile (the guard check is spatial); the
+ * scene/act supplies it (the act carries `interaction`). Pure read. */
+export function isRetakeableFront(state: GameState, frontId: string, frontTile: GridPos): boolean {
+  return isRivalHeldFront(state, frontId) && !frontGuard(state, frontTile);
 }
 
 function toInterrupted(act: EmbodiedExtortionAct): void {
@@ -154,14 +196,58 @@ export interface MoveAndShakedownCommand {
   frontId: string;
 }
 
+/** EMBODIMENT CONSISTENCY — the building-ATTACK as an embodied order (the mirror of move-and-shakedown):
+ * a selected thug walks to the racket and dwells before it shuts down. */
+export interface MoveAndSabotageCommand {
+  type: 'moveAndSabotage';
+  familyId: string;
+  thugId: string;
+  businessId: string;
+}
+
+/** Whether a MOVE-AND-SABOTAGE order is legal: the thug is a live, non-collector unit, AND the business is a
+ * valid ATTACK target right now (the EXISTING canAttack gate — a producing rival racket that isn't already
+ * shut). Pure read — the eligibility/effect are the existing interdiction ones, not duplicated. */
+export function canIssueMoveAndSabotage(
+  state: GameState, thugId: string, businessId: string, familyId: string,
+): { ok: boolean; reason: string } {
+  const thug = state.units.find((u) => u.id === thugId);
+  if (!thug || thug.role === 'collector' || thug.downed) return { ok: false, reason: 'no free muscle — pick a thug, or recruit [6]' };
+  const g = canAttack(state, businessId, familyId);
+  return g.ok ? { ok: true, reason: 'move in and wreck it' } : { ok: false, reason: g.reason };
+}
+
+/** Create the act for a move-and-sabotage (state `approach`). A FIXED proximity dwell (reuses the shakedown
+ * dwell budget — about as long as leaning on a block), then the EXISTING shutdown applies on resolve. Pure. */
+export function createMoveAndSabotageAct(
+  thugId: string, businessId: string, familyId: string, interaction: GridPos,
+): EmbodiedExtortionAct {
+  return {
+    id: `sabact-${thugId}-${businessId}`, kind: 'sabotage', thugId, frontId: businessId, familyId, interaction,
+    state: 'approach', progress: 0, durationSec: EXTORT_SHAKEDOWN_SECONDS,
+    engageT: 0, absenceT: 0, interruptT: 0, approachT: 0,
+  };
+}
+
 /** Whether a MOVE-AND-SHAKEDOWN order is legal: the thug is a live, non-collector unit of the family, and
- * the front is an ELIGIBLE un-paying front (eligibility UNCHANGED — reuses extortProgress). Pure read. */
-export function canIssueMoveAndShakedown(state: GameState, thugId: string, frontId: string): { ok: boolean; reason: string } {
+ * the front is ELIGIBLE. Eligible = an un-taken front (the 35b case) OR — when `frontTile` is supplied
+ * (RTS-35d) — a RIVAL-HELD front whose guard has been CLEARED (retake). A rival-held front that is still
+ * GUARDED is rejected with a "clear the guard first" reason. Pure read. */
+export function canIssueMoveAndShakedown(
+  state: GameState, thugId: string, frontId: string, frontTile?: GridPos,
+): { ok: boolean; reason: string } {
   const thug = state.units.find((u) => u.id === thugId);
   if (!thug || thug.role === 'collector' || thug.downed) return { ok: false, reason: 'no free muscle — pick a thug, or recruit [6]' };
   const prog = extortProgress(state, frontId);
-  if (!prog || !prog.extortable) return { ok: false, reason: 'that block already pays — pick an un-shaken [%] front' };
-  return { ok: true, reason: 'ready' };
+  if (prog?.extortable) return { ok: true, reason: 'ready' };                       // un-taken front (35b)
+  // RTS-35d — retake: a rival-held front is re-extortable once its guard is cleared.
+  if (frontTile && isRivalHeldFront(state, frontId)) {
+    return frontGuard(state, frontTile)
+      ? { ok: false, reason: 'a rival is guarding this block — clear them out, then shake it back' }
+      : { ok: true, reason: 'muscle it back off the rival' };
+  }
+  if (!prog) return { ok: false, reason: 'no such block' };
+  return { ok: false, reason: 'that block already pays — pick an un-shaken [%] front' };
 }
 
 /** Create the act for a move-and-shakedown (state `approach`). The shakedown duration scales with the
@@ -183,9 +269,12 @@ export function createMoveAndShakedownAct(
 // ── the WRAPPER integration (tick/applyCommand untouched) ────────────────────────────────────────
 export interface EmbodiedExtortionEvent {
   actId: string; thugId: string; frontId: string;
+  kind: EmbodiedActKind; // which embodied verb resolved (drives the render beat)
   state: EmbodiedExtortionState; prevState: EmbodiedExtortionState;
   progress: number;
   converted: boolean;   // the front just converted (the EXISTING path fired this tick)
+  retook: boolean;      // RTS-35d — the conversion MUSCLED a rival-held front back (ownership flipped rival→player)
+  sabotaged: boolean;   // EMBODIMENT — the business was just SHUT DOWN on arrival (the EXISTING resolveAttack fired)
   failed: boolean;
 }
 
@@ -196,8 +285,18 @@ function buildInput(state: GameState, act: EmbodiedExtortionAct): ExtortionTickI
   const thugAlive = !!thug && !thug.downed;
   const present = thugAlive ? isAtFront(thug.pos, act.interaction) : false;
   const attacked = thugAlive && thug ? !!enemyInRange(thug, state.units) : false;
-  const prog = extortProgress(state, act.frontId);
-  return { present, attacked, targetValid: !!prog?.extortable, thugAlive, cancelled: !!act.cancelRequested };
+  // EMBODIMENT CONSISTENCY — a SABOTAGE act stays valid while the business is still an attackable rival
+  // racket (the existing canAttack gate: not yours, not already shut, crew present). A SHAKEDOWN act (35b/35d)
+  // stays valid for an un-taken front OR a guard-cleared rival-held one (retake) — unchanged. Either way a
+  // target that goes invalid mid-act hard-fails through the existing target-lost branch (no new logic).
+  let targetValid: boolean;
+  if (act.kind === 'sabotage') {
+    targetValid = canAttack(state, act.frontId, act.familyId).ok;
+  } else {
+    const prog = extortProgress(state, act.frontId);
+    targetValid = !!prog?.extortable || isRetakeableFront(state, act.frontId, act.interaction);
+  }
+  return { present, attacked, targetValid, thugAlive, cancelled: !!act.cancelRequested };
 }
 
 /**
@@ -211,17 +310,35 @@ export function advanceEmbodiedExtortion(state: GameState, dt: number): Embodied
   if (!acts || acts.length === 0 || !(dt > 0)) return [];
   const events: EmbodiedExtortionEvent[] = [];
   for (const act of acts) {
+    const kind: EmbodiedActKind = act.kind ?? 'shakedown';
     const r = tickEmbodiedExtortionAct(act, buildInput(state, act), dt);
     let converted = false;
+    let retook = false;
+    let sabotaged = false;
     if (r.convert) {
-      // INVOKE the existing conversion path — drive recordExtortVisit until the front folds (one shakedown
-      // delivers the whole resistance; the visit math + the economy are the existing ones, not duplicated).
-      let guard = 0;
-      while (guard++ < 64) { const res = recordExtortVisit(state, act.familyId, act.frontId); if (res.converted || !res.ok) break; }
-      converted = true;
+      if (kind === 'sabotage') {
+        // EMBODIMENT — the thug reached the racket and spent the dwell: apply the EXISTING shutdown effect
+        // NOW (no instant-at-range). resolveAttack sets shutdownTicks + heat (not duplicated here).
+        sabotaged = resolveAttack(state, act.frontId, act.familyId).ok;
+      } else {
+        // RTS-35d — a RETAKE: the front is rival-held. BREAK the rival's claim first (back to neutral) so the
+        // EXISTING conversion path applies — ownership flips rival→player through recordExtortVisit, NOT a new
+        // mechanic. (An un-taken front skips this and converts exactly as in 35b.)
+        const found = findBusiness(state, act.frontId);
+        if (found && isRivalHeldFront(state, act.frontId)) {
+          found.business.extortedBy = undefined;   // rival claim broken — the block is up for grabs
+          found.business.extortVisits = 0;          // reset the resistance counter for the fresh shakedown
+          retook = true;
+        }
+        // INVOKE the existing conversion path — drive recordExtortVisit until the front folds (one shakedown
+        // delivers the whole resistance; the visit math + the economy are the existing ones, not duplicated).
+        let guard = 0;
+        while (guard++ < 64) { const res = recordExtortVisit(state, act.familyId, act.frontId); if (res.converted || !res.ok) break; }
+        converted = true;
+      }
     }
-    if (r.transitioned || converted) {
-      events.push({ actId: act.id, thugId: act.thugId, frontId: act.frontId, state: act.state, prevState: r.prevState, progress: act.progress, converted, failed: act.state === 'failed' });
+    if (r.transitioned || converted || sabotaged) {
+      events.push({ actId: act.id, thugId: act.thugId, frontId: act.frontId, kind, state: act.state, prevState: r.prevState, progress: act.progress, converted, retook, sabotaged, failed: act.state === 'failed' });
     }
   }
   state.extortionActs = acts.filter((a) => a.state !== 'resolve' && a.state !== 'failed');
@@ -235,15 +352,28 @@ export function advanceEmbodiedExtortion(state: GameState, dt: number): Embodied
  */
 export function applyCommandWithEmbodiedExtortion(
   state: GameState,
-  command: MoveAndShakedownCommand | { type: string },
+  command: MoveAndShakedownCommand | MoveAndSabotageCommand | { type: string },
   apply: (s: GameState, c: { type: string }) => void,
   interaction?: GridPos,
 ): EmbodiedExtortionAct | null {
+  const point = interaction ?? { gx: 0, gy: 0 };
   if (command.type === 'moveAndShakedown') {
     const c = command as MoveAndShakedownCommand;
-    const gate = canIssueMoveAndShakedown(state, c.thugId, c.frontId);
+    // PLAYTEST FIX (retake) — forward the interaction TILE to the gate. The 35d retake branch is tile-gated,
+    // so without it a rival-HELD front always fell through to "already pays" and the wrapper returned null —
+    // the scene issued the move but NO act was created (retake did nothing). The un-taken 35b path is
+    // unaffected (it's ok before the tile branch). No rule/threshold change — a dropped-argument defect.
+    const gate = canIssueMoveAndShakedown(state, c.thugId, c.frontId, interaction);
     if (!gate.ok) return null;
-    const act = createMoveAndShakedownAct(state, c.thugId, c.frontId, c.familyId, interaction ?? { gx: 0, gy: 0 });
+    const act = createMoveAndShakedownAct(state, c.thugId, c.frontId, c.familyId, point);
+    state.extortionActs = [...(state.extortionActs ?? []).filter((a) => a.thugId !== c.thugId), act];
+    return act;
+  }
+  if (command.type === 'moveAndSabotage') {
+    const c = command as MoveAndSabotageCommand;
+    const gate = canIssueMoveAndSabotage(state, c.thugId, c.businessId, c.familyId);
+    if (!gate.ok) return null;
+    const act = createMoveAndSabotageAct(c.thugId, c.businessId, c.familyId, point);
     state.extortionActs = [...(state.extortionActs ?? []).filter((a) => a.thugId !== c.thugId), act];
     return act;
   }

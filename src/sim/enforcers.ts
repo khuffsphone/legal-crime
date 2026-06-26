@@ -39,6 +39,14 @@ export const ENFORCER_SPECS: Record<WeaponTier, EnforcerSpec> = {
 
 export const ENFORCER_TIERS: WeaponTier[] = ['pistol', 'shotgun', 'rifle', 'hitman', 'demolitions'];
 
+/** COMBAT DEPTH FINALIZE (Part A) — the combat SKILL an on-map muscle unit inherits from the enforcer it
+ * embodies: the weapon tier's spec skill (which is exactly the recruited gangster's skill — see
+ * recruitEnforcer), or 0 for a plain thug. The spawn path copies this onto MovableUnit.skill so the
+ * already-built tuning modifiers (meleeDamage/attackInterval) read real data. Pure. */
+export function enforcerUnitSkill(weapon: WeaponTier | undefined): number {
+  return weapon ? ENFORCER_SPECS[weapon].skill : 0;
+}
+
 /** The turf-war muscle-presence weight of a player unit (a plain thug = 1). Pure. */
 export function enforcerPresenceWeight(weapon: WeaponTier | undefined): number {
   return weapon ? ENFORCER_SPECS[weapon].presence : 1;

@@ -65,3 +65,31 @@ export function ambientShown(reveal: ((gx: number, gy: number) => boolean) | und
   return !reveal || reveal(Math.round(gx), Math.round(gy));
 }
 
+
+// ── POLISH-PASS v2 · PACKAGE 5 (UI curves) — refinements layered on the EXISTING primitives above ────
+// These are pure shapers the scene feeds into the SHIPPED systems (rollToward / the Wire feed / the
+// inspector). They add NO second cash system — cashRollRate only varies the EXISTING rollToward's rate.
+
+/** Vary the cash-roll RATE by the size of the gap, so a big windfall SPINS up fast then eases to a stop
+ * while a small change ticks gently. Feed the result as rollToward's `ratePerSec` — it is NOT a second
+ * cash system, just a rate shaper on the existing one. Pure. */
+export function cashRollRate(gap: number, base = 6, max = 16): number {
+  const g = Math.abs(gap);
+  return Math.min(max, base + Math.log10(1 + g) * 2.5);
+}
+
+/** The Wire CRISIS pulse: a smooth 0..1 throb (cosine) for an unread danger dot/title — motion reads as a
+ * live alert. Time-driven, stateless. Pure. */
+export function crisisPulse(nowMs: number, periodMs = 900): number {
+  if (periodMs <= 0) return 0;
+  const phase = (nowMs % periodMs) / periodMs;
+  return 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
+}
+
+/** Inspector expand/collapse easing: an eased 0..1 progress → {scale, alpha} for a panel snapping open
+ * (progress 0→1) or closing (1→0). A slight scale-from gives the "snap" without a heavy bounce. Pure. */
+export function panelReveal(progress: number): { scale: number; alpha: number } {
+  const t = progress < 0 ? 0 : progress > 1 ? 1 : progress;
+  const eased = 1 - (1 - t) * (1 - t); // ease-out
+  return { scale: 0.92 + eased * 0.08, alpha: eased };
+}

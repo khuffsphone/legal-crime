@@ -31,6 +31,9 @@ export interface MovableUnit {
   /** RTS-30c-2a — weapon-tier specialist (channel-gated enforcer). Absent ⇒ a plain thug. Drives the
    * silhouette + the turf-war muscle-presence weight. Additive, default-safe. */
   weapon?: WeaponTier;
+  /** COMBAT DEPTH (Part 1) — the operator's combat SKILL (0..10) the tuning table reads for deterministic
+   * damage/cadence/defence modifiers. Absent ⇒ 0 (no modifier — tier-0 behaviour unchanged). Additive. */
+  skill?: number;
   /** RTS-30c-2b — PATROL stance: the unit holds/loops its zone for a defensive presence bonus. Absent
    * ⇒ a free mover. Additive, default-safe. */
   patrol?: boolean;
@@ -74,15 +77,21 @@ export function spawnCollector(
   return { id, pos: { gx, gy }, path: [], speed, factionId, role: 'collector', carrying };
 }
 
-/** An enforcer (muscle) for `factionId` (RTS-4) — intercepts hostile collectors. */
+/** An enforcer (muscle) for `factionId` (RTS-4) — intercepts hostile collectors. `opts` (additive,
+ * default-safe) stamps the weapon tier + combat SKILL onto the unit at spawn so the (already-tested) tuning
+ * modifiers fire on it — see enforcerUnitSkill. Omitting opts reproduces the original plain enforcer. */
 export function spawnEnforcer(
   id: string,
   gx: number,
   gy: number,
   factionId: string,
   speed: number = MOVE_SPEED,
+  opts?: { weapon?: WeaponTier; skill?: number },
 ): MovableUnit {
-  return { id, pos: { gx, gy }, path: [], speed, factionId, role: 'enforcer' };
+  const u: MovableUnit = { id, pos: { gx, gy }, path: [], speed, factionId, role: 'enforcer' };
+  if (opts?.weapon !== undefined) u.weapon = opts.weapon;
+  if (opts?.skill !== undefined) u.skill = opts.skill;
+  return u;
 }
 
 /** The integer tile the unit currently occupies (its rounded position). */

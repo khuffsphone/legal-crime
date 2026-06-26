@@ -23,3 +23,16 @@ export function pickIdleMuscle(
     (c) => c.faction === 'player' && !c.isCollector && c.idle && !tasked.has(c.id),
   );
 }
+
+/** RTS-35b.1 — the SELECTED player muscle an EMBODIED order (extort move-and-shakedown) must be issued
+ * to. Selection is AUTHORITATIVE: the thug the player picked is the thug that acts — never an arbitrary
+ * free one (the bug this fixes). Returns the first selected, non-collector PLAYER unit, or undefined if
+ * none is selected. Busy is NOT filtered: a busy selected thug is still the chosen actor — the caller
+ * RE-TASKS it (cancels its current act), consistent with how a MOVE order overrides a unit's path. Pure. */
+export function pickSelectedMuscle(
+  candidates: readonly MuscleCandidate[],
+  selectedIds: readonly string[],
+): MuscleCandidate | undefined {
+  const sel = new Set(selectedIds);
+  return candidates.find((c) => c.faction === 'player' && !c.isCollector && sel.has(c.id));
+}
