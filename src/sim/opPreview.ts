@@ -14,6 +14,7 @@ import { findBusiness } from './commands';
 import { isCombatant, unitHealth } from './combat';
 import { attackInterval, engageRange, meleeDamage } from './combatTuning';
 import { canIssueMoveAndShakedown, createMoveAndShakedownAct, isRivalHeldFront } from './extortionEmbodied';
+import { posturePreviewRow, postureContestRumor, postureOf } from './districtPosture';
 import { extortProgress } from './extortion';
 import { federalExposure, fedWarningTier } from './federal';
 import { canLockout } from './offense';
@@ -26,6 +27,20 @@ import { MAX_GLANCE_ROWS, UNKNOWN, VISIBLE_ONLY, type OpPreview, type OpVerb, ty
 export type IsVisible = (pos: GridPos) => boolean;
 
 const ALWAYS_VISIBLE: IsVisible = () => true;
+
+/** DISTRICT RACKET POSTURE — the active posture's modifier line + a NO-X-RAY rival-pressure rumor for the
+ * front's district. Empty when the district is BALANCED and not under pressure (so an un-postured front's
+ * preview is unchanged). The rumor NEVER carries a rival count/position. Pure. */
+function postureDetailRows(state: GameState, frontId: string): PreviewRow[] {
+  const found = findBusiness(state, frontId);
+  if (!found) return [];
+  const d = found.district;
+  const rows: PreviewRow[] = [];
+  if (postureOf(d) !== 'BALANCED') rows.push(posturePreviewRow(d));
+  const rumor = postureContestRumor(state, d.id);
+  if (rumor.value !== 'none reported') rows.push(rumor);
+  return rows;
+}
 
 // ── tiny builders ──────────────────────────────────────────────────────────────────────────────
 function row(label: string, value: string, tone?: PreviewRow['tone']): PreviewRow {
@@ -145,6 +160,7 @@ export function previewExtortFront(
       row('Certainty', '100% on completion — but interruptible (an attack resets it)', 'neutral'),
       row('Commit', 'the selected thug walks there and leans on the door', 'neutral'),
       row('NO-X-RAY', income === null ? 'income shows once the block is in sight' : 'income read from the visible front', 'neutral'),
+      ...postureDetailRows(state, frontId),
     ],
   };
 }
@@ -180,6 +196,7 @@ export function previewRetakeFront(
       row('Ownership', "breaks the rival's claim, then the existing conversion flips it to you", 'neutral'),
       row('Resistance', needed === null ? UNKNOWN : `${needed} shakedown${needed === 1 ? '' : 's'}-worth of time`, 'neutral'),
       row('Certainty', '100% on completion — interruptible (an attack resets it)', 'neutral'),
+      ...postureDetailRows(state, frontId),
     ],
   };
 }
