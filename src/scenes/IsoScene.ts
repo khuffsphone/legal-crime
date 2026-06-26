@@ -206,6 +206,14 @@ import {
   exportSaveFile, importSaveFile, type SlotInfo,
 } from './saveStore';
 import type { LoadResult } from '../sim';
+// INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
+import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
+import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
+import { edgeAlertMarker } from './info/edgeAlerts';
+import {
+  worldToMinimap, minimapToWorld, isInMinimap, districtControlColor, minimapPlayerBlips, minimapRivalBlips,
+  type MiniRect, type MiniUnit, type ControlStatus,
+} from './info/minimapMath';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -492,6 +500,16 @@ export class IsoScene extends Phaser.Scene {
   private pausedBanner?: Phaser.GameObjects.Container; // the PAUSED indicator
   private saveMenu?: Phaser.GameObjects.Container;     // SAVE/LOAD menu (fixed HUD camera)
   private saveButton?: Phaser.GameObjects.Text;        // the HUD entry point
+  // INFO-FEEDBACK — SESSION-ONLY event log (#6), live edge alerts, minimap pings (all render-side).
+  private wireLog: LogStore = initLog();
+  private alerts: { id: number; gx: number; gy: number; tier: EventTier; until: number }[] = [];
+  private pings: { gx: number; gy: number; tier: EventTier; until: number }[] = [];
+  private wireLogG?: Phaser.GameObjects.Container;
+  private wireLogHits: { x: number; y: number; w: number; h: number; gx?: number; gy?: number; id: number }[] = [];
+  private edgeAlertG?: Phaser.GameObjects.Graphics;
+  private edgeAlertHits: { x: number; y: number; r: number; gx: number; gy: number; id: number }[] = [];
+  private minimapG?: Phaser.GameObjects.Graphics;
+  private minimapRect: MiniRect = { x: 0, y: 0, w: 176, h: 176 };
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
   private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
   private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
@@ -1254,17 +1272,29 @@ export class IsoScene extends Phaser.Scene {
     // EXISTING conversion on resolve); ensure a collector exists for every business we earn from.
     this.processExtortionEvents(obs.result.extortion);
     if (obs.result.weeksFired > 0) this.syncBusinessCollectors();
-    for (const ev of obs.result.interceptions) this.flashAmbush(ev);
+    for (const ev of obs.result.interceptions) {
+      this.flashAmbush(ev);
+      // INFO-FEEDBACK — collector.robbed (state change → log + edge alert + ping) at the collector's tile.
+      const col = this.state.units.find((u) => u.id === ev.collectorId);
+      this.recordInfoEvent('collector.robbed', `a collector was robbed of $${ev.amount}`, col?.pos.gx, col?.pos.gy);
+    }
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
-    for (const cap of obs.strategy.captures) this.flashTerritory(cap.districtId, cap.before === 'player');
-    for (const fid of obs.strategy.fallen) this.setStatus(`${fid} has been driven out of the city`);
+    for (const cap of obs.strategy.captures) {
+      this.flashTerritory(cap.districtId, cap.before === 'player');
+      const wd = this.world.districts.find((d) => d.id === cap.districtId);
+      const lost = cap.before === 'player';
+      this.recordInfoEvent(captureEventKind(lost), `${wd?.name ?? cap.districtId} ${lost ? 'LOST to a rival' : 'captured'}`, wd?.centroid.gx, wd?.centroid.gy);
+    }
+    for (const fid of obs.strategy.fallen) { this.setStatus(`${fid} has been driven out of the city`); this.recordInfoEvent('rival.fallen', `${fid} driven out of the city`); }
     // RTS-17: a rival struck our HQ — telegraph the blow.
     if (obs.strategy.hqStrikes.length > 0) {
       this.cameras.main.shake(220, 0.006);
       this.setStatus('OUR HQ IS UNDER ATTACK');
+      const hq = hqTileOf(this.layout, 'player');
+      this.recordInfoEvent('hq.attack', 'OUR HQ IS UNDER ATTACK', hq?.gx, hq?.gy);
     }
     this.state = harvestIncidents(this.state);
     // RTS-17: the contest resolved — surface the win/lose readout.
@@ -1445,6 +1475,10 @@ export class IsoScene extends Phaser.Scene {
 
     this.drawExtortOverlay(now);
     this.syncDownedBodies(); // COMBAT READABILITY (4) — persistent desaturated downed bodies
+    // INFO-FEEDBACK — the minimap, the screen-edge alerts, and THE WIRE — LOG (all read sim state only).
+    this.drawMinimap(now);
+    this.drawEdgeAlerts(now);
+    this.drawWireLog();
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
     // (earning) — and HIDDEN under the fog (so shrouded blocks/rivals stay unseen).
@@ -1674,6 +1708,8 @@ export class IsoScene extends Phaser.Scene {
       // RTS-30a: a click on a CITY-roster row flies the camera to that district.
       const row = this.cityRowHits.find((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
       if (row) { this.flyToDistrict(row.districtId); return; }
+      // INFO-FEEDBACK — a click on the minimap / a log row / an edge arrow jumps the camera (consume it).
+      if (this.handleInfoClick(p.x, p.y)) return;
       const shift = !!(p.event as MouseEvent | undefined)?.shiftKey;
       // An open menu consumes the next click: a row runs its action, anywhere else dismisses it.
       if (this.ctxMenu) {
@@ -1837,6 +1873,9 @@ export class IsoScene extends Phaser.Scene {
       const c = tile ? gridToScreen(tile.gx, tile.gy) : undefined;
       const name = inspectBusiness(this.state, ev.frontId)?.name ?? 'the block';
       const thugView = this.units.find((v) => v.unit.id === ev.thugId);
+      // INFO-FEEDBACK — log the extortion transition (front.converted / front.retaken / extort.failed).
+      const ik = extortionEventKind(ev);
+      if (ik) this.recordInfoEvent(ik, ik === 'extort.failed' ? `shakedown on ${name} blown` : `${name} ${ev.retook ? 'muscled back' : 'now pays protection'}`, tile?.gx, tile?.gy);
       if (ev.converted) {
         // the EXISTING conversion already set extortedBy — surface the felt beat (mirror of the old flow).
         this.state = harvestIncidents(this.state);
@@ -2386,6 +2425,10 @@ export class IsoScene extends Phaser.Scene {
    * + a "down" line rides The Wire. Combat SFX punctuate the beats. */
   private playCombatBeat(ev: CombatEvent): void {
     const c = gridToScreen(ev.gx, ev.gy);
+    // INFO-FEEDBACK — a DOWN is a state change (unit.down, logged always); a HIT is a combat beat (combat.hit,
+    // throttled inside the log so swings don't spam). Both carry the event tile.
+    const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
+    this.recordInfoEvent(combatEventKind(ev.kind), ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`, ev.gx, ev.gy);
     const attacker = this.units.find((v) => v.unit.id === ev.attackerId);
     if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x); // melee swing / ranged recoil by weapon
     if (ev.kind === 'hit') {
@@ -2394,7 +2437,6 @@ export class IsoScene extends Phaser.Scene {
       this.cameraBeat('normalHit');            // POLISH v2 · PKG3 — a small punch on every trade
       if (ev.weapon) { this.combatContact(c.x, c.y, 'muzzle'); this.audio?.combat('attack'); } // ranged report (melee has no committed punch SFX yet)
     } else {
-      const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
       this.cameraBeat('kill');                 // POLISH v2 · PKG3 — a heavier hit-stop on a down
       this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool)
       this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
@@ -3106,7 +3148,9 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-FIVE', () => this.audioPanelOpen ? this.cycleAudioBus(4) : this.commandExpand());
     this.input.keyboard?.on('keydown-SIX', () => this.commandRecruit());
     // RTS-30c-2b — the two glyphs that shipped without a canon key: PATROL [Q], DEMOLISH [V].
-    this.input.keyboard?.on('keydown-Q', () => this.commandPatrol());
+    // INFO-FEEDBACK (canon ruling #1): [Q] = jump to the last/highest-priority unread alert (NOT Space=pause,
+    // NOT Tab=idle cycle). PATROL keeps its action-card chip (the [Q] hotkey moved to jump-to-alert).
+    this.input.keyboard?.on('keydown-Q', () => this.jumpToLastAlert());
     this.input.keyboard?.on('keydown-V', () => this.commandSabotage()); // DEMOLISH = the wreck of a rival node
     // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
     this.input.keyboard?.on('keydown-O', () => this.toggleAudioPanel());
@@ -4191,7 +4235,12 @@ export class IsoScene extends Phaser.Scene {
     this.updateConductor(phase as MusicPhase, p.federalTier);
     // RTS-27/30e: the teletype escalation + a one-shot edge flash only when the federal tier CROSSES
     // up a rung (50/70/85) — amber→danger by tier, motion-only.
-    if (p.federalTier > this.lastFederalTier) { this.audio?.federal(p.federalTier); this.flashFederalCross(p.federalTier); }
+    if (p.federalTier > this.lastFederalTier) {
+      this.audio?.federal(p.federalTier);
+      this.flashFederalCross(p.federalTier); // #3 — the GLOBAL, non-directional federal banner (no arrow/ping)
+      // INFO-FEEDBACK — federal.threshold is GLOBAL (#3): log it (no gx/gy → no edge arrow, no minimap ping).
+      this.recordInfoEvent('federal.threshold', `FEDERAL ${['', 'NOTICE', 'WATCH', 'RAID'][p.federalTier] ?? ''} — heat crossed a rung`);
+    }
     this.lastFederalTier = p.federalTier;
   }
 
@@ -4394,6 +4443,173 @@ export class IsoScene extends Phaser.Scene {
       if (f) importSaveFile(f).then((r) => this.handleLoadResult(r, 'file'));
     };
     input.click();
+  }
+
+  // ── INFO-FEEDBACK — THE WIRE — LOG + screen-edge alerts + minimap ─────────────────────────────
+
+  /** Record a taxonomy event into the session log, and (per the taxonomy) raise an edge ALERT + a minimap
+   * PING for positional events. Federal events are non-positional (#3): they log + fire the global federal
+   * banner (the existing flashFederalCross), with NO arrow/ping. Combat beats throttle inside pushLog (#4). */
+  private recordInfoEvent(kind: EventKind, message: string, gx?: number, gy?: number): void {
+    const now = this.time.now;
+    this.wireLog = pushLog(this.wireLog, { kind, message, gx, gy, t: now });
+    const meta = metaFor(kind);
+    const id = this.wireLog.entries[0]?.id ?? 0;
+    if (meta.alert && gx !== undefined && gy !== undefined) {
+      this.alerts.push({ id, gx, gy, tier: meta.tier, until: meta.tier === 'critical' ? Number.POSITIVE_INFINITY : now + 12000 });
+    }
+    if (meta.ping && gx !== undefined && gy !== undefined) {
+      this.pings.push({ gx, gy, tier: meta.tier, until: now + 6000 });
+    }
+  }
+
+  /** Centre the world camera on a tile (click-to-jump for a log row / edge arrow / minimap). */
+  private jumpToTile(gx: number, gy: number): void {
+    const c = gridToScreen(gx, gy);
+    this.cameras.main.centerOn(c.x, c.y);
+  }
+
+  /** [Q] — jump to the most recent unread POSITIONAL alert (highest-priority unread), and mark it read. */
+  private jumpToLastAlert(): void {
+    // prefer a live critical alert, else the latest unread positional log entry.
+    const crit = this.alerts.filter((a) => a.tier === 'critical');
+    const target = crit.length ? crit[crit.length - 1] : undefined;
+    if (target) {
+      this.jumpToTile(target.gx, target.gy);
+      this.wireLog = markRead(this.wireLog, target.id);
+      this.alerts = this.alerts.filter((a) => a !== target);
+      return;
+    }
+    const e = latestUnreadPositional(this.wireLog);
+    if (e && e.gx !== undefined && e.gy !== undefined) {
+      this.jumpToTile(e.gx, e.gy);
+      this.wireLog = markRead(this.wireLog, e.id);
+      this.alerts = this.alerts.filter((a) => a.id !== e.id);
+    } else {
+      this.setStatus('no unread alerts');
+    }
+  }
+
+  /** A district's control status for the minimap (player / rival / contested / neutral). */
+  private districtControlStatus(districtId: string): ControlStatus {
+    if (new Set(contestedDistrictIds(this.state)).has(districtId)) return 'contested';
+    const d = this.state.districts.find((x) => x.id === districtId);
+    const holder = d ? districtHolder(d) : undefined;
+    if (!holder) return 'neutral';
+    return holder === this.state.player.id ? 'player' : 'rival';
+  }
+
+  /** Per-frame: draw the minimap (district control, viewport rect, blips, pings) + click-to-move. */
+  private drawMinimap(now: number): void {
+    if (!this.minimapG) { this.minimapG = this.add.graphics().setScrollFactor(0).setDepth(100040); this.hudFx(this.minimapG); }
+    const r = this.minimapRect;
+    r.x = this.scale.width - r.w - 12;
+    r.y = this.scale.height - r.h - 12;
+    const g = this.minimapG;
+    g.clear();
+    g.fillStyle(hexNum(SPEC.soot), 0.82).fillRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
+    g.lineStyle(2, hexNum(SPEC.brass), 0.9).strokeRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
+    // district control fills (static palette; contested amber)
+    for (const wd of this.world.districts) {
+      const status = this.districtControlStatus(wd.id);
+      const a = worldToMinimap(wd.minX, wd.minY, r, WORLD_SIZE);
+      const b = worldToMinimap(wd.maxX + 1, wd.maxY + 1, r, WORLD_SIZE);
+      const col = hexNum(districtControlColor(status));
+      g.fillStyle(col, status === 'neutral' ? 0.16 : status === 'contested' ? 0.28 + 0.14 * Math.abs(Math.sin(now / 320)) : 0.32);
+      g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+    // camera viewport rectangle (world-px view → tiles → minimap)
+    const view = this.cameras.main.worldView;
+    const tl = screenToGrid(view.x, view.y), br = screenToGrid(view.right, view.bottom);
+    const va = worldToMinimap(Math.min(tl.gx, br.gx), Math.min(tl.gy, br.gy), r, WORLD_SIZE);
+    const vb = worldToMinimap(Math.max(tl.gx, br.gx), Math.max(tl.gy, br.gy), r, WORLD_SIZE);
+    g.lineStyle(1.5, hexNum(SPEC.bone), 0.9).strokeRect(va.x, va.y, vb.x - va.x, vb.y - va.y);
+    // blips — player always; collectors distinct; ⚠ rivals ONLY if their tile is revealed (#5 — no x-ray)
+    const minis: MiniUnit[] = this.units.map((v) => ({ gx: v.unit.pos.gx, gy: v.unit.pos.gy, faction: v.faction, isCollector: v.unit.role === 'collector' }));
+    for (const u of minimapPlayerBlips(minis)) {
+      const p = worldToMinimap(u.gx, u.gy, r, WORLD_SIZE);
+      g.fillStyle(hexNum(u.isCollector ? SPEC.brassDim : SPEC.brass), 1).fillCircle(p.x, p.y, u.isCollector ? 1.6 : 2.2);
+    }
+    for (const u of minimapRivalBlips(minis, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy))) {
+      const p = worldToMinimap(u.gx, u.gy, r, WORLD_SIZE);
+      g.fillStyle(hexNum(SPEC.rival), 1).fillCircle(p.x, p.y, 2.2); // static rival identity
+    }
+    // alert pings — MOTION (danger pulse), expire on their own
+    this.pings = this.pings.filter((p) => now < p.until);
+    for (const ping of this.pings) {
+      const p = worldToMinimap(ping.gx, ping.gy, r, WORLD_SIZE);
+      const t = 1 - (ping.until - now) / 6000;
+      g.lineStyle(1.5, hexNum(ping.tier === 'critical' ? SPEC.danger : '#ff5a2c'), Math.max(0, 1 - t)).strokeCircle(p.x, p.y, 2 + t * 8);
+    }
+  }
+
+  /** Per-frame: draw the screen-edge alerts (off-screen warning/critical events) — arrow + danger pulse. */
+  private drawEdgeAlerts(now: number): void {
+    if (!this.edgeAlertG) { this.edgeAlertG = this.add.graphics().setScrollFactor(0).setDepth(100045); this.hudFx(this.edgeAlertG); }
+    this.alerts = this.alerts.filter((a) => now < a.until);
+    const g = this.edgeAlertG;
+    g.clear();
+    this.edgeAlertHits = [];
+    const W = this.scale.width, H = this.scale.height;
+    for (const a of this.alerts) {
+      const c = gridToScreen(a.gx, a.gy);
+      const sp = this.worldToScreenPx(c.x, c.y);
+      const m = edgeAlertMarker(sp.x, sp.y, W, H, 34);
+      if (m.onScreen) continue; // on-screen events read directly; no edge arrow
+      const pulse = 0.55 + 0.45 * Math.abs(Math.sin(now / 130));
+      const col = hexNum(a.tier === 'critical' ? SPEC.danger : '#ff5a2c');
+      g.fillStyle(col, pulse).fillCircle(m.x, m.y, 9);
+      // a little arrowhead pointing toward the event
+      const ax = m.x + Math.cos(m.angleRad) * 14, ay = m.y + Math.sin(m.angleRad) * 14;
+      const lx = m.x + Math.cos(m.angleRad + 2.5) * 8, ly = m.y + Math.sin(m.angleRad + 2.5) * 8;
+      const rx = m.x + Math.cos(m.angleRad - 2.5) * 8, ry = m.y + Math.sin(m.angleRad - 2.5) * 8;
+      g.fillStyle(col, pulse).fillTriangle(ax, ay, lx, ly, rx, ry);
+      this.edgeAlertHits.push({ x: m.x, y: m.y, r: 16, gx: a.gx, gy: a.gy, id: a.id });
+    }
+  }
+
+  /** Project a WORLD pixel point to SCREEN pixels (account for camera scroll + zoom) for edge clamping. */
+  private worldToScreenPx(wx: number, wy: number): { x: number; y: number } {
+    const cam = this.cameras.main;
+    return { x: (wx - cam.worldView.x) * cam.zoom, y: (wy - cam.worldView.y) * cam.zoom };
+  }
+
+  /** Per-frame: draw THE WIRE — LOG (recent-first, ~8 rows, unread count); rows are click-to-jump. */
+  private drawWireLog(): void {
+    if (!this.wireLogG) { this.wireLogG = this.add.container(0, 0).setScrollFactor(0).setDepth(100042); this.hudFx(this.wireLogG); }
+    this.wireLogG.removeAll(true);
+    this.wireLogHits = [];
+    const x = 12, top = 64, rowH = 18, rows = 8;
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const unread = unreadCount(this.wireLog);
+    objs.push(this.mkText(x, top, `THE WIRE — LOG${unread > 0 ? `  · ${unread} new` : ''}`, { fontFamily: NOIR_DISPLAY, fontSize: '12px', color: unread > 0 ? SPEC.danger : NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807cc' }).setOrigin(0, 0).setPadding(5, 3, 5, 3));
+    this.wireLog.entries.slice(0, rows).forEach((e, i) => {
+      const ry = top + 20 + i * rowH;
+      const col = e.tier === 'critical' ? SPEC.danger : e.tier === 'warning' ? WAR_AMBER_HEX : NOIR_PALETTE.bone;
+      const tag = e.count > 1 ? ` ×${e.count}` : '';
+      const t = this.mkText(x, ry, `• ${e.message}${tag}`, { fontFamily: NOIR_FONT, fontSize: '11px', color: e.unread ? col : NOIR_PALETTE.fog, backgroundColor: '#0a080799' }).setOrigin(0, 0).setPadding(4, 1, 4, 1);
+      objs.push(t);
+      if (e.gx !== undefined && e.gy !== undefined) this.wireLogHits.push({ x, y: ry, w: 280, h: rowH, gx: e.gx, gy: e.gy, id: e.id });
+    });
+    this.wireLogG.add(objs);
+  }
+
+  /** Resolve a HUD click on the minimap / a log row / an edge arrow. Returns true if it consumed the click. */
+  private handleInfoClick(sx: number, sy: number): boolean {
+    for (const h of this.edgeAlertHits) {
+      if (Math.hypot(sx - h.x, sy - h.y) <= h.r) { this.jumpToTile(h.gx, h.gy); this.wireLog = markRead(this.wireLog, h.id); this.alerts = this.alerts.filter((a) => a.id !== h.id); return true; }
+    }
+    for (const h of this.wireLogHits) {
+      if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h && h.gx !== undefined && h.gy !== undefined) {
+        this.jumpToTile(h.gx, h.gy); this.wireLog = markRead(this.wireLog, h.id); return true;
+      }
+    }
+    if (isInMinimap(sx, sy, this.minimapRect)) {
+      const t = minimapToWorld(sx, sy, this.minimapRect, WORLD_SIZE);
+      this.jumpToTile(t.gx, t.gy);
+      return true;
+    }
+    return false;
   }
 
   // ── RTS-28 fast-forward / skip-week ─────────────────────────────────────────────────────────
