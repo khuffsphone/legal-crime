@@ -299,7 +299,12 @@ export function applyCommandWithEmbodiedExtortion(
 ): EmbodiedExtortionAct | null {
   if (command.type === 'moveAndShakedown') {
     const c = command as MoveAndShakedownCommand;
-    const gate = canIssueMoveAndShakedown(state, c.thugId, c.frontId);
+    // PLAYTEST FIX — forward the interaction tile to the gate. The 35d RETAKE branch is tile-gated (the guard
+    // check is spatial), so without the tile a rival-HELD front always fell through to "already pays" and the
+    // wrapper returned null — the scene issued the move but NO shakedown act was ever created (retake did
+    // nothing). The wrapper already receives `interaction`; it just wasn't passing it to the gate. The
+    // un-taken 35b path is unaffected (it returns ok before the tile branch). No rule/threshold change.
+    const gate = canIssueMoveAndShakedown(state, c.thugId, c.frontId, interaction);
     if (!gate.ok) return null;
     const act = createMoveAndShakedownAct(state, c.thugId, c.frontId, c.familyId, interaction ?? { gx: 0, gy: 0 });
     state.extortionActs = [...(state.extortionActs ?? []).filter((a) => a.thugId !== c.thugId), act];
