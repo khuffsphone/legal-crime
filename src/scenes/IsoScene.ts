@@ -71,8 +71,6 @@ import {
   advanceCivics,
   type ViceLadder as ViceLadderView,
   type TradeSide,
-  federalTierLabel,
-  FEDERAL_LADDER,
   bribeBracket,
   BRIBE_PIPS,
   verbChipState,
@@ -231,8 +229,11 @@ import {
 import { PanelManager } from './hud/PanelManager';
 import { type PanelId } from './hud/panelState';
 import { buildDossierChips, dirtyPercent, type DossierChip } from './hud/dossierStrip';
+// HUD PHASE 2 — the top ledger bar: a pure model (ledgerBar) + a thin render view (LedgerBarView).
+import { buildLedgerBar, type LedgerBarPrev } from './hud/ledgerBar';
+import { LedgerBarView } from './hud/LedgerBarView';
 import { AmbientLife } from './ambientLife';
-import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
+import { winLossCompass, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
 import { lampFalloff, wetSheenAlpha, ownershipWindowTint } from './noirLightingMath';
 import { smokeCurve, smokeAllowed, dangerColor, MUZZLE_FLASH_MS, SMOKE_MS } from './vfx/vfxMotionCurves';
@@ -472,7 +473,6 @@ export class IsoScene extends Phaser.Scene {
   private ctxCardTitle?: Phaser.GameObjects.Text;
   private ctxCardBody?: Phaser.GameObjects.Text;
   private hudRegions: { x: number; y: number; w: number; h: number; explain: string }[] = [];
-  private lastHeat = 0;
   private lastPhase = '';
   private wireFlashUntil = 0;
   private lastIncidentSeq = -1;
@@ -494,6 +494,9 @@ export class IsoScene extends Phaser.Scene {
   // retires the legacy side panels (feed dock / channels / route pill / control / crew) so the city viewport
   // dominates; their summaries live in the strip and their detail in the on-demand drawers (scaffolds now).
   private panels?: PanelManager;
+  // HUD PHASE 2 — the top ledger bar view + last-frame cash/net (drives the ▲/▼ trends).
+  private ledgerView?: LedgerBarView;
+  private ledgerPrev?: LedgerBarPrev;
   private hudCollapsed = true;
   private dossierG?: Phaser.GameObjects.Container;
   private dossierHits: { x: number; y: number; w: number; h: number; id: PanelId }[] = [];
@@ -572,7 +575,6 @@ export class IsoScene extends Phaser.Scene {
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
   private grain?: Phaser.GameObjects.TileSprite;
   private vignette?: Phaser.GameObjects.Graphics;
-  private shownCash = 0; private shownNet = 0; private cashInit = false; // RTS-34 top-bar count-up state
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
   // OPERATION-OUTCOME PREVIEWS — a read-only, hover-driven projection card for the four player verbs. The
   // pure selectors compute it; this scene only resolves the cursor target, holds the result, and draws it.
@@ -3607,6 +3609,13 @@ export class IsoScene extends Phaser.Scene {
     this.dossierG = this.add.container(0, 0).setScrollFactor(0).setDepth(100110);
     this.hudFx(this.dossierG);
     if (this.hudCollapsed) this.collapseLegacyPanels();
+
+    // HUD PHASE 2 — stand up the top LEDGER BAR and retire the old labeled-cell top bar it supersedes. The
+    // legacy top cells / heat caption / phase chip stop being positioned (refreshHud no longer draws them);
+    // hide their persistent text so nothing lingers. (Fixed-HUD overlay — the world camera is untouched.)
+    this.ledgerView = new LedgerBarView(this);
+    this.hudFx(this.ledgerView.root);
+    for (const o of [...this.topCells.flatMap((c) => [c.label, c.value]), this.heatCaption, this.phaseChip]) o?.setVisible(false);
   }
 
   /** HUD PHASE 1 — retire the always-on side panels the strip/drawers replace: hide their persistent text
@@ -4233,64 +4242,15 @@ export class IsoScene extends Phaser.Scene {
     g.clear();
     this.hudRegions = [];
 
-    // ── TOP BAR ──
-    const barX = 8, barY = 6, barW = W - 16, barH = 50;
-    this.decoFrame(g, barX, barY, barW, barH);
-    // a hairline brass deco rule under the title row
-    g.lineStyle(1, PAL.brass, 0.25).beginPath(); g.moveTo(barX + 8, barY + 21); g.lineTo(barX + barW - 8, barY + 21); g.strokePath();
-
-    // RTS-34 CASH JUICE — the empire totals ROLL toward their value (count-up) instead of snapping, so a
-    // bank/spend reads as the number LANDING. Seeded to the real values on the first frame (no opening roll).
-    const dtMs = this.game.loop.delta;
-    if (!this.cashInit) { this.shownCash = p.cleanCash; this.shownNet = net; this.cashInit = true; }
-    // POLISH v2 · PKG5 — a windfall SPINS up fast then eases (cashRollRate shapes the EXISTING rollToward's
-    // rate by the gap size); it still lands exactly. Not a 2nd cash system — just a rate shaper.
-    else { this.shownCash = rollToward(this.shownCash, p.cleanCash, dtMs, cashRollRate(p.cleanCash - this.shownCash)); this.shownNet = rollToward(this.shownNet, net, dtMs, cashRollRate(net - this.shownNet)); }
-    const cleanShown = Math.round(this.shownCash), netShown = Math.round(this.shownNet);
-
-    const heatCellW = 300;
-    const fixed: Record<string, { v: string; c: string; w: number }> = {
-      clean: { v: `$${cleanShown}`, c: NOIR_PALETTE.brass, w: 118 },
-      dirty: { v: `$${p.dirtyCash}`, c: p.dirtyCash > 4000 ? '#d98a6a' : NOIR_PALETTE.bone, w: 118 },
-      net: { v: netShown >= 0 ? `+$${netShown}` : `-$${Math.abs(netShown)}`, c: netShown >= 0 ? SPEC.cashGreen : SPEC.danger, w: 120 },
-      heat: { v: '', c: NOIR_PALETTE.bone, w: heatCellW },
-      crew: { v: `${p.crew}`, c: NOIR_PALETTE.bone, w: 64 },
-      week: { v: `${hud.week} · ${hud.weekCountdownLabel}`, c: NOIR_PALETTE.bone, w: 150 },
-    };
-    // RTS-24 HUD nit E — spread the empire-glance across the FULL top edge instead of clustering it
-    // upper-left with empty centre. The cells keep their widths; the gaps grow to fill the bar (down
-    // to a 10px floor on narrow screens). Room is reserved on the right for the PHASE chip.
-    const contentStart = barX + 14;
-    const phaseReserve = 156;
-    const contentEnd = barX + barW - 14 - phaseReserve;
-    const totalCellW = this.topCells.reduce((s, c) => s + fixed[c.key].w, 0);
-    const gaps = Math.max(1, this.topCells.length - 1);
-    const spreadGap = Math.max(10, (contentEnd - contentStart - totalCellW) / gaps);
-    let cx = contentStart;
-    for (const cell of this.topCells) {
-      const def = fixed[cell.key];
-      cell.x = cx; cell.w = def.w;
-      cell.label.setPosition(cx, barY + 7); // label text is fixed (set at creation)
-      if (cell.key === 'heat') {
-        cell.value.setVisible(false);
-        this.drawHeatMeter(g, cx, barY, def.w, p.heat, p.federalExposure, p.federalTier);
-      } else {
-        this.setTC(cell.value, def.v, def.c).setPosition(cx, barY + (cell.key === 'net' ? 18 : 22)).setVisible(true);
-      }
-      this.hudRegions.push({ x: cx - 6, y: barY, w: def.w, h: barH, explain: this.cellExplain(cell.key, p, net) });
-      cx += def.w + spreadGap;
-    }
-
-    // PHASE chip at the bar's right end — the 4-stage arc header.
-    const phase = hudPhase(this.state);
-    if (this.phaseChip) {
-      const pc = phase.phase === 'DECAPITATE' ? SPEC.danger : phase.phase === 'ESTABLISH' ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
-      this.setTC(this.phaseChip, `◆ ${phase.phase}`, pc).setPosition(barX + barW - 14, barY + barH / 2);
-      const chipW = this.phaseChip.width + 12;
-      this.hudRegions.push({ x: barX + barW - 14 - chipW, y: barY, w: chipW, h: barH, explain: `PHASE: ${phase.phase} — ${phase.read}  (ESTABLISH → FIRST BLOOD → CONTEST → DECAPITATE)` });
-    }
-    // week progress sliver along the bottom edge of the top bar
-    g.fillStyle(PAL.brass, 0.85).fillRect(barX + 1, barY + barH - 2, (barW - 2) * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 2);
+    // ── HUD PHASE 2 — THE TOP LEDGER BAR (supersedes the old labeled-cell top bar + heat meter + phase chip).
+    // The pure LedgerBarModel derives every value; LedgerBarView draws it on the fixed-HUD camera. The previous
+    // frame's clean/dirty/net feed the ▲/▼ trends. A week-progress sliver rides the bar's bottom edge.
+    const ledgerModel = buildLedgerBar(this.state, { weekDuration: SCENE_WEEK_SECONDS, paused: this.pause.paused, prev: this.ledgerPrev });
+    this.ledgerView?.render(ledgerModel, now);
+    this.ledgerPrev = { clean: p.cleanCash, dirty: p.dirtyCash, net };
+    g.fillStyle(PAL.brass, 0.85).fillRect(9, 60, (W - 18) * Phaser.Math.Clamp(hud.weekProgress, 0, 1), 2);
+    this.hudRegions.push({ x: 8, y: 6, w: W - 16, h: 56, explain: 'THE LEDGER — clean cash grows the empire; dirty cash grows the federal case against you (NOTICE 50 · WATCH 70 · RAID 85). Win-paths: DOM blocks held · STRAIGHT clean-empire % · ELECT mayor/100.' });
+    const phase = hudPhase(this.state); // still drives the phase-change beat (detectHudBeats) below
 
     // ── LEGACY SIDE STACK (HUD PHASE 1: retired when collapsed — summaries moved to the dossier strip) ──
     if (!this.hudCollapsed) {
@@ -4320,57 +4280,7 @@ export class IsoScene extends Phaser.Scene {
       if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.scale.height - 26 - 30).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280))); // HUD PHASE 1 — above the dossier strip
     }
     this.detectHudBeats(p, phase.phase);
-    this.lastHeat = p.federalExposure; // for the next frame's heat-direction arrow
     void shockFlavor; void ISO_TILE_HEIGHT; void heatLabel;
-  }
-
-  /** §1D — the LADDERED heat meter: filled to exposure, ENGRAVED ticks at 50/70/85 with their
-   * NOTICE/WATCH/RAID labels, a direction arrow, and a named caption. */
-  private drawHeatMeter(g: Phaser.GameObjects.Graphics, x: number, barY: number, w: number, _heat: number, exposure: number, tier: number): void {
-    // RTS-34.2 — lift the track so the tier labels + caption tuck ONTO it inside the 50px top bar
-    // (they were anchored 14px below the track → spilled below the bar frame, reading as detached
-    // "floating" labels). Layout within the bar: header(≈13) · meter(26-34) · NOTICE/WATCH/RAID(35) ·
-    // caption(45). All y are relative to barY (fixed UI camera) so they re-anchor at every window size.
-    const my = barY + 20, mh = 8, mw = w - 8;
-    g.fillStyle(PAL.charcoal, 1).fillRect(x, my, mw, mh);
-    g.fillStyle(hexNum(federalBarColor(tier)), 1).fillRect(x, my, mw * Phaser.Math.Clamp(exposure / 100, 0, 1), mh);
-    // engraved threshold ticks + tiny NOTICE/WATCH/RAID labels
-    for (const t of FEDERAL_LADDER) {
-      const tx = x + (mw * t.at) / 100;
-      const passed = exposure >= t.at;
-      g.lineStyle(1, hexNum(passed ? SPEC.brass : SPEC.bone), passed ? 0.95 : 0.7); // static: brass when passed
-      g.beginPath(); g.moveTo(tx, my - 2); g.lineTo(tx, my + mh + 2); g.strokePath();
-    }
-    // the threshold labels engraved right UNDER their ticks (on the meter track)
-    this.drawLadderLabels(g, x, my + mh + 1, mw);
-    // direction arrow + the named tier caption ("WATCH · exp 72/100 ▲ · raid at 85") below the labels
-    const dir = exposure > this.lastHeat + 0.5 ? '▲ rising' : exposure < this.lastHeat - 0.5 ? '▼ cooling' : '◆ steady';
-    const name = federalTierLabel(tier);
-    const cap = `${name} · exp ${exposure}/100 ${dir} · raid at 85`;
-    if (this.heatCaption) this.setTC(this.heatCaption, cap, tier >= 2 ? '#d98a6a' : NOIR_PALETTE.fog).setPosition(x, my + mh + 11);
-  }
-
-  /** Tiny engraved NOTICE/WATCH/RAID labels under their ladder ticks (drawn once-per-frame as text
-   * cache so we don't allocate; reuses 3 pooled labels). */
-  private ladderLabelPool: Phaser.GameObjects.Text[] = [];
-  private drawLadderLabels(_g: Phaser.GameObjects.Graphics, x: number, y: number, mw: number): void {
-    FEDERAL_LADDER.forEach((t, i) => {
-      let lbl = this.ladderLabelPool[i];
-      if (!lbl) { lbl = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '9px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000); this.ladderLabelPool[i] = lbl; }
-      this.setT(lbl, t.label).setPosition(x + (mw * t.at) / 100, y).setVisible(true);
-    });
-  }
-
-  private cellExplain(key: string, p: { cleanCash: number; dirtyCash: number; weeklyUpkeep: number; crew: number; heat: number }, net: number): string {
-    switch (key) {
-      case 'clean': return 'CLEAN $ — laundered, safe money you can freely spend.';
-      case 'dirty': return 'DIRTY $ — crime proceeds. A big hoard radiates heat; launder it.';
-      case 'net': return `NET /wk — income minus upkeep ($${p.weeklyUpkeep}) & bribes. ${net >= 0 ? 'in the black.' : 'the bleed is winning — extort more or cut costs.'}`;
-      case 'heat': return 'HEAT vs the FEDERAL LADDER (50/70/85). At 85 a raid can bust you — grease The Beat / launder / cool off.';
-      case 'crew': return 'CREW — your thugs. More = more extortion, defense, and muscle for a hit (need 12 strength).';
-      case 'week': return 'WEEK — the settlement clock. Income accrues each week; next settles when the sliver fills.';
-      default: return '';
-    }
   }
 
   /** RTS-23 — the FOUR CHANNELS as labeled dials: level $/wk · what it buys · the [G] bump cost. */
