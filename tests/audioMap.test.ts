@@ -3,6 +3,9 @@ import { describe, it, expect } from 'vitest';
 import {
   musicBedForPhase, stingForPhase, wireCueForSeverity, wireShouldRing, greaseCueKey,
   federalCueKey, combatCueKey, nextTakeIndex, pickTake, cycleVolume, clampVolume, orphanCueKey,
+  softSfxPriority, admitSoftSfx, softBurstActive,
+  SOFT_SFX_MAX, SOFT_SFX_DEFAULT_PRIORITY, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD,
+  type SoftVoice,
 } from '../src/scenes/audioMap';
 
 describe('music state machine — bed per phase', () => {
@@ -92,5 +95,57 @@ describe('RTS-34 orphan-clip wiring — the no-seam clips fire on real beats', (
   it('a LOCKOUT plays the door-slam (forced entry); LAUNDERING plays the typewriter', () => {
     expect(orphanCueKey('lockout')).toBe('door');
     expect(orphanCueKey('launder')).toBe('typewriter');
+  });
+});
+
+// ── SOFT-SFX / VO GOVERNOR (pure decisions) — cap, priority-drop order, burst detection ──
+const voice = (key: string, startedMs: number): SoftVoice => ({ key, startedMs });
+
+describe('soft-sfx priority table — info-critical > economy > texture', () => {
+  it('wire_routine outranks cash/extort/grease, which outrank door/typewriter', () => {
+    expect(softSfxPriority('wire_routine')).toBeGreaterThan(softSfxPriority('cashdrop'));
+    expect(softSfxPriority('extort')).toBeGreaterThan(softSfxPriority('door'));
+    expect(softSfxPriority('grease_beat')).toBeGreaterThan(softSfxPriority('typewriter'));
+    expect(softSfxPriority('cashdrop')).toBe(softSfxPriority('extort')); // economy tier ties
+  });
+  it('an unlisted soft cue falls back to the economy-tier default', () => {
+    expect(softSfxPriority('something_new')).toBe(SOFT_SFX_DEFAULT_PRIORITY);
+  });
+});
+
+describe('soft-sfx cap — admit under the cap, drop/evict the lowest priority at the cap', () => {
+  it('always admits while under the cap (no eviction)', () => {
+    expect(admitSoftSfx([], 'door')).toEqual({ admit: true, evict: null });
+    expect(admitSoftSfx([voice('door', 0), voice('extort', 1)], 'cashdrop', SOFT_SFX_MAX))
+      .toEqual({ admit: true, evict: null }); // 2 < 3
+  });
+  it('at the cap, a higher-priority incoming EVICTS the weakest active voice', () => {
+    const active = [voice('door', 0), voice('typewriter', 1), voice('cashdrop', 2)]; // priorities 1,1,2
+    const d = admitSoftSfx(active, 'wire_routine', 3); // priority 3 beats the weakest (a 1)
+    expect(d.admit).toBe(true);
+    expect(d.evict).not.toBeNull();
+    expect(softSfxPriority(d.evict!.key)).toBe(1); // a texture cue is dropped, not the cash
+  });
+  it('on a priority tie among the weakest, the OLDEST voice is evicted', () => {
+    const active = [voice('door', 10), voice('typewriter', 2), voice('cashdrop', 5)]; // two 1s: door@10, tw@2
+    const d = admitSoftSfx(active, 'wire_routine', 3);
+    expect(d.evict).toEqual(voice('typewriter', 2)); // older of the two priority-1 voices
+  });
+  it('at the cap, an incoming that ties or is weaker than the weakest is DROPPED (no stacking)', () => {
+    const active = [voice('extort', 0), voice('cashdrop', 1), voice('grease_beat', 2)]; // all priority 2
+    expect(admitSoftSfx(active, 'cashdrop', 3)).toEqual({ admit: false, evict: null }); // tie → drop incoming
+    expect(admitSoftSfx(active, 'door', 3)).toEqual({ admit: false, evict: null }); // weaker → drop incoming
+  });
+});
+
+describe('soft-burst detection — duck when enough soft cues land in the window', () => {
+  it('fewer than the threshold in the window is NOT a burst; reaching it IS', () => {
+    expect(softBurstActive([0, 100], 100, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD)).toBe(false); // 2 < 3
+    expect(softBurstActive([0, 100, 200], 200, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD)).toBe(true); // 3
+  });
+  it('starts older than the window do not count toward the burst', () => {
+    // two cues just landed, one is ancient — only the recent pair is inside the window
+    expect(softBurstActive([0, 5000, 5100], 5100, SOFT_BURST_WINDOW_MS, 3)).toBe(false);
+    expect(softBurstActive([5000, 5100, 5200], 5200, SOFT_BURST_WINDOW_MS, 3)).toBe(true);
   });
 });
