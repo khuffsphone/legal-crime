@@ -13,6 +13,7 @@ import {
 } from './constants';
 import { businessAccrual, businessEarner } from './economy';
 import { incomeShockMultiplier } from './shocks';
+import { postureMods } from './districtPosture';
 import type { Business, GameState } from './types';
 
 /** Current uncollected takings on a business (absent => 0). */
@@ -25,8 +26,14 @@ export function uncollectedOf(business: Business): number {
 export function accrueUncollected(state: GameState): void {
   const mult = incomeShockMultiplier(state);
   for (const district of state.districts) {
+    // DISTRICT RACKET POSTURE — scale the PLAYER's dirty (crime) income in this district by its posture
+    // (AGGRESSIVE ×1.25 … LOW_PROFILE ×0.70). Only the player's own rackets are affected; BALANCED (the
+    // default) is ×1.0, so this is a no-op until a posture is set. The existing accrual selector is WRAPPED,
+    // not replaced; tick/applyCommand/commands are untouched.
+    const postureDirty = postureMods(district).dirtyIncome;
     for (const business of district.businesses) {
-      const amt = Math.floor(businessAccrual(business) * mult);
+      const pf = businessEarner(business) === state.player.id ? postureDirty : 1;
+      const amt = Math.floor(businessAccrual(business) * mult * pf);
       if (amt > 0) business.uncollected = uncollectedOf(business) + amt;
       // RTS-22: a shut-down business (ATTACK) recovers one tick at a time; it produced nothing above.
       if ((business.shutdownTicks ?? 0) > 0) business.shutdownTicks = (business.shutdownTicks ?? 0) - 1;

@@ -7,6 +7,7 @@
 // interrupt movement — units keep walking straight through a week boundary.
 
 import { advanceClock } from './clock';
+import { applyPostureBoundary } from './districtPosture';
 import { advanceUnits } from './movement';
 import { resolveInterceptions, type InterceptionEvent } from './interception';
 import { resolveProximityCombat, type CombatEvent } from './combat';
@@ -64,6 +65,9 @@ export function update(
   // Runs on the freshly-advanced positions + the combat signal; the economic tick is untouched.
   const extortion = advanceEmbodiedExtortion(state, dt);
   const weeksFired = advanceClock(state, dt, weekDuration);
+  // DISTRICT RACKET POSTURE — at a settlement boundary, PROMOTE any staged posture whose delay has elapsed
+  // (slower while contested). No-op without a pending change; tick/applyCommand/commands untouched.
+  if (weeksFired > 0) for (const d of state.districts) applyPostureBoundary(state, d.id, state.tick);
   return { weeksFired, arrivedUnitIds, interceptions, combat, extortion };
 }
 

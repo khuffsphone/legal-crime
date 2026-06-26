@@ -231,6 +231,9 @@ import {
 import { PanelManager } from './hud/PanelManager';
 import { type PanelId } from './hud/panelState';
 import { buildDossierChips, dirtyPercent, type DossierChip } from './hud/dossierStrip';
+// DISTRICT RACKET POSTURE — the presentation model + the sim posture API (badge/picker/summary, playtest-gated).
+import { postureChip, postureEffectLines, posturePickerOptions } from './hud/posturePresentation';
+import { postureOf, pendingPostureOf, canRequestPosture, requestPosture, isPosturable, type DistrictPosture } from '../sim';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -3372,6 +3375,9 @@ export class IsoScene extends Phaser.Scene {
     // HUD PHASE 1 — [F] now opens the FINANCE drawer; the camera CENTRE-ON-SELECTION it displaced moves to
     // [I] (the only collision the L/T/V/K/F bindings introduce; the larger remap is deferred).
     this.input.keyboard?.on('keydown-F', () => this.panels?.toggle('finance'));
+    // DISTRICT RACKET POSTURE — [ cycles the focused district's posture (the 3-option picker; gated, applies
+    // next period). Playtest-gated visual; the badge/effects live in the [T] Turf drawer.
+    this.input.keyboard?.on('keydown-OPEN_BRACKET', () => this.cyclePosture());
     this.input.keyboard?.on('keydown-I', () => this.centerOnSelection());
     this.input.keyboard?.on('keydown-Z', () => this.frameCity());
     // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).
@@ -3678,9 +3684,28 @@ export class IsoScene extends Phaser.Scene {
         const rows = this.wireLog.entries.slice(0, 14).map((e) => `• ${e.message}${e.count > 1 ? ` ×${e.count}` : ''}`);
         return rows.length ? rows : ['No slips on the wire yet.'];
       }
-      case 'turf':
-        return [`Districts held: ${districtsHeld(this.state, pid).length}/${this.state.districts.length}`,
-          `Contested: ${this.state.contests?.length ?? 0}`, '', '(full turf board lands in a later HUD phase)'];
+      case 'turf': {
+        // DISTRICT RACKET POSTURE — each district you run shows its posture badge; the FOCUSED district shows
+        // the active posture's plain-number effects + collector-risk. [ posture-cycles the focused district.
+        const lines = [`Districts held: ${districtsHeld(this.state, pid).length}/${this.state.districts.length}`,
+          `Contested: ${this.state.contests?.length ?? 0}`, ''];
+        const focus = this.focusedPostureDistrictId();
+        for (const d of this.state.districts) {
+          if (!isPosturable(this.state, d.id)) continue;
+          const chip = postureChip(postureOf(d));
+          const pend = pendingPostureOf(d);
+          const mark = d.id === focus ? '▸ ' : '  ';
+          lines.push(`${mark}${chip.icon} ${d.name}: ${chip.label}${pend ? ` → ${postureChip(pend).label} (settling)` : ''}`);
+        }
+        if (focus) {
+          const fd = this.state.districts.find((d) => d.id === focus)!;
+          const eff = postureEffectLines(postureOf(fd));
+          lines.push('', `— ${fd.name} —`, ...eff.lines, eff.collectorRisk, '', '[ cycle posture · applies next period');
+        } else {
+          lines.push('', 'Hold or focus a block to set its posture ([ to cycle).');
+        }
+        return lines;
+      }
       case 'paths':
         return ['Collection routes + dominance.', '', '(full paths view lands in a later HUD phase)'];
       case 'crew': {
@@ -3689,6 +3714,35 @@ export class IsoScene extends Phaser.Scene {
       }
       case 'finance':
         return ['The ledger — clean / dirty / laundering.', '', '(full finance view lands in a later HUD phase)'];
+    }
+  }
+
+  /** DISTRICT RACKET POSTURE — the district the posture picker acts on: the FOCUSED building's district if
+   * you run it, else your first posturable (held/establishing) district. null if you hold nothing. */
+  private focusedPostureDistrictId(): string | null {
+    if (this.focusBizId) {
+      const d = this.state.districts.find((x) => x.businesses.some((b) => b.id === this.focusBizId));
+      if (d && isPosturable(this.state, d.id)) return d.id;
+    }
+    return this.state.districts.find((d) => isPosturable(this.state, d.id))?.id ?? null;
+  }
+
+  /** DISTRICT RACKET POSTURE — the 3-option picker as a CYCLE ([ key): stage the next stance on the focused
+   * district. Gated by canRequestPosture (cooldown, longer while contested); it applies at the next period
+   * boundary (the sim promotes it). No manual collector routing — posture only bends the autonomous economy. */
+  private cyclePosture(): void {
+    const id = this.focusedPostureDistrictId();
+    if (!id) { this.setStatus('you hold no block to posture — secure a district first'); return; }
+    const gate = canRequestPosture(this.state, id, this.state.tick);
+    if (!gate.ok) { this.setStatus(`POSTURE: ${gate.reason}`); return; }
+    const d = this.state.districts.find((x) => x.id === id)!;
+    // cycle through the three non-default stances (BALANCED → AGGRESSIVE → FORTIFIED → LOW_PROFILE → AGGRESSIVE…)
+    const options: DistrictPosture[] = posturePickerOptions().map((o) => o.posture);
+    const cur = postureOf(d);
+    const next = options[(Math.max(0, options.indexOf(cur)) + 1) % options.length];
+    if (requestPosture(d, next, this.state.tick)) {
+      this.setStatus(`${d.name}: posture → ${postureChip(next).label} (${postureEffectLines(next).lines[0]}) — applies next period`);
+      if (this.panels?.isOpen('turf')) { /* drawer body refreshes next frame */ }
     }
   }
 
