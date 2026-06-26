@@ -56,6 +56,35 @@ export function conductBeds(
   return { start: bed, stop: [...live] }; // retire everything, start the target clean
 }
 
+// ── AUDIO PASS — SINK-LEVEL BED DWELL (transitions rare) ───────────────────────────────────────
+// conductBeds guarantees ≤1 bed PER change, but nothing stopped the caller REQUESTING changes every
+// frame. In play the game phase oscillates (CONTEST↔FIRST BLOOD as districtsHeld crosses 2; the endgame
+// DECAPITATE floor) and those resolve to DIFFERENT bed clips, so setPhase thrashed — stacked crossfades +
+// a scratchy loop-restart. holdBed is the SINGLE dwell at the sink: a different-clip change is HELD until a
+// minimum interval has elapsed since the last actual switch, so the score picks ONE bed and holds it. This
+// GATES the existing conductBeds path (it does not bypass the crossfade lock).
+
+/** Minimum time a bed clip must play before another bed can START (transitions rare). Longer than the
+ * conductor's intensity dwell (4s) + the crossfade (≤0.9s) so even an oscillating phase can't rattle. */
+export const BED_MIN_INTERVAL_MS = 6000;
+
+/** The live bed clip + when it last switched. '' bed ⇒ nothing playing yet (the first start is never held). */
+export interface BedHold { bed: string; sinceMs: number; }
+
+/**
+ * Decide whether the live bed CLIP may switch to `target` now. HELD (no change) when the target equals the
+ * current bed (idempotent) OR — unless `force` — when fewer than `minIntervalMs` have elapsed since the last
+ * switch. The first bed and forced switches (terminal TITLE/GAMEOVER, init) always apply. Pure — the single
+ * source of "transitions rare", independent of how often the caller requests a phase.
+ */
+export function holdBed(
+  cur: BedHold, target: string, nowMs: number, minIntervalMs: number = BED_MIN_INTERVAL_MS, force = false,
+): { hold: BedHold; changed: boolean } {
+  if (target === cur.bed) return { hold: cur, changed: false };                                   // already on it
+  if (!force && cur.bed !== '' && nowMs - cur.sinceMs < minIntervalMs) return { hold: cur, changed: false }; // too soon → hold
+  return { hold: { bed: target, sinceMs: nowMs }, changed: true };                                // switch
+}
+
 /** Which Wire ring a slip earns by severity — needs-you (danger/warning) RINGS (📞 crisis), routine
  * slips get a soft tick. Mirrors the visual NEEDS-YOU priority (progressive disclosure for the ears). */
 export function wireCueForSeverity(severity: string): 'crisis' | 'routine' {
