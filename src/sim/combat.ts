@@ -10,9 +10,11 @@
 // fights it. Discrete swings (a per-unit cooldown) — not continuous DPS — so each hit is one beat the
 // render layer can flinch + sound on.
 
-import {
-  COMBAT_ATTACK_INTERVAL, COMBAT_ENGAGE_RANGE, COMBAT_MELEE_DAMAGE, THUG_MAX_HEALTH,
-} from './constants';
+import { COMBAT_ENGAGE_RANGE, THUG_MAX_HEALTH } from './constants';
+// COMBAT DEPTH (Part 1) — the resolver READS the weapon-tier + skill tuning table (a tuning-table extension,
+// NOT a rewrite of the loop): per-swing damage, cadence, and engage range now come from these helpers.
+// Tier-0/skill-0 reproduce the old flat constants exactly, so existing behaviour/tests are unchanged.
+import { meleeDamage, attackInterval, engageRange } from './combatTuning';
 import type { MovableUnit } from './movement';
 import type { GameState, WeaponTier } from './types';
 
@@ -37,13 +39,13 @@ function tileDist(a: MovableUnit, b: MovableUnit): number {
 }
 
 /** The nearest hostile fighter within engagement range of `u`, if any. Pure read. */
-export function enemyInRange(u: MovableUnit, units: ReadonlyArray<MovableUnit>): MovableUnit | undefined {
+export function enemyInRange(u: MovableUnit, units: ReadonlyArray<MovableUnit>, radius: number = COMBAT_ENGAGE_RANGE): MovableUnit | undefined {
   let best: MovableUnit | undefined;
-  let bestD = COMBAT_ENGAGE_RANGE + 1e-9;
+  let bestD = radius + 1e-9;
   for (const o of units) {
     if (o === u || !hostile(u, o)) continue;
     const d = tileDist(u, o);
-    if (d <= COMBAT_ENGAGE_RANGE && d < bestD) { bestD = d; best = o; }
+    if (d <= radius && d < bestD) { bestD = d; best = o; }
   }
   return best;
 }
@@ -84,10 +86,10 @@ export function resolveProximityCombat(state: GameState, dt: number): CombatEven
   // since hostile() excludes downed units)
   for (const u of state.units) {
     if (!isCombatant(u) || (u.attackCd ?? 0) > 0) continue;
-    const target = enemyInRange(u, state.units);
+    const target = enemyInRange(u, state.units, engageRange(u)); // weapon-tier reach
     if (!target) continue;
-    u.attackCd = COMBAT_ATTACK_INTERVAL;
-    const went = damageUnit(target, COMBAT_MELEE_DAMAGE);
+    u.attackCd = attackInterval(u);                              // weapon-tier + skill cadence (floored)
+    const went = damageUnit(target, meleeDamage(u, target));     // weapon-tier + skill damage (hard-capped)
     events.push({
       kind: went ? 'down' : 'hit',
       attackerId: u.id, unitId: target.id, faction: target.factionId as string,

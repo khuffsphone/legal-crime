@@ -31,6 +31,9 @@ export interface MovableUnit {
   /** RTS-30c-2a — weapon-tier specialist (channel-gated enforcer). Absent ⇒ a plain thug. Drives the
    * silhouette + the turf-war muscle-presence weight. Additive, default-safe. */
   weapon?: WeaponTier;
+  /** COMBAT DEPTH (Part 1) — the operator's combat SKILL (0..10) the tuning table reads for deterministic
+   * damage/cadence/defence modifiers. Absent ⇒ 0 (no modifier — tier-0 behaviour unchanged). Additive. */
+  skill?: number;
   /** RTS-30c-2b — PATROL stance: the unit holds/loops its zone for a defensive presence bonus. Absent
    * ⇒ a free mover. Additive, default-safe. */
   patrol?: boolean;

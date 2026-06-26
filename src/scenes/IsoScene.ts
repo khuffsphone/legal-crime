@@ -206,6 +206,8 @@ import {
   exportSaveFile, importSaveFile, type SlotInfo,
 } from './saveStore';
 import type { LoadResult } from '../sim';
+// COMBAT DEPTH · PART 2 — the rival offensive planner (conservative; ⚠ needs a human balance playtest).
+import { planRivalOffense, type RivalOffenseInput } from '../sim';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
 import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
@@ -510,6 +512,11 @@ export class IsoScene extends Phaser.Scene {
   private edgeAlertHits: { x: number; y: number; r: number; gx: number; gy: number; id: number }[] = [];
   private minimapG?: Phaser.GameObjects.Graphics;
   private minimapRect: MiniRect = { x: 0, y: 0, w: 176, h: 176 };
+  // COMBAT DEPTH · PART 2 — rival-offense cadence + per-rival cooldown/commitment state (scene-side; the
+  // planner stays pure). ⚠ CONSERVATIVE — biased timid; needs a human balance playtest before any increase.
+  private rivalOffenseAcc = 0;
+  private rivalLastOffenseSec = new Map<string, number>();
+  private rivalOffenseUntilMs = new Map<string, number>();
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
   private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
   private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
@@ -1112,6 +1119,10 @@ export class IsoScene extends Phaser.Scene {
   private tickWar(stepDt: number): void {
     if (!this.world || rivalsDormant(this.state)) return;
     this.steerWarMuscle();
+    // COMBAT DEPTH · PART 2 — evaluate the rival OFFENSIVE planner on a slow cadence (every ~2 sim-seconds, so
+    // the timid commit roll is a real per-interval decision, not a per-frame one). ⚠ conservative; playtest.
+    this.rivalOffenseAcc += stepDt;
+    if (this.rivalOffenseAcc >= 2) { this.rivalOffenseAcc = 0; this.tickRivalOffense(); }
     this.state.contestElapsed = (this.state.contestElapsed ?? 0) + stepDt;
     let guard = 0;
     while ((this.state.contestElapsed ?? 0) >= CONTEST_PULSE_SECONDS && guard++ < 64) {
@@ -1191,6 +1202,49 @@ export class IsoScene extends Phaser.Scene {
         if (foe) { issueMove(e, unitTile(foe), this.navGrid); continue; }
         if (prey) issueMove(e, unitTile(prey), this.navGrid);
         else if (e.path.length === 0 && d) issueMove(e, { gx: cl(d.centroid.gx + Phaser.Math.Between(-2, 2)), gy: cl(d.centroid.gy + Phaser.Math.Between(-2, 2)) }, this.navGrid);
+      }
+    }
+  }
+
+  /** COMBAT DEPTH · PART 2 — apply the rival offensive PLANNER (pure) per alive rival: gather the inputs from
+   * live state, run planRivalOffense (timid/conservative), and APPLY an emitted order by moving the rival's
+   * nearest free muscle toward the target tile — the existing 35a combat / contest then resolve it. NO new
+   * verbs; reuses movement. ⚠ BALANCE-GATED — conservative seeds; needs a HUMAN PLAYTEST before any increase. */
+  private tickRivalOffense(): void {
+    const nowSec = this.time.now / 1000;
+    const pid = this.state.player.id;
+    const playerUnits = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed);
+    const strengthNear = (gx: number, gy: number): number => playerUnits.filter((u) => Math.hypot(u.pos.gx - gx, u.pos.gy - gy) <= 4).length;
+    for (const rival of this.state.rivals) {
+      if (!rival.alive) continue;
+      const rid = rival.id;
+      const muscle = this.state.units.filter((u) => u.factionId === rid && u.role !== 'collector' && !u.downed);
+      if (muscle.length === 0) continue;
+      const free = muscle.filter((u) => u.path.length === 0);
+      const fronts = allBusinesses(this.state)
+        .filter((b) => b.kind === 'front' && b.extortedBy === pid)
+        .map((b) => { const t = businessTileOf(this.layout, b.id); return t ? { frontId: b.id, gx: t.gx, gy: t.gy, defenderStrength: Math.max(1, strengthNear(t.gx, t.gy)) } : undefined; })
+        .filter((f): f is { frontId: string; gx: number; gy: number; defenderStrength: number } => !!f);
+      const units = playerUnits.map((u) => ({ id: u.id, gx: u.pos.gx, gy: u.pos.gy, defenderStrength: Math.max(1, strengthNear(u.pos.gx, u.pos.gy)) }));
+      const input: RivalOffenseInput = {
+        rivalId: rid, nowSec,
+        lastOffenseSec: this.rivalLastOffenseSec.get(rid) ?? Number.NEGATIVE_INFINITY,
+        activeOrders: this.time.now < (this.rivalOffenseUntilMs.get(rid) ?? 0) ? 1 : 0,
+        freeMuscle: free.length, attackerStrength: muscle.length,
+        fronts, units, rngState: this.state.rngState,
+      };
+      const plan = planRivalOffense(input);
+      this.state.rngState = plan.rngState; // keep the world deterministic (no-op unless the commit roll drew)
+      const order = plan.orders[0];
+      if (!order) continue;
+      // apply: send the rival's nearest free muscle (else any muscle) to the target — 35a/contest resolves it.
+      const pool = free.length ? free : muscle;
+      let actor = pool[0]; let bestD = Infinity;
+      for (const u of pool) { const d = Math.hypot(u.pos.gx - order.gx, u.pos.gy - order.gy); if (d < bestD) { bestD = d; actor = u; } }
+      if (actor) {
+        issueMove(actor, { gx: order.gx, gy: order.gy }, this.navGrid);
+        this.rivalLastOffenseSec.set(rid, nowSec);
+        this.rivalOffenseUntilMs.set(rid, this.time.now + 20000); // ~20s commitment window
       }
     }
   }

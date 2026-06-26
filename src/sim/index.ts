@@ -140,6 +140,14 @@ export {
   unitHealth, isCombatant, hostile, enemyInRange, damageUnit, resolveProximityCombat, type CombatEvent,
 } from './combat';
 export {
+  meleeDamage, attackInterval, engageRange, WEAPON_TUNING,
+  MAX_HIT_DAMAGE, MIN_ATTACK_INTERVAL, SKILL_DMG_PER, SKILL_CADENCE_PER, SKILL_DEF_PER, type WeaponMult,
+} from './combatTuning';
+export {
+  planRivalOffense, RIVAL_OFFENSE_TUNING,
+  type RivalOffenseTuning, type RivalOrder, type RivalOffenseInput, type RivalOffensePlan,
+} from './rivalOffense';
+export {
   recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
 } from './downedBodies';
 export {
