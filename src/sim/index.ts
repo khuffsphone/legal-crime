@@ -347,6 +347,16 @@ export {
   type CitySummary,
 } from './districtStatus';
 export {
+  POSTURE_MODS, POSTURES, postureOf, pendingPostureOf, postureMods,
+  posturedDirtyIncome, posturedCleanIncome, posturedLocalHeat, posturedControlPressureOut,
+  posturedControlDecay, posturedProvocation, posturedExpansionPressure,
+  posturedCollectorCarry, posturedCollectorSafety, posturedDefense, posturedFederalEvidence,
+  aggressiveBackfireMitigation,
+  isPosturable, postureCooldownTicks, canRequestPosture, requestPosture, applyPostureBoundary,
+  posturePreviewRow, postureContestRumor,
+  type PostureMods, type PostureGate,
+} from './districtPosture';
+export {
   unitRepertoire,
   unitActionChips,
   resolveChip,
