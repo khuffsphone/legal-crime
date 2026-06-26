@@ -205,7 +205,6 @@ import {
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
-import { classifyFrontAction } from './frontActions';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
 import { initPause, togglePause as togglePauseState, type PauseState } from './pauseGate';
@@ -251,6 +250,9 @@ import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
 } from './gait';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
+import {
+  rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
+} from './weaponAttackPose';
 import {
   SPEC,
   MOTION,
@@ -371,7 +373,9 @@ interface UnitView {
   // RTS-30e action-motion state: a per-unit idle phase (desync) + transient attack/hit one-shots.
   idleSeed?: number;
   attackUntil?: number; // time.now ms until the attack recoil/swing finishes
+  attackStartedAt?: number;
   attackKind?: 'melee' | 'ranged';
+  attackRigWeapon?: RigAttackWeapon;
   attackFaceRight?: boolean; // recoil direction (away from the target)
   hitUntil?: number; // time.now ms until the hit-react flinch finishes
   occA?: number; // POLISH v2 · PKG4 — eased occlusion alpha (1 visible → 0 hidden behind a building)
@@ -1398,7 +1402,6 @@ export class IsoScene extends Phaser.Scene {
       // PLAYTEST FIX (Part 2) — release the health bar WITH the rest of the view. v.hpBar is a single Graphics
       // holding BOTH the fill AND the dark backing/track; it was missing from this list, so on death (when the
       // fill is ~0) the frozen backing leaked on screen as an orphaned "shadow". Tying it to the unit's render
-      // lifecycle here destroys fill + shadow together when the unit/body is finally removed.
       // lifecycle here destroys fill + shadow together when the unit/downed-body is finally removed.
       for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.hpBar, v.rig, v.rigDebug, v.rigText]) o?.destroy();
       this.units.splice(idx, 1);
@@ -1510,11 +1513,16 @@ export class IsoScene extends Phaser.Scene {
       // RTS-30e ATTACK recoil (one-shot): aim→fire kicks the figure back from its target; a melee
       // wind-up→swing lunges in then settles. RTS-30e HIT flinch: a short knock-back nudge when struck.
       let kick = 0, lift = 0;
+      const attackSample = v.attackStartedAt !== undefined && v.attackRigWeapon && v.attackUntil && now < v.attackUntil
+        ? sampleWeaponAttackPose(v.attackRigWeapon, now - v.attackStartedAt)
+        : undefined;
       if (v.attackUntil && now < v.attackUntil) {
-        const t = 1 - (v.attackUntil - now) / MOTION.attackRecoil; // 0→1 over the beat
+        const duration = Math.max(1, (v.attackUntil - (v.attackStartedAt ?? (v.attackUntil - MOTION.attackRecoil))));
+        const t = 1 - (v.attackUntil - now) / duration; // 0→1 over the beat
         const env = Math.sin(Math.min(1, t) * Math.PI); // ease in/out
         const dir = v.attackFaceRight ? 1 : -1;
-        if (v.attackKind === 'ranged') { kick = -dir * 5 * env; lift = -1.5 * env; } // recoil back + up
+        if (attackSample) { kick = dir * attackSample.bodyKickPx; lift = attackSample.bodyLiftPx; }
+        else if (v.attackKind === 'ranged') { kick = -dir * 5 * env; lift = -1.5 * env; } // recoil back + up
         else { kick = dir * 6 * env; lift = -3 * env; } // melee lunge in + up
       }
       if (v.hitUntil && now < v.hitUntil) {
@@ -1553,7 +1561,7 @@ export class IsoScene extends Phaser.Scene {
           const pose: RigPose = poseFor(v.gaitPhase, v.loco, now + seed * 7);
           const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? 1 : -1, 1);
           g.clear();
-          drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG);
+          drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG, attackSample);
           if (v.rigDebug && v.rigText) {
             const dg = v.rigDebug.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth + 1).setScale(faceRight ? 1 : -1, 1);
             dg.clear(); drawRigDebug(dg, pose);
@@ -1959,22 +1967,10 @@ export class IsoScene extends Phaser.Scene {
     const exGate = exThug && exTile
       ? canIssueMoveAndShakedown(this.state, exThug.id, businessId, exTile)
       : { ok: false, reason: 'select one of your thugs first' };
-    // PLAYTEST FIX (Finding C) — the primary front verb is now CLASSIFIED so RETAKE (a rival-HELD block) and
-    // DEFEND (your block under contest) read as distinct, each surfaced where the player looks. The contested
-    // check uses the front's district + the live contests; the gate stays the authoritative 35d one.
-    const frontDistrictId = exTile ? this.world.districtOfTile[exTile.gy * this.world.size + exTile.gx] : undefined;
-    const contested = !!frontDistrictId && !!this.state.contests?.some((c) => c.districtId === frontDistrictId);
-    const plan = classifyFrontAction({
-      rivalHeld: isRivalHeldFront(this.state, businessId),
-      extortable: !!extortProgress(this.state, businessId)?.extortable,
-      playerHeld: acts.earner === 'player',
-      contested,
-      gate: exGate,
-      hasSelection: this.selection.ids.length > 0,
-    });
+    const retakeLabel = isRivalHeldFront(this.state, businessId) ? 'RETAKE' : 'EXTORT';
 
     const rows: { label: string; color: string; enabled: boolean; hint: string; act: () => void }[] = [
-      { label: plan.label, color: plan.enabled ? SPEC.brass : NOIR_PALETTE.fog, enabled: plan.enabled, hint: plan.hint, act: () => plan.verb === 'defend' ? this.commandDefendBusiness(businessId) : this.commandExtortBusiness(businessId) },
+      { label: retakeLabel, color: exGate.ok ? SPEC.brass : NOIR_PALETTE.fog, enabled: exGate.ok, hint: exGate.reason, act: () => this.commandExtortBusiness(businessId) },
       { label: 'ATTACK', color: acts.attack.ok ? SPEC.danger : NOIR_PALETTE.fog, enabled: acts.attack.ok, hint: acts.attack.reason, act: () => this.commandAttackBusiness(businessId) },
     ];
 
@@ -2032,20 +2028,6 @@ export class IsoScene extends Phaser.Scene {
       : retake
         ? `your man is moving in to muscle ${name} back off the rival — he leans on it once he's at the door`
         : `your man is on the way to shake down ${name} — he leans on it once he's at the door`);
-  }
-
-  /** PLAYTEST FIX (Finding C) — DEFEND a player-held block that a rival is contesting: send the SELECTED
-   * muscle to the block so its presence holds the turf-war meter (the EXISTING defense — contestPresence
-   * counts units by position). This is the contested-defense action, distinct from RETAKE (a rival-HELD
-   * block). No new mechanic — just movement + a legible status. */
-  private commandDefendBusiness(businessId: string): void {
-    const tile = businessTileOf(this.layout, businessId);
-    if (!tile) return;
-    if (this.selection.ids.length === 0) { this.setStatus('select your muscle first, then DEFEND the block'); return; }
-    const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, tile, this.navGrid);
-    this.drawTargetMarker(tile, res.moved.length > 0);
-    const name = inspectBusiness(this.state, businessId)?.name ?? 'the block';
-    this.setStatus(`${res.moved.length > 1 ? `${res.moved.length} thugs` : 'your man'} moving in to HOLD ${name} — presence keeps the rival off it`);
   }
 
   /** RTS-35b — the thug ids currently committed to an embodied-extortion act (for the re-task readout). */
@@ -2647,8 +2629,10 @@ export class IsoScene extends Phaser.Scene {
   private triggerAttackMotion(view: UnitView | undefined, weapon: WeaponTier | undefined, targetWx: number): void {
     if (!view) return;
     const s = unitScreenPos(view.unit);
-    view.attackUntil = this.time.now + MOTION.attackRecoil;
+    view.attackStartedAt = this.time.now;
+    view.attackUntil = this.time.now + weaponAttackDurationMs(weapon);
     view.attackKind = attackMotionForWeapon(weapon);
+    view.attackRigWeapon = rigAttackWeaponFromTier(weapon);
     view.attackFaceRight = targetWx >= s.x;
   }
 

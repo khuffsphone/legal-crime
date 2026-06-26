@@ -11,8 +11,6 @@ import Phaser from 'phaser';
 import {
   type AudioBus, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
   combatCueKey, pickTake, conductBeds, orphanCueKey, holdBed, BED_MIN_INTERVAL_MS,
-  type SoftVoice, admitSoftSfx, softBurstActive,
-  SOFT_SFX_MAX, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD,
 } from './audioMap';
 
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
