@@ -151,6 +151,83 @@ export function cycleVolume(v: number): number {
   return next < -0.001 ? 1 : clampVolume(next);
 }
 
+// ── SOFT-SFX / VO GOVERNOR (pure decisions) ──────────────────────────────────────────────────────
+// The urgent governor (audio.ts) already holds urgent cues to one-at-a-time + ducks the beds. But the
+// NON-URGENT sfx (cashdrop, extort, the four grease cues, wire_routine, door, typewriter) and VO were
+// ungoverned — only a 70ms same-clip debounce — so a multi-racket extort sweep + cash drops + a grease +
+// a door all fired at once, full volume, over un-ducked beds (the muddiness). These pure functions decide,
+// Phaser-free, (1) which soft voices are admitted under a concurrency CAP, dropping the lowest-priority
+// rather than stacking, and (2) when enough soft cues land in a short window to warrant a light bed duck.
+// The AudioManager owns the Phaser sound objects + the active-voice bookkeeping; it only ASKS these.
+
+/** Max concurrent NON-URGENT sfx voices. Past this, the lowest-priority cue is dropped (never stacked). */
+export const SOFT_SFX_MAX = 3;
+
+/** Per-clip priority for the soft cap: wire/info-critical > cash/extort/grease > door/typewriter texture.
+ * When the cap is full the LOWEST priority loses (the incoming cue if it ties or is weaker — no thrash). */
+export const SOFT_SFX_PRIORITY: Record<string, number> = {
+  wire_routine: 3, // the Wire's routine tick — info-critical, stays audible over chatter
+  extort: 2, cashdrop: 2, // a racket folds / cash banked
+  grease_beat: 2, grease_bench: 2, grease_cityhall: 2, grease_bureau: 2, // a channel greased
+  door: 1, typewriter: 1, // texture — a slammed door, the adding machine
+};
+/** Priority for a soft cue not in the table (treated as economy-tier feedback). */
+export const SOFT_SFX_DEFAULT_PRIORITY = 2;
+
+/** A soft cue's drop-priority (higher = more important; survives the cap longer). Pure. */
+export function softSfxPriority(key: string): number {
+  return SOFT_SFX_PRIORITY[key] ?? SOFT_SFX_DEFAULT_PRIORITY;
+}
+
+/** A currently-sounding soft voice the manager is tracking. `startedMs` breaks priority ties (oldest loses). */
+export interface SoftVoice { key: string; startedMs: number; }
+
+/** The cap decision for one incoming soft cue: play it? and if so, does an active voice get evicted first? */
+export interface SoftAdmission { admit: boolean; evict: SoftVoice | null; }
+
+/**
+ * Decide whether an incoming NON-URGENT sfx may sound, given the voices already playing and the cap.
+ * Under the cap it's always admitted. AT the cap we compare priorities: if the incoming cue outranks the
+ * WEAKEST active voice (lowest priority, oldest on a tie), that voice is evicted and the incoming admitted;
+ * otherwise the incoming is dropped (a tie keeps the one already playing — no churn). Pure & deterministic.
+ */
+export function admitSoftSfx(
+  active: SoftVoice[],
+  incomingKey: string,
+  max: number = SOFT_SFX_MAX,
+): SoftAdmission {
+  if (active.length < max) return { admit: true, evict: null };
+  const incomingP = softSfxPriority(incomingKey);
+  let weakest = active[0];
+  for (const v of active) {
+    const p = softSfxPriority(v.key);
+    const wp = softSfxPriority(weakest.key);
+    if (p < wp || (p === wp && v.startedMs < weakest.startedMs)) weakest = v;
+  }
+  if (softSfxPriority(weakest.key) < incomingP) return { admit: true, evict: weakest };
+  return { admit: false, evict: null }; // incoming no more important than the weakest → don't stack
+}
+
+/** A burst of soft cues this many within the window ducks the beds briefly. */
+export const SOFT_BURST_WINDOW_MS = 400;
+export const SOFT_BURST_THRESHOLD = 3;
+
+/**
+ * Whether enough soft cues landed inside the window to read as a BURST (so the manager should briefly duck
+ * the beds under it, the way an urgent cue already does). `starts` is the recent soft-cue start times
+ * (the just-fired one included); counts those within `windowMs` of `nowMs`. Pure.
+ */
+export function softBurstActive(
+  starts: number[],
+  nowMs: number,
+  windowMs: number = SOFT_BURST_WINDOW_MS,
+  threshold: number = SOFT_BURST_THRESHOLD,
+): boolean {
+  let n = 0;
+  for (const t of starts) if (nowMs - t < windowMs) n++;
+  return n >= threshold;
+}
+
 // ── RTS-34 — orphan-clip wiring (free juice) ─────────────────────────────────────────────────────
 /** Route the previously-UNWIRED clips that shipped in public/audio/ onto sensible EXISTING beats:
  *  `door` (a door slam) → a LOCKOUT (the Bureau's forced entry on a rival); `typewriter` → LAUNDERING

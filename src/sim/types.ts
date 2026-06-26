@@ -120,11 +120,29 @@ export interface Business {
   extortVisits?: number;
 }
 
+/** DISTRICT RACKET POSTURE (Variant A) — the stance a PLAYER-controlled district's racket runs under. Each
+ * trades economy for risk. BALANCED is the neutral baseline (all modifiers 1.0) and the default when a
+ * district carries no posture. */
+export type DistrictPosture = 'BALANCED' | 'AGGRESSIVE' | 'FORTIFIED' | 'LOW_PROFILE';
+
+/** The posture state carried on a player district. Absent on a District ⇒ BALANCED. A requested change is
+ * staged in `pending` and promoted to `active` at the next PERIOD BOUNDARY (a tick() settlement); `setTick`
+ * anchors the change cooldown; `requestTick` anchors the boundary / contested delay. */
+export interface DistrictPostureState {
+  active: DistrictPosture;
+  pending?: DistrictPosture;
+  setTick: number;
+  requestTick?: number;
+}
+
 export interface District {
   id: string;
   name: string;
   /** familyId -> control points (0..CONTROL_MAX). Not forced to sum to 100. */
   control: Record<string, number>;
+  /** DISTRICT RACKET POSTURE (Variant A) — additive; absent ⇒ BALANCED. Only meaningful for a
+   * player-controlled district. Drives the posture modifier wrappers in districtPosture.ts. */
+  posture?: DistrictPostureState;
   policePresence: number; // 0..100
   businesses: Business[];
   /** Wealth tier 1..5 (RTS-16) — richer districts have fatter businesses and are worth more.

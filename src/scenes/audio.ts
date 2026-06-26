@@ -72,6 +72,12 @@ const LIBRARY: ClipDef[] = [
 
 const DEFS = new Map(LIBRARY.map((d) => [d.key, d]));
 const URGENT_DEBOUNCE = 120; // ms — don't stack/retrigger an urgent cue inside this window
+const SAME_CLIP_DEBOUNCE = 70; // ms — swallow a retrigger of the SAME clip inside this window
+// ── soft-SFX/VO governor knobs (mirrors the urgent governor). The CAP, priority table, and burst
+// window/threshold are pure data in audioMap.ts (SOFT_SFX_MAX / SOFT_SFX_PRIORITY / SOFT_BURST_*);
+// these two are the Phaser-side durations the manager applies once those pure decisions are made. ──
+const SOFT_BURST_DUCK_MS = 450; // a soft burst ducks the beds this long (lighter than an urgent's 700)
+const VO_MAX_MS = 6000; // failsafe: forget a still-"playing" VO after this, so one VO can't wedge the gate
 const SETTINGS_KEY = 'lcr.audio.settings.v1';
 
 export interface AudioSettings { master: number; sfx: number; vo: number; music: number; ambience: number; muted: boolean; }
@@ -83,6 +89,13 @@ export class AudioManager {
   private loaded = new Set<string>();
   private lastPlayed = new Map<string, number>();
   private urgentUntil = 0; // one urgent sound at a time
+  // SOFT-SFX GOVERNOR — the non-urgent voices currently sounding (capped at SOFT_SFX_MAX; the lowest
+  // priority is dropped/evicted, never stacked) + the recent soft-cue start times for burst detection.
+  private activeSoftVoices: { voice: SoftVoice; snd: Phaser.Sound.BaseSound }[] = [];
+  private recentSoftStarts: number[] = [];
+  // ONE VO AT A TIME — the VO currently speaking (was only caller-convention before). New VO drops while set.
+  private voActive?: Phaser.Sound.BaseSound;
+  private voUntil = 0;
   private musicSound?: Phaser.Sound.BaseSound;
   private ambienceSound?: Phaser.Sound.BaseSound;
   // RTS-31 — the conductor's live beds (≤1 after a crossfade settles) + the beds mid-fade-out, so a
@@ -135,30 +148,81 @@ export class AudioManager {
   }
 
   // ── discrete SFX / VO playback ──
-  /** Play a one-shot clip on its bus, honouring mute/volume, a per-clip debounce, and the single
-   * urgent-channel rule. No-op if the clip isn't loaded. */
+  /** Play a one-shot clip on its bus, honouring mute/volume, a per-clip debounce, and the per-bus
+   * governors: ONE urgent at a time (ducks the beds), a concurrency CAP on non-urgent sfx (lowest
+   * priority dropped, plus a duck under a burst), and ONE VO at a time. No-op if the clip isn't loaded. */
   play(key: string, opts: { volScale?: number } = {}): void {
     const def = DEFS.get(key);
     if (!def || !this.loaded.has(key) || this.busVolume(def.bus) <= 0) return;
     const now = this.scene.time.now;
     const last = this.lastPlayed.get(key) ?? -1e9;
-    if (now - last < 70) return; // debounce rapid repeats of the same clip
+    if (now - last < SAME_CLIP_DEBOUNCE) return; // debounce rapid repeats of the same clip
+
+    // ── URGENT GOVERNOR (unchanged) — one urgent sound at a time, ducks the beds ──
     if (def.urgent) {
-      if (now < this.urgentUntil) return; // one urgent sound at a time
+      if (now < this.urgentUntil) return;
       this.urgentUntil = now + URGENT_DEBOUNCE;
-      this.duck(700); // duck the beds under an urgent cue
+      this.duck(700);
+      this.lastPlayed.set(key, now);
+      this.scene.sound.play(key, { volume: this.voiceVolume(def, opts) });
+      return;
     }
+
+    // ── ONE VO AT A TIME — drop a new VO while one is still speaking (was caller-convention only) ──
+    if (def.bus === 'vo') {
+      if ((this.voActive && this.voActive.isPlaying) || now < this.voUntil) return;
+      this.lastPlayed.set(key, now);
+      this.duck(900); // VO speaks over a ducked bed — duck only once the gate admits it
+      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+      this.voActive = snd;
+      this.voUntil = now + VO_MAX_MS; // failsafe so a missed 'complete' can't wedge the gate forever
+      snd.once('complete', () => { if (this.voActive === snd) { this.voActive = undefined; this.voUntil = 0; } });
+      snd.play();
+      return;
+    }
+
+    // ── SOFT-SFX GOVERNOR — cap concurrent non-urgent voices; drop/evict the lowest priority ──
+    this.pruneSoftVoices();
+    const admission = admitSoftSfx(this.activeSoftVoices.map((v) => v.voice), key, SOFT_SFX_MAX);
+    if (!admission.admit) return; // at the cap and outranked → drop rather than stack
+    if (admission.evict) {
+      const victim = this.activeSoftVoices.find((v) => v.voice === admission.evict);
+      if (victim) { this.scene.tweens.killTweensOf(victim.snd); victim.snd.stop(); this.dropSoftVoice(victim.snd); }
+    }
+    // burst-duck: record this start and, if enough soft cues landed in the window, duck the beds under it
+    this.recentSoftStarts = this.recentSoftStarts.filter((t) => now - t < SOFT_BURST_WINDOW_MS);
+    this.recentSoftStarts.push(now);
+    if (softBurstActive(this.recentSoftStarts, now, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD)) this.duck(SOFT_BURST_DUCK_MS);
+
     this.lastPlayed.set(key, now);
-    const volume = this.busVolume(def.bus) * (def.vol ?? 1) * (opts.volScale ?? 1);
-    this.scene.sound.play(key, { volume });
+    const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+    const tracked = { voice: { key, startedMs: now }, snd };
+    this.activeSoftVoices.push(tracked);
+    snd.once('complete', () => this.dropSoftVoice(snd));
+    snd.play();
   }
 
-  /** Rotate a VO take from a list so it doesn't grate (gated by the caller for spam). */
+  /** Per-clip output volume = its bus level × the clip's own vol × an optional one-shot scale. */
+  private voiceVolume(def: ClipDef, opts: { volScale?: number }): number {
+    return this.busVolume(def.bus) * (def.vol ?? 1) * (opts.volScale ?? 1);
+  }
+
+  /** Forget a soft voice (on natural completion or eviction). */
+  private dropSoftVoice(snd: Phaser.Sound.BaseSound): void {
+    this.activeSoftVoices = this.activeSoftVoices.filter((v) => v.snd !== snd);
+  }
+
+  /** Drop any tracked soft voice Phaser has already finished (safety net if a 'complete' was missed). */
+  private pruneSoftVoices(): void {
+    this.activeSoftVoices = this.activeSoftVoices.filter((v) => v.snd.isPlaying);
+  }
+
+  /** Rotate a VO take from a list so it doesn't grate. The single-VO gate + the bed-duck now live in
+   * play()'s VO branch, so a take dropped by the gate no longer ducks the beds for nothing. */
   vo(takes: string[]): void {
     const pick = pickTake(takes.filter((k) => this.loaded.has(k)), this.lastVoIndex);
     if (!pick) return;
     this.lastVoIndex = pick.index;
-    this.duck(900);
     this.play(pick.key);
   }
 
