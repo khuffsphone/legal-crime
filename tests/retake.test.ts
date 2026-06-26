@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { createInitialState } from '../src/sim/state';
 import {
   canIssueMoveAndShakedown, createMoveAndShakedownAct, advanceEmbodiedExtortion,
-  isRivalHeldFront, frontGuard, isRetakeableFront,
+  applyCommandWithEmbodiedExtortion, isRivalHeldFront, frontGuard, isRetakeableFront,
 } from '../src/sim/extortionEmbodied';
 import { extortProgress } from '../src/sim/extortion';
 import { RETAKE_GUARD_RADIUS } from '../src/sim/constants';
@@ -81,6 +81,37 @@ describe('the eligibility gate — guarded blocks the retake, cleared opens it',
   it('without the front tile, a rival-held front stays rejected (back-compat: the un-taken-only 35b gate)', () => {
     const { s, frontId } = rivalHeld();
     expect(canIssueMoveAndShakedown(s, 'p', frontId).ok).toBe(false); // no tile → can't check the guard
+  });
+});
+
+describe('PLAYTEST REGRESSION — the WRAPPER (the path the scene uses) creates the retake act', () => {
+  // The scene issues a retake through applyCommandWithEmbodiedExtortion, passing the interaction tile. The
+  // bug: the wrapper dropped that tile when calling the gate, so a rival-HELD front fell through to "already
+  // pays" and NO act was created (retake silently did nothing). The other cases above build the act DIRECTLY
+  // via createMoveAndShakedownAct, never through the wrapper — which is exactly why they missed it. (The
+  // embodiment pass fixed this by forwarding the tile; these tests pin it in retake's canonical home so the
+  // wrapper-path bug cannot silently return.)
+  const apply = (s: GameState) => s; // the moveAndShakedown branch never delegates; this is unused
+  it('a guard-cleared rival-held front: the wrapper CREATES the shakedown act (given the interaction tile)', () => {
+    const { s, frontId } = rivalHeld(); // no guard → cleared
+    const act = applyCommandWithEmbodiedExtortion(s, { type: 'moveAndShakedown', familyId: s.player.id, thugId: 'p', frontId }, apply, FRONT_TILE);
+    expect(act).not.toBeNull();                       // ← the bug: was null
+    expect(act?.frontId).toBe(frontId);
+    expect(act?.state).toBe('approach');
+    expect(s.extortionActs?.some((a) => a.thugId === 'p' && a.frontId === frontId)).toBe(true);
+  });
+  it('a GUARDED rival-held front: the wrapper still refuses (no act) — the gate holds', () => {
+    const { s, frontId } = rivalHeld({ guardAt: { gx: 5, gy: 5 } });
+    const act = applyCommandWithEmbodiedExtortion(s, { type: 'moveAndShakedown', familyId: s.player.id, thugId: 'p', frontId }, apply, FRONT_TILE);
+    expect(act).toBeNull();
+  });
+  it('the un-taken 35b path is unaffected (the wrapper still creates that act)', () => {
+    const s = createInitialState(1, { bigCity: true });
+    const front = s.districts[0].businesses.find((b) => b.kind === 'front')!;
+    s.units = [{ id: 'p', pos: { ...FRONT_TILE }, path: [], speed: 1, factionId: s.player.id, role: 'enforcer' }];
+    const act = applyCommandWithEmbodiedExtortion(s, { type: 'moveAndShakedown', familyId: s.player.id, thugId: 'p', frontId: front.id }, apply, FRONT_TILE);
+    expect(act).not.toBeNull();
+    expect(act?.frontId).toBe(front.id);
   });
 });
 
