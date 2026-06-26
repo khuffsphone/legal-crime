@@ -151,6 +151,13 @@ export {
   recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
 } from './downedBodies';
 export {
+  previewAttackRival, previewExtortFront, previewRetakeFront, previewFederalAction, type IsVisible,
+} from './opPreview';
+export {
+  UNKNOWN, VISIBLE_ONLY, MAX_GLANCE_ROWS,
+  type OpVerb, type OpPreview, type PreviewRow, type PreviewTone,
+} from './opPreviewTypes';
+export {
   serializeGame, serializeToString, deserializeGame, cloneState, migrateSave,
   SAVE_SCHEMA_VERSION, type SaveFile, type LoadResult,
 } from './saveLoad';

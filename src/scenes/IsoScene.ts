@@ -146,6 +146,11 @@ import {
   extortProgress,
   canIssueMoveAndShakedown,
   isRivalHeldFront,
+  previewAttackRival,
+  previewExtortFront,
+  previewRetakeFront,
+  previewFederalAction,
+  type OpPreview,
   frontInteractionPoint,
   applyCommandWithEmbodiedExtortion,
   type EmbodiedExtortionAct,
@@ -198,6 +203,7 @@ import {
 } from './playability';
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
+import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
 import { initPause, togglePause as togglePauseState, type PauseState } from './pauseGate';
@@ -536,6 +542,12 @@ export class IsoScene extends Phaser.Scene {
   private vignette?: Phaser.GameObjects.Graphics;
   private shownCash = 0; private shownNet = 0; private cashInit = false; // RTS-34 top-bar count-up state
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
+  // OPERATION-OUTCOME PREVIEWS — a read-only, hover-driven projection card for the four player verbs. The
+  // pure selectors compute it; this scene only resolves the cursor target, holds the result, and draws it.
+  private opPreview?: OpPreview;                    // the live preview under the cursor (undefined = nothing to show)
+  private opPreviewG?: Phaser.GameObjects.Container; // the GLANCE/DETAIL card (fixed-camera HUD overlay)
+  private opAltHeld = false;                        // HOLD-ALT expands the glance card to its detail rows
+  private opCursor = { x: 0, y: 0 };                // last hover screen pos (to place the card)
   private actionTitle?: Phaser.GameObjects.Text; // RTS-28 ACTION BOARD (retired by the rts30b-ui toolbar)
   private actionBody?: Phaser.GameObjects.Text;
   // RTS-30b-ui — the clickable hotkey TOOLBAR: every key verb as a mouse-clickable button with its
@@ -1533,6 +1545,7 @@ export class IsoScene extends Phaser.Scene {
     this.drawMinimap(now);
     this.drawEdgeAlerts(now);
     this.drawWireLog();
+    this.drawOpPreview(); // OPERATION-OUTCOME PREVIEWS — the hover GLANCE/DETAIL card (read-only)
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
     // (earning) — and HIDDEN under the fog (so shrouded blocks/rivals stay unseen).
@@ -2856,9 +2869,46 @@ export class IsoScene extends Phaser.Scene {
     this.tooltipText = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100051).setVisible(false);
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (p.isDown) { this.hideTooltip(); return; }
+      if (p.isDown) { this.hideTooltip(); this.opPreview = undefined; return; }
       this.updateTooltip(p);
+      this.resolveOpPreview(p);
     });
+  }
+
+  /** OPERATION-OUTCOME PREVIEWS — resolve the read-only preview under the cursor. Reuses the SAME target
+   * routing as the contextual right-click (rival unit → attack; un-taken front → extort; rival-held front →
+   * retake), and falls back to the federal LOCKOUT projection on a rival when no muscle is selected to hit
+   * with — so the cursor always answers "what would committing here do?". Pure selectors do the work; this
+   * only picks which one and passes the fog predicate (NO-X-RAY). */
+  private resolveOpPreview(p: Phaser.Input.Pointer): void {
+    this.opCursor = { x: p.x, y: p.y };
+    // a HUD region owns this pixel (the tooltip explains it) — don't also pop a world preview over it.
+    if (this.hudRegionExplain(p.x, p.y) !== null) { this.opPreview = undefined; return; }
+    const isVis = (pos: { gx: number; gy: number }) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
+    const hitUnit = pickUnit(this.units.map((v) => v.unit), screenToGrid(p.worldX, p.worldY));
+    const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
+    const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
+    const thug = this.selectedPlayerThug();
+
+    if (rival) {
+      // a rival fighter: with muscle selected, preview the ATTACK; otherwise show what the Bureau could do.
+      this.opPreview = thug
+        ? previewAttackRival(this.state, thug.id, rival.id, isVis)
+        : (rival.factionId ? previewFederalAction(this.state, rival.factionId) : undefined);
+      return;
+    }
+    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    if (bizId) {
+      const tile = businessTileOf(this.layout, bizId);
+      // never preview a fogged building (NO-X-RAY) — and we need a tile for the spatial guard/retake checks.
+      if (!tile || !isVis(tile)) { this.opPreview = undefined; return; }
+      const actorId = thug?.id ?? '';
+      this.opPreview = isRivalHeldFront(this.state, bizId)
+        ? previewRetakeFront(this.state, actorId, bizId, tile, isVis)
+        : previewExtortFront(this.state, actorId, bizId, tile, isVis);
+      return;
+    }
+    this.opPreview = undefined; // empty ground — nothing to project
   }
 
   /** RTS-23: the plain-English explanation for a HUD region under the cursor (the anti-Gangsters
@@ -3223,6 +3273,10 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-J', () => this.commandTrade('sell'));
     // RTS-25 — perf overlay: live FPS · frame ms · text rasterisations/sec (the cost this pass cut).
     this.input.keyboard?.on('keydown-P', () => { this.perfVisible = !this.perfVisible; this.perfText?.setVisible(this.perfVisible); });
+    // OPERATION-OUTCOME PREVIEWS — HOLD-ALT expands the hover GLANCE card into its DETAIL rows. [ALT] is
+    // free in the keymap (audited); preventDefault keeps the browser from stealing the Alt menu.
+    this.input.keyboard?.on('keydown-ALT', (e: KeyboardEvent) => { e.preventDefault?.(); this.opAltHeld = true; });
+    this.input.keyboard?.on('keyup-ALT', (e: KeyboardEvent) => { e.preventDefault?.(); this.opAltHeld = false; });
   }
 
   update(_t: number, delta: number): void {
@@ -4646,6 +4700,38 @@ export class IsoScene extends Phaser.Scene {
       if (e.gx !== undefined && e.gy !== undefined) this.wireLogHits.push({ x, y: ry, w: 280, h: rowH, gx: e.gx, gy: e.gy, id: e.id });
     });
     this.wireLogG.add(objs);
+  }
+
+  /** OPERATION-OUTCOME PREVIEWS — draw the hover card. The pure formatter resolves tone→colour (the colour
+   * law lives there); this only lays out the rows on the fixed camera near the cursor. Nothing here reads or
+   * mutates sim state beyond the already-resolved view-model. Clears itself when there is nothing to show. */
+  private drawOpPreview(): void {
+    if (!this.opPreviewG) { this.opPreviewG = this.add.container(0, 0).setScrollFactor(0).setDepth(100052); this.hudFx(this.opPreviewG); }
+    this.opPreviewG.removeAll(true);
+    const preview = this.opPreview;
+    if (!preview) { this.opPreviewG.setVisible(false); return; }
+    this.opPreviewG.setVisible(true);
+
+    const pal: PreviewPalette = { brass: NOIR_PALETTE.brass, amber: WAR_AMBER_HEX, danger: SPEC.danger, bone: NOIR_PALETTE.bone };
+    const lines = formatPreviewLines(preview, this.opAltHeld, pal);
+    const padX = 8, padY = 7, rowH = 16, cardW = 268;
+    const cardH = padY * 2 + lines.length * rowH;
+    // place to the lower-right of the cursor, clamped on-screen.
+    let x = this.opCursor.x + 18, y = this.opCursor.y + 14;
+    x = Math.min(x, this.scale.width - cardW - 8);
+    y = Math.min(y, this.scale.height - cardH - 8);
+
+    const bg = this.add.graphics().setScrollFactor(0);
+    bg.fillStyle(PAL.ink, 0.92).fillRect(x, y, cardW, cardH);
+    bg.lineStyle(1, hexNum(preview.blocked ? SPEC.danger : NOIR_PALETTE.brass), 0.85).strokeRect(x, y, cardW, cardH);
+    this.opPreviewG.add(bg);
+    lines.forEach((l, i) => {
+      const t = this.mkText(x + padX, y + padY + i * rowH, l.text, {
+        fontFamily: l.bold ? NOIR_DISPLAY : NOIR_FONT, fontSize: l.bold ? '12px' : '11px',
+        color: l.color, fontStyle: l.bold ? 'bold' : 'normal',
+      }).setOrigin(0, 0);
+      this.opPreviewG!.add(t);
+    });
   }
 
   /** Resolve a HUD click on the minimap / a log row / an edge arrow. Returns true if it consumed the click. */
