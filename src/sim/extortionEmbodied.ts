@@ -359,19 +359,12 @@ export function applyCommandWithEmbodiedExtortion(
   const point = interaction ?? { gx: 0, gy: 0 };
   if (command.type === 'moveAndShakedown') {
     const c = command as MoveAndShakedownCommand;
-    // PLAYTEST FIX (retake) — forward the interaction TILE to the gate. The 35d retake branch is tile-gated,
-    // so without it a rival-HELD front always fell through to "already pays" and the wrapper returned null —
-    // the scene issued the move but NO act was created (retake did nothing). The un-taken 35b path is
-    // unaffected (it's ok before the tile branch). No rule/threshold change — a dropped-argument defect.
+    // PLAYTEST FIX — forward the interaction tile to the gate. The 35d RETAKE branch is tile-gated (the guard
+    // check is spatial), so without the tile a rival-HELD front always fell through to "already pays" and the
+    // wrapper returned null — the scene issued the move but NO shakedown act was ever created (retake did
+    // nothing). The wrapper already receives `interaction`; it just wasn't passing it to the gate. The
+    // un-taken 35b path is unaffected (it returns ok before the tile branch). No rule/threshold change.
     const gate = canIssueMoveAndShakedown(state, c.thugId, c.frontId, interaction);
-    if (!gate.ok) return null;
-    const act = createMoveAndShakedownAct(state, c.thugId, c.frontId, c.familyId, point);
-    state.extortionActs = [...(state.extortionActs ?? []).filter((a) => a.thugId !== c.thugId), act];
-    return act;
-  }
-  if (command.type === 'moveAndSabotage') {
-    const c = command as MoveAndSabotageCommand;
-    const gate = canIssueMoveAndSabotage(state, c.thugId, c.businessId, c.familyId);
     if (!gate.ok) return null;
     const act = createMoveAndSabotageAct(c.thugId, c.businessId, c.familyId, point);
     state.extortionActs = [...(state.extortionActs ?? []).filter((a) => a.thugId !== c.thugId), act];
