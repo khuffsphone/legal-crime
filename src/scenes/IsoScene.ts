@@ -109,7 +109,6 @@ import {
   businessEarner,
   isShutDown,
   businessActions,
-  resolveAttack,
   advanceRoutes,
   ensureBusinessCollector,
   cityRoster,
@@ -146,6 +145,7 @@ import {
   type PropPlacement,
   extortProgress,
   canIssueMoveAndShakedown,
+  canIssueMoveAndSabotage,
   isRivalHeldFront,
   previewAttackRival,
   previewExtortFront,
@@ -1383,7 +1383,11 @@ export class IsoScene extends Phaser.Scene {
     const idx = this.units.findIndex((v) => v.unit.id === id);
     if (idx >= 0) {
       const v = this.units[idx];
-      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.rig, v.rigDebug, v.rigText]) o?.destroy();
+      // PLAYTEST FIX (Part 2) — release the health bar WITH the rest of the view. v.hpBar is a single Graphics
+      // holding BOTH the fill AND the dark backing/track; it was missing from this list, so on death (when the
+      // fill is ~0) the frozen backing leaked on screen as an orphaned "shadow". Tying it to the unit's render
+      // lifecycle here destroys fill + shadow together when the unit/downed-body is finally removed.
+      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.hpBar, v.rig, v.rigDebug, v.rigText]) o?.destroy();
       this.units.splice(idx, 1);
     }
     this.state.units = this.state.units.filter((u) => u.id !== id);
@@ -2033,9 +2037,29 @@ export class IsoScene extends Phaser.Scene {
       const c = tile ? gridToScreen(tile.gx, tile.gy) : undefined;
       const name = inspectBusiness(this.state, ev.frontId)?.name ?? 'the block';
       const thugView = this.units.find((v) => v.unit.id === ev.thugId);
-      // INFO-FEEDBACK — log the extortion transition (front.converted / front.retaken / extort.failed).
+      // INFO-FEEDBACK — log the embodied transition (front.converted / front.retaken / extort.failed). The
+      // 'extort.failed' wording is kind-aware (a blown shakedown vs a hit that fell through).
       const ik = extortionEventKind(ev);
-      if (ik) this.recordInfoEvent(ik, ik === 'extort.failed' ? `shakedown on ${name} blown` : `${name} ${ev.retook ? 'muscled back' : 'now pays protection'}`, tile?.gx, tile?.gy);
+      if (ik) {
+        const msg = ik === 'extort.failed'
+          ? (ev.kind === 'sabotage' ? `the hit on ${name} fell through` : `shakedown on ${name} blown`)
+          : `${name} ${ev.retook ? 'muscled back' : 'now pays protection'}`;
+        this.recordInfoEvent(ik, msg, tile?.gx, tile?.gy);
+      }
+      // EMBODIMENT — the embodied building-ATTACK landed: the thug reached the racket and shut it down (the
+      // EXISTING resolveAttack already fired in the sim). Surface the danger-MOTION beat + the shutdown read.
+      if (ev.sabotaged) {
+        this.state = harvestIncidents(this.state);
+        if (c) {
+          this.triggerAttackMotion(thugView, thugView?.unit.weapon, c.x);
+          this.combatContact(c.x, c.y, combatVfxForVerb('attack'));
+          this.floatText(c.x, c.y - 30, 'SHUT DOWN', SPEC.danger);
+        }
+        this.signalBeat('attack');
+        this.setStatus(`${name} shut down — it stops producing`);
+        this.extortShoveAt.delete(ev.thugId);
+        continue;
+      }
       if (ev.converted) {
         // the EXISTING conversion already set extortedBy — surface the felt beat (mirror of the old flow).
         this.state = harvestIncidents(this.state);
@@ -2054,8 +2078,10 @@ export class IsoScene extends Phaser.Scene {
         continue;
       }
       if (ev.failed) {
-        if (c) this.floatText(c.x, c.y - 30, 'SHAKEDOWN BLOWN', SPEC.danger);
-        this.setStatus(`the shakedown on ${name} fell through — send muscle again when the block's clear`);
+        if (c) this.floatText(c.x, c.y - 30, ev.kind === 'sabotage' ? 'HIT BLOWN' : 'SHAKEDOWN BLOWN', SPEC.danger);
+        this.setStatus(ev.kind === 'sabotage'
+          ? `the hit on ${name} fell through — send muscle again when it's clear`
+          : `the shakedown on ${name} fell through — send muscle again when the block's clear`);
         this.extortShoveAt.delete(ev.thugId);
         continue;
       }
@@ -2126,23 +2152,30 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** ATTACK a specific building: temporarily shut it down (interdict a rival's racket). */
+  /** EMBODIMENT CONSISTENCY — ATTACK a business is now POSITIONAL (the mirror of the embodied shakedown):
+   * the SELECTED thug WALKS to the racket and dwells in proximity before it shuts down — no instant-at-range
+   * effect. The shutdown (the EXISTING resolveAttack) fires on arrival inside the sim (processExtortionEvents
+   * renders the beat). Selection is authoritative (consistent with 35b.1). */
   private commandAttackBusiness(businessId: string): void {
-    const res = resolveAttack(this.state, businessId, 'player');
-    this.state = harvestIncidents(this.state);
-    if (!res.ok) { this.setStatus(`can't attack: ${res.reason}`); return; }
     const tile = businessTileOf(this.layout, businessId);
-    if (tile) { this.sendSelectedTo(tile); const c = gridToScreen(tile.gx, tile.gy); this.floatText(c.x, c.y - 30, `SHUT DOWN ${res.weeks}wk`, SPEC.danger);
-      // RTS-30e: a muzzle-clash on the racket + the attacker's recoil.
-      const actor = this.actingUnitView(c.x, c.y); this.triggerAttackMotion(actor, actor?.unit.weapon, c.x); this.combatContact(c.x, c.y, combatVfxForVerb('attack')); }
+    if (!tile) return;
+    const thug = this.selectedPlayerThug();
+    if (!thug) { this.setStatus('select one of your thugs first, then send them to wreck the racket'); return; }
+    const gate = canIssueMoveAndSabotage(this.state, thug.id, businessId, 'player');
+    if (!gate.ok) { this.setStatus(`can't attack: ${gate.reason}`); return; }
+    const wasBusy = this.extortBusyThugIds().has(thug.id);
+    const interaction = frontInteractionPoint(tile);
+    issueMove(thug, interaction, this.navGrid);
+    // create the embodied act through the WRAPPER (applyCommand untouched) — it shuts the racket down on resolve.
+    applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndSabotage', familyId: 'player', thugId: thug.id, businessId }, () => {}, interaction);
+    this.focusBizId = businessId;
+    const c = gridToScreen(tile.gx, tile.gy);
+    this.flashAttackIntent(unitScreenPos(thug).x, unitScreenPos(thug).y, c.x, c.y); // the danger-MOTION intent tether (no static wash)
     this.signalBeat('attack');
-    const insp = inspectBusiness(this.state, businessId);
-    this.setStatus(`${insp?.name ?? 'business'} shut down for ${res.weeks} weeks — it stops producing`);
-  }
-
-  /** Walk the selected thugs to a tile (flavour for extort/attack; also a plain order). */
-  private sendSelectedTo(tile: { gx: number; gy: number }): void {
-    if (this.selection.ids.length === 0) return;
-    resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, tile, this.navGrid);
+    const name = inspectBusiness(this.state, businessId)?.name ?? 'the racket';
+    this.setStatus(wasBusy
+      ? `pulled your man off his last job — he's moving in to wreck ${name}`
+      : `your man is moving in to wreck ${name} — it shuts down once he's leaned on it`);
   }
 
   /** [T] — set up (or refresh) the automated collection route over your protected businesses. */
