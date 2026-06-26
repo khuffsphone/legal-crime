@@ -10,7 +10,7 @@
 import Phaser from 'phaser';
 import {
   type AudioBus, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
-  combatCueKey, pickTake, conductBeds, orphanCueKey,
+  combatCueKey, pickTake, conductBeds, orphanCueKey, holdBed, BED_MIN_INTERVAL_MS,
 } from './audioMap';
 
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
@@ -91,6 +91,7 @@ export class AudioManager {
   private retiringBeds: Phaser.Sound.BaseSound[] = [];
   private bedSeq = 0;
   private currentBed = '';
+  private bedSinceMs = Number.NEGATIVE_INFINITY; // when the live bed CLIP last switched (the sink-level dwell)
   private currentPhase: MusicPhase = 'TITLE';
   private lastVoIndex = -1;
 
@@ -192,10 +193,17 @@ export class AudioManager {
    * EVERY non-target bed (RTS-31), and HARD-CUTS any bed still fading from a prior change — so rapid
    * skip-week phase flips can never stack orphan beds (the old bug played 3 beds at once). */
   setPhase(phase: MusicPhase, force = false): void {
-    this.currentPhase = phase;
     const bed = musicBedForPhase(phase);
-    if (!force && bed === this.currentBed) return;
+    // SINK-LEVEL DWELL — hold the current bed unless this is a different clip AND (forced, or the min
+    // interval has elapsed). This is what makes transitions RARE even when the caller's requested phase
+    // oscillates per-frame (CONTEST↔FIRST BLOOD / the DECAPITATE floor). It GATES conductBeds below; the
+    // ≤1-bed crossfade lock is unchanged. A held request leaves currentBed/currentPhase untouched, so the
+    // every-frame conductor call simply retries until the dwell elapses (no desync).
+    const { hold, changed } = holdBed({ bed: this.currentBed, sinceMs: this.bedSinceMs }, bed, this.scene.time.now, BED_MIN_INTERVAL_MS, force);
+    if (!changed) return;
+    this.currentPhase = phase;
     this.currentBed = bed;
+    this.bedSinceMs = hold.sinceMs;
 
     // CROSSFADE LOCK — a fresh transition arrived: hard-cut any bed still fading out from the last one
     // so the audible count can't climb past the single outgoing→incoming crossfade pair.

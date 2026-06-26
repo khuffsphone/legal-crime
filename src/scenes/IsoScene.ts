@@ -440,8 +440,8 @@ export class IsoScene extends Phaser.Scene {
   private feelEnabled = true; // independently toggleable
   // POLISH v2 · PKG5 — the audio conductor's intensity-driven bed state (requested via the RTS-31 path).
   private conductor: ConductorState = initConductor('ESTABLISH');
-  private requestedBedPhase?: MusicPhase; // last bed REQUESTED through setPhase (idempotence guard)
   private lastCombatMs = Number.NEGATIVE_INFINITY; // when unit combat last fired (the activeCombat signal)
+  private lastWireRoutineMs = Number.NEGATIVE_INFINITY; // throttle the routine Wire soft-tick (no incident-burst rattle)
   private audioConductEnabled = true; // independently toggleable
   // RTS-26: the drawn building per business + its current style key + tile, so a vice upgrade can
   // MORPH it (speakeasy → casino) by redrawing on the event (cached between events, never per-frame).
@@ -4424,9 +4424,12 @@ export class IsoScene extends Phaser.Scene {
     if (last && last.seq !== this.lastIncidentSeq) {
       this.lastIncidentSeq = last.seq;
       const needsYou = last.severity === 'danger' || last.severity === 'warning';
-      if (needsYou) this.wireFlashUntil = this.time.now + 900;
       // RTS-27 progressive disclosure for the ears: only needs-you slips RING (📞); routine = soft tick.
-      this.audio?.wire(needsYou ? 'crisis' : 'routine');
+      // AUDIO PASS — the routine tick is THROTTLED (≥1.5s apart) so an incident BURST (combat downs / rival
+      // telegraphs once the war heats up) can't rattle it into a scratchy tick-tick-tick. Crisis rings stay
+      // responsive (a needs-you slip always rings + flashes).
+      if (needsYou) { this.wireFlashUntil = this.time.now + 900; this.audio?.wire('crisis'); }
+      else if (this.time.now - this.lastWireRoutineMs > 1500) { this.audio?.wire('routine'); this.lastWireRoutineMs = this.time.now; }
     }
     if (this.lastPhase && this.lastPhase !== phase) {
       this.flashPhaseChange(phase);
@@ -4470,7 +4473,10 @@ export class IsoScene extends Phaser.Scene {
       this.conductor = conductWithHysteresis(this.conductor, intensity, now);
       bed = matchPhase === 'DECAPITATE' ? 'DECAPITATE' : this.conductor.phase; // the endgame floors the bed
     }
-    if (this.requestedBedPhase !== bed) { this.audio?.setPhase(bed); this.requestedBedPhase = bed; }
+    // Request the bed EVERY frame: setPhase is idempotent (same bed → no-op) AND sink-dwell-gated, so the
+    // stage overrides (FIRST BLOOD / the DECAPITATE floor) can no longer thrash it. No requestedBedPhase
+    // guard here — that would desync when the dwell HOLDS a requested change; the retry next frame applies it.
+    this.audio?.setPhase(bed);
   }
 
   // ── RTS-27 audio settings surface ──────────────────────────────────────────────────────────
