@@ -14,6 +14,7 @@ export type EventKind =
   | 'front.converted' | 'front.retaken' | 'extort.failed'
   | 'district.lost' | 'district.captured' | 'rival.fallen'
   | 'unit.down' | 'collector.robbed' | 'hq.attack'
+  | 'rival.telegraph'
   | 'federal.threshold'
   | 'combat.hit';
 
@@ -41,6 +42,10 @@ export const EVENT_TAXONOMY: Record<EventKind, EventMeta> = {
   'unit.down':        { tier: 'warning',  positional: true,  dedupe: false, alert: true,  ping: true },
   'collector.robbed': { tier: 'warning',  positional: true,  dedupe: false, alert: true,  ping: true },
   'hq.attack':        { tier: 'critical', positional: true,  dedupe: false, alert: true,  ping: true },
+  // COMBAT DEPTH FINALIZE (Part C-1) — the rival STRIKE telegraph: a pre-strike WARNING (the player's one
+  // defensive window). Positional (it has a where), raises an edge alert + a ping, and never dedupes (each
+  // committed strike is its own state-change beat).
+  'rival.telegraph':  { tier: 'warning',  positional: true,  dedupe: false, alert: true,  ping: true },
   'federal.threshold':{ tier: 'critical', positional: false, dedupe: false, alert: false, ping: false }, // #3
   'combat.hit':       { tier: 'info',     positional: true,  dedupe: true,  alert: false, ping: false }, // #4
 };

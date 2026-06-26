@@ -140,12 +140,16 @@ export {
   unitHealth, isCombatant, hostile, enemyInRange, damageUnit, resolveProximityCombat, type CombatEvent,
 } from './combat';
 export {
-  meleeDamage, attackInterval, engageRange, WEAPON_TUNING,
+  meleeDamage, attackInterval, engageRange, unitCombatStrength, WEAPON_TUNING,
   MAX_HIT_DAMAGE, MIN_ATTACK_INTERVAL, SKILL_DMG_PER, SKILL_CADENCE_PER, SKILL_DEF_PER, type WeaponMult,
 } from './combatTuning';
 export {
   planRivalOffense, RIVAL_OFFENSE_TUNING,
+  committedForce, planTelegraph, strikeLeadMs, shouldRetreat,
+  RIVAL_TELEGRAPH_LEAD_MIN_MS, RIVAL_TELEGRAPH_LEAD_MAX_MS, RIVAL_RETREAT_TUNING,
   type RivalOffenseTuning, type RivalOrder, type RivalOffenseInput, type RivalOffensePlan,
+  type CommittableUnit, type CommittedForce, type RivalStrikeReason, type RivalTelegraph,
+  type TelegraphContext, type RivalRetreatTuning,
 } from './rivalOffense';
 export {
   recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
@@ -369,6 +373,7 @@ export {
   ENFORCER_SPECS,
   ENFORCER_TIERS,
   enforcerPresenceWeight,
+  enforcerUnitSkill,
   unitMusclePresence,
   PATROL_PRESENCE_BONUS,
   totalMusclePresence,

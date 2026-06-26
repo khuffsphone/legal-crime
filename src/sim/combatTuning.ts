@@ -70,3 +70,13 @@ export function attackInterval(attacker: MovableUnit): number {
 export function engageRange(attacker: Pick<MovableUnit, 'weapon'>): number {
   return COMBAT_ENGAGE_RANGE * multFor(attacker).range;
 }
+
+/**
+ * COMBAT DEPTH FINALIZE (Part B) — a unit's relative COMBAT STRENGTH for odds scoring: its weapon-tier
+ * damage weight scaled by its skill. A plain thug (no weapon, skill 0) = 1.0; a tommy/rifle/hitman scores
+ * higher. Reads the SAME tuning the resolver reads, so a rival's self-assessment matches how the fight
+ * actually resolves (no more counting every fist as equal to a tommy). Pure.
+ */
+export function unitCombatStrength(u: Pick<MovableUnit, 'weapon' | 'skill'>): number {
+  return multFor(u).dmg * (1 + skillOf(u) * SKILL_DMG_PER);
+}

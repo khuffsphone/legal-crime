@@ -117,6 +117,7 @@ import {
   rivalsDormant,
   recruitEnforcer,
   recruitableEnforcers,
+  enforcerUnitSkill,
   unitMusclePresence,
   unitActionChips,
   multiSelectChips,
@@ -212,8 +213,12 @@ import {
   exportSaveFile, importSaveFile, type SlotInfo,
 } from './saveStore';
 import type { LoadResult } from '../sim';
-// COMBAT DEPTH · PART 2 — the rival offensive planner (conservative; ⚠ needs a human balance playtest).
-import { planRivalOffense, type RivalOffenseInput } from '../sim';
+// COMBAT DEPTH · PART 2 + FINALIZE — the rival offensive planner (conservative; ⚠ needs a human balance
+// playtest) + accuracy/telegraph/retreat helpers (all pure).
+import {
+  planRivalOffense, committedForce, planTelegraph, shouldRetreat, unitCombatStrength,
+  RIVAL_OFFENSE_TUNING, type RivalOffenseInput, type RivalStrikeReason,
+} from '../sim';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
 import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
@@ -333,6 +338,20 @@ const FOUNTAIN_WATER = 0x2e3a3a; // muted water (never bright)
 
 // RTS-30a — the three discrete zoom stops (CLOSE / MID resting / FAR strategy).
 const ZOOM_STOPS = [1.0, 0.6, 0.35] as const;
+
+/** COMBAT DEPTH FINALIZE (Part C) — a rival's in-flight offensive: telegraphed (warning shown, lead counting
+ * down before the muscle moves) then active (force committed, monitored for retreat). */
+interface RivalStrike {
+  phase: 'telegraphed' | 'active';
+  kind: 'contestFront' | 'interceptUnit';
+  gx: number;
+  gy: number;
+  fireAtMs: number;    // when the committed force actually moves (end of the telegraph lead)
+  expireAtMs: number;  // commitment window end (set when it fires)
+  unitIds: string[];   // the committed force (for survivor/loss tracking + retreat)
+  initialCount: number;
+  reason: RivalStrikeReason;
+}
 
 interface UnitView {
   unit: MovableUnit;
@@ -522,7 +541,9 @@ export class IsoScene extends Phaser.Scene {
   // planner stays pure). ⚠ CONSERVATIVE — biased timid; needs a human balance playtest before any increase.
   private rivalOffenseAcc = 0;
   private rivalLastOffenseSec = new Map<string, number>();
-  private rivalOffenseUntilMs = new Map<string, number>();
+  // COMBAT DEPTH FINALIZE (Part C) — one in-flight strike per rival: telegraphed (warning shown, lead
+  // counting down) then active (force dispatched, monitored for retreat). Holds the rival's commitment slot.
+  private rivalStrikes = new Map<string, RivalStrike>();
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
   private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
   private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
@@ -1223,16 +1244,31 @@ export class IsoScene extends Phaser.Scene {
    * nearest free muscle toward the target tile — the existing 35a combat / contest then resolve it. NO new
    * verbs; reuses movement. ⚠ BALANCE-GATED — conservative seeds; needs a HUMAN PLAYTEST before any increase. */
   private tickRivalOffense(): void {
-    const nowSec = this.time.now / 1000;
+    const nowMs = this.time.now;
+    const nowSec = nowMs / 1000;
     const pid = this.state.player.id;
     const playerUnits = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed);
-    const strengthNear = (gx: number, gy: number): number => playerUnits.filter((u) => Math.hypot(u.pos.gx - gx, u.pos.gy - gy) <= 4).length;
+    // COMBAT DEPTH FINALIZE (Part B) — local DEFENDER strength is now weapon-tier + skill WEIGHTED (a tommy
+    // counts more than a fist), not a raw head-count, so the rival's odds reflect the fight it will get.
+    const strengthNear = (gx: number, gy: number): number => {
+      let s = 0;
+      for (const u of playerUnits) if (Math.hypot(u.pos.gx - gx, u.pos.gy - gy) <= 4) s += unitCombatStrength(u);
+      return s;
+    };
     for (const rival of this.state.rivals) {
       if (!rival.alive) continue;
       const rid = rival.id;
+
+      // 1) an in-flight strike (telegraphed → fired → monitored) owns this rival's commitment slot.
+      const strike = this.rivalStrikes.get(rid);
+      if (strike && this.advanceRivalStrike(rid, strike, nowMs, strengthNear)) continue;
+
+      // 2) otherwise plan a NEW commit. The odds are scored on the ACTUALLY-committed force (committedForce,
+      //    garrison reserve withheld) — not the whole idle pool — so the rival stops over-crediting itself.
       const muscle = this.state.units.filter((u) => u.factionId === rid && u.role !== 'collector' && !u.downed);
       if (muscle.length === 0) continue;
       const free = muscle.filter((u) => u.path.length === 0);
+      const cf = committedForce(free, RIVAL_OFFENSE_TUNING.minMuscle);
       const fronts = allBusinesses(this.state)
         .filter((b) => b.kind === 'front' && b.extortedBy === pid)
         .map((b) => { const t = businessTileOf(this.layout, b.id); return t ? { frontId: b.id, gx: t.gx, gy: t.gy, defenderStrength: Math.max(1, strengthNear(t.gx, t.gy)) } : undefined; })
@@ -1241,24 +1277,81 @@ export class IsoScene extends Phaser.Scene {
       const input: RivalOffenseInput = {
         rivalId: rid, nowSec,
         lastOffenseSec: this.rivalLastOffenseSec.get(rid) ?? Number.NEGATIVE_INFINITY,
-        activeOrders: this.time.now < (this.rivalOffenseUntilMs.get(rid) ?? 0) ? 1 : 0,
-        freeMuscle: free.length, attackerStrength: muscle.length,
+        activeOrders: this.rivalStrikes.has(rid) ? 1 : 0, // a telegraphed/active strike IS the one in flight
+        freeMuscle: free.length, attackerStrength: cf.strength,
         fronts, units, rngState: this.state.rngState,
       };
       const plan = planRivalOffense(input);
       this.state.rngState = plan.rngState; // keep the world deterministic (no-op unless the commit roll drew)
       const order = plan.orders[0];
-      if (!order) continue;
-      // apply: send the rival's nearest free muscle (else any muscle) to the target — 35a/contest resolves it.
-      const pool = free.length ? free : muscle;
-      let actor = pool[0]; let bestD = Infinity;
-      for (const u of pool) { const d = Math.hypot(u.pos.gx - order.gx, u.pos.gy - order.gy); if (d < bestD) { bestD = d; actor = u; } }
-      if (actor) {
-        issueMove(actor, { gx: order.gx, gy: order.gy }, this.navGrid);
-        this.rivalLastOffenseSec.set(rid, nowSec);
-        this.rivalOffenseUntilMs.set(rid, this.time.now + 20000); // ~20s commitment window
-      }
+      if (!order || cf.units.length === 0) continue;
+      // TELEGRAPH first — emit the pre-strike beat + schedule the dispatch; the muscle does NOT move yet.
+      this.telegraphRivalStrike(rid, order, cf.units);
+      this.rivalLastOffenseSec.set(rid, nowSec);
     }
+  }
+
+  /** COMBAT DEPTH FINALIZE (Part C) — drive one rival's in-flight strike. Returns true while it still owns the
+   * commitment slot. Telegraphed → holds until the lead elapses, then FIRES (dispatches the committed force).
+   * Active → re-checks the local edge each frame and RETREATS (recalls the survivors to the rival HQ) when the
+   * odds collapse or losses pass the cap; expires after a commitment window. Reuses movement/35a — no new verb. */
+  private advanceRivalStrike(rid: string, strike: RivalStrike, nowMs: number, strengthNear: (gx: number, gy: number) => number): boolean {
+    const surviving = strike.unitIds
+      .map((id) => this.state.units.find((u) => u.id === id))
+      .filter((u): u is MovableUnit => !!u && !u.downed);
+    if (surviving.length === 0) { this.rivalStrikes.delete(rid); return false; } // the strike force is gone
+
+    if (strike.phase === 'telegraphed') {
+      if (nowMs < strike.fireAtMs) return true;             // still inside the player's defensive window
+      for (const u of surviving) issueMove(u, { gx: strike.gx, gy: strike.gy }, this.navGrid); // FIRE
+      strike.phase = 'active';
+      strike.expireAtMs = nowMs + 20000;                    // ~20s commitment window
+      return true;
+    }
+
+    // ACTIVE — fair retreat: break off if the edge collapsed or losses exceeded the cap (reserve already held).
+    let atk = 0; for (const u of surviving) atk += unitCombatStrength(u);
+    const localAdvantage = atk / Math.max(0.0001, strengthNear(strike.gx, strike.gy));
+    const lossFraction = (strike.initialCount - surviving.length) / Math.max(1, strike.initialCount);
+    if (shouldRetreat(localAdvantage, lossFraction)) {
+      const home = hqTileOf(this.layout, rid) ?? unitTile(surviving[0]);
+      for (const u of surviving) issueMove(u, home, this.navGrid); // RECALL — pull back, don't grind it down
+      this.rivalStrikes.delete(rid);
+      return true;
+    }
+    if (nowMs > strike.expireAtMs) { this.rivalStrikes.delete(rid); return false; } // window elapsed → free again
+    return true;
+  }
+
+  /** COMBAT DEPTH FINALIZE (Part C-1) — TELEGRAPH a committed strike through q7: a WIRE line + an edge alert +
+   * a ping, with a 'why' reason and a consequence-scaled LEAD (higher stakes ⇒ longer warning). Records the
+   * pending strike so advanceRivalStrike fires it after the lead. The pre-strike beat is the player's one
+   * meaningful defensive decision. */
+  private telegraphRivalStrike(rid: string, order: { kind: 'contestFront' | 'interceptUnit'; gx: number; gy: number; frontId?: string; targetUnitId?: string }, units: MovableUnit[]): void {
+    let consequence01 = 0.3; let carrying = false; let escorted = false;
+    const size = this.world.size;
+    const inb = order.gx >= 0 && order.gy >= 0 && order.gx < size && order.gy < size;
+    const did = inb ? this.world.districtOfTile[Math.round(order.gy) * size + Math.round(order.gx)] : undefined;
+    const where = did ? this.districtName(did) : 'the open street';
+    if (order.kind === 'contestFront') {
+      const biz = allBusinesses(this.state).find((b) => b.id === order.frontId);
+      consequence01 = Math.min(1, (biz?.baseIncome ?? 0) / 200); // richer block = higher stakes = longer lead
+    } else {
+      const target = this.state.units.find((u) => u.id === order.targetUnitId);
+      carrying = !!target && (target.carrying ?? 0) > 0;
+      consequence01 = carrying ? Math.min(1, (target!.carrying ?? 0) / 600) : 0.2;
+      escorted = carrying && this.nearestPlayerThug(target!) !== undefined; // a thug guarding the carrier
+    }
+    const tg = planTelegraph(order.kind, { consequence01, carrying, escorted });
+    const message = order.kind === 'interceptUnit' && carrying
+      ? `Your collector is being watched on ${where} — ${tg.reason}`
+      : `Rival lookouts near ${where} — ${tg.reason}`;
+    this.recordInfoEvent('rival.telegraph', message, order.gx, order.gy);
+    this.rivalStrikes.set(rid, {
+      phase: 'telegraphed', kind: order.kind, gx: order.gx, gy: order.gy,
+      fireAtMs: this.time.now + tg.leadMs, expireAtMs: 0,
+      unitIds: units.map((u) => u.id), initialCount: units.length, reason: tg.reason,
+    });
   }
 
   private nearestCarrierInDistrict(districtId: string): MovableUnit | undefined {
@@ -2307,6 +2400,10 @@ export class IsoScene extends Phaser.Scene {
     if (!hq) return;
     const u = spawnUnit(`muscle-${weapon ?? 'thug'}-${this.state.tick}-${this.units.length}`, hq.gx, hq.gy, STROLL_SPEED);
     u.weapon = weapon;
+    // COMBAT DEPTH FINALIZE (Part A) — copy the enforcer's combat SKILL (= the recruited gangster's skill)
+    // onto the on-map unit so the already-built+tested tuning modifiers fire. The caps guarantee no
+    // burst-delete even at skill 10, so this is a safe realization of the intended depth, not a new mechanic.
+    u.skill = enforcerUnitSkill(weapon);
     this.addUnit(u, 'player');
     const c = gridToScreen(hq.gx, hq.gy);
     this.floatText(c.x, c.y - 30, weapon ? `NEW ${weapon.toUpperCase()}` : 'NEW MUSCLE', NOIR_PALETTE.brass);
