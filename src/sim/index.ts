@@ -168,9 +168,10 @@ export {
 export {
   tickEmbodiedExtortionAct, advanceEmbodiedExtortion, applyCommandWithEmbodiedExtortion,
   canIssueMoveAndShakedown, createMoveAndShakedownAct, frontInteractionPoint, isAtFront, isPresentForShakedown,
+  canIssueMoveAndSabotage, createMoveAndSabotageAct,
   isRivalHeldFront, frontGuard, isRetakeableFront,
-  type EmbodiedExtortionAct, type EmbodiedExtortionState, type EmbodiedExtortionEvent,
-  type ExtortionTickInput, type MoveAndShakedownCommand,
+  type EmbodiedActKind, type EmbodiedExtortionAct, type EmbodiedExtortionState, type EmbodiedExtortionEvent,
+  type ExtortionTickInput, type MoveAndShakedownCommand, type MoveAndSabotageCommand,
 } from './extortionEmbodied';
 export {
   federalTierLabel,
@@ -345,6 +346,16 @@ export {
   type DistrictRow,
   type CitySummary,
 } from './districtStatus';
+export {
+  POSTURE_MODS, POSTURES, postureOf, pendingPostureOf, postureMods,
+  posturedDirtyIncome, posturedCleanIncome, posturedLocalHeat, posturedControlPressureOut,
+  posturedControlDecay, posturedProvocation, posturedExpansionPressure,
+  posturedCollectorCarry, posturedCollectorSafety, posturedDefense, posturedFederalEvidence,
+  aggressiveBackfireMitigation,
+  isPosturable, postureCooldownTicks, canRequestPosture, requestPosture, applyPostureBoundary,
+  posturePreviewRow, postureContestRumor,
+  type PostureMods, type PostureGate,
+} from './districtPosture';
 export {
   unitRepertoire,
   unitActionChips,

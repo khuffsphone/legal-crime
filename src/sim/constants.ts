@@ -380,3 +380,23 @@ export const CONTEST_MUSCLE_PER_INVASION = 2; // rival muscle units moved into a
 // by more than this; an even match still slowly falls (the rival is on the offensive). The meter is the
 // single visible authority for a contested district's block flips (the background capture is suspended).
 export const CONTEST_INVADER_DRIFT = 1;
+
+// ── DISTRICT RACKET POSTURE (Variant A) — change pacing + bribery-bend bounds (canon-review tuning) ──────
+// Posture changes are STAGED and apply at the next PERIOD BOUNDARY (a tick() settlement). A district cannot
+// switch posture again until POSTURE_CHANGE_COOLDOWN_TICKS settlements after the last one took effect;
+// changing posture in a CONTESTED district waits POSTURE_CONTESTED_EXTRA_TICKS extra settlements (it takes
+// longer under fire). One tick() = one settlement period ("a day").
+export const POSTURE_CHANGE_COOLDOWN_TICKS = 1; // ≥1 settlement between posture changes (once per period)
+export const POSTURE_APPLY_DELAY_TICKS = 1;     // a staged change promotes at the NEXT boundary
+export const POSTURE_CONTESTED_EXTRA_TICKS = 1; // +settlements before a change lands while CONTESTED
+// Bribery BENDS posture outcomes within bounds — never immunity (a hard floor/cap keeps risk non-zero).
+export const POSTURE_FEDS_EVIDENCE_PER = 0.01;  // per feds-bribe point: evidence-gain reduction
+export const POSTURE_FEDS_EVIDENCE_MAX = 0.30;  // cap on feds evidence relief (never zeroes evidence)
+export const POSTURE_POLICE_SAFETY_PER = 0.004; // per police-bribe point: collector-safety bend
+export const POSTURE_POLICE_SAFETY_MAX = 0.15;  // cap on police safety bend
+export const POSTURE_SAFETY_CAP = 0.97;         // collector safety can never reach 1.0 (no immunity)
+export const POSTURE_POLICE_DEFENSE_PER = 0.004;// per police-bribe point: FORTIFIED defense bend
+export const POSTURE_POLICE_DEFENSE_MAX = 0.20; // cap on police defense bend
+export const POSTURE_JUDGES_BACKFIRE_PER = 0.01;// per judges-bribe point: softens a failed-AGGRESSIVE hit
+export const POSTURE_JUDGES_BACKFIRE_MAX = 0.50;// cap on judge mitigation (never fully immune)
+export const POSTURE_EVIDENCE_FLOOR = 0.40;     // dirty evidence-gain never falls below this fraction
