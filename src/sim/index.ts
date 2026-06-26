@@ -143,6 +143,10 @@ export {
   recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
 } from './downedBodies';
 export {
+  serializeGame, serializeToString, deserializeGame, cloneState, migrateSave,
+  SAVE_SCHEMA_VERSION, type SaveFile, type LoadResult,
+} from './saveLoad';
+export {
   tickEmbodiedExtortionAct, advanceEmbodiedExtortion, applyCommandWithEmbodiedExtortion,
   canIssueMoveAndShakedown, createMoveAndShakedownAct, frontInteractionPoint, isAtFront, isPresentForShakedown,
   isRivalHeldFront, frontGuard, isRetakeableFront,

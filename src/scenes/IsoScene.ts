@@ -201,6 +201,11 @@ import { orderVerbFor, type OrderTarget } from './orderRouting';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
 import { initPause, togglePause as togglePauseState, type PauseState } from './pauseGate';
+import {
+  listSaveSlots, writeSaveSlot, readSaveSlot, deleteSaveSlot, quickSave, quickLoad,
+  exportSaveFile, importSaveFile, type SlotInfo,
+} from './saveStore';
+import type { LoadResult } from '../sim';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -485,6 +490,8 @@ export class IsoScene extends Phaser.Scene {
   private timeScale = 1;            // fast-forward multiplier (1× / 2× / 4×)
   private pause: PauseState = initPause(); // GLOBAL ACTIVE-PAUSE — halts the sim tick; camera/UI stay live
   private pausedBanner?: Phaser.GameObjects.Container; // the PAUSED indicator
+  private saveMenu?: Phaser.GameObjects.Container;     // SAVE/LOAD menu (fixed HUD camera)
+  private saveButton?: Phaser.GameObjects.Text;        // the HUD entry point
   private skipWeekPending = false;  // consume on the next update to jump to the next week boundary
   private ffButton?: Phaser.GameObjects.Text;   // on-screen fast-forward control
   private skipButton?: Phaser.GameObjects.Text; // on-screen skip-week control
@@ -591,10 +598,18 @@ export class IsoScene extends Phaser.Scene {
     // RTS-11: start with a small loyal crew so the opening is fair (muscle + defense).
     // RTS-12/16: a fair opening (loyal crew + one protected run) on the BIG contested city —
     // a 9-district turf war against two active rival families.
-    this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
-    // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
-    this.state.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
-    this.applyDebugScenario();
+    // SAVE/LOAD — if a save was loaded, restart() left the deserialized state in the registry; adopt it (a
+    // full clean re-init of every view layer from the saved tree) instead of starting a fresh game.
+    const loaded = this.registry.get('lcr_loaded_state') as GameState | undefined;
+    if (loaded) {
+      this.registry.remove('lcr_loaded_state');
+      this.state = loaded;
+    } else {
+      this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
+      // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
+      this.state.rivalWakeWeek = RIVAL_DORMANT_WEEKS;
+      this.applyDebugScenario();
+    }
     // RTS-30a: the SPARSE LARGER world — buildings placed apart with setbacks across a 96² map,
     // partitioned into districts. WorldLayout extends MapLayout, so collectors/routes consume it
     // unchanged. The ground/streets/parks are CULLED to the viewport (drawGround), not 4096 Images.
@@ -649,6 +664,7 @@ export class IsoScene extends Phaser.Scene {
     this.setupUiCamera();
     // RTS-34: the noir mood overlay (grain + vignette) on the fixed UI camera, below every HUD element.
     this.buildFxOverlay();
+    this.buildSaveButton(); // SAVE/LOAD entry point (fixed HUD camera)
     // consigliere: the extort-first tip on a fresh load (gated to once)
     this.fireTipOnce('extort');
   }
@@ -4263,6 +4279,121 @@ export class IsoScene extends Phaser.Scene {
       this.pausedBanner?.destroy(true);
       this.pausedBanner = undefined;
     }
+  }
+
+  // ── SAVE / LOAD ───────────────────────────────────────────────────────────────────────────────
+
+  /** Adopt a deserialized save: stash it in the registry and RESTART the scene so every view layer is
+   * cleanly rebuilt from the loaded tree (create() picks it up). */
+  private loadGame(state: GameState): void {
+    this.registry.set('lcr_loaded_state', state);
+    this.scene.restart();
+  }
+
+  private handleLoadResult(r: LoadResult, sourceLabel: string): void {
+    if (r.ok) { this.closeSaveMenu(); this.loadGame(r.state); }
+    else this.setStatus(`load failed (${sourceLabel}): ${r.reason}`);
+  }
+
+  /** The HUD entry-point button (top-left, fixed camera). */
+  private buildSaveButton(): void {
+    this.saveButton = this.mkText(12, 12, '⛁ SAVE / LOAD', {
+      fontFamily: NOIR_DISPLAY, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807ee',
+    }).setScrollFactor(0).setDepth(100050).setPadding(8, 5, 8, 5).setInteractive({ useHandCursor: true });
+    this.saveButton.on('pointerdown', () => this.toggleSaveMenu());
+    this.hudFx(this.saveButton);
+  }
+
+  private toggleSaveMenu(): void {
+    if (this.saveMenu) { this.closeSaveMenu(); return; }
+    this.buildSaveMenu();
+  }
+
+  private closeSaveMenu(): void {
+    this.saveMenu?.destroy(true);
+    this.saveMenu = undefined;
+  }
+
+  private nowMs(): number {
+    return typeof Date !== 'undefined' ? Date.now() : this.time.now;
+  }
+
+  /** Build the SAVE/LOAD menu on the fixed HUD camera: quick-save + new-save, the slot list (load/delete),
+   * and file export/import. Rebuilt fresh each open so the slot list is current. */
+  private buildSaveMenu(): void {
+    this.closeSaveMenu();
+    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
+    const pw = 460, ph = 380, px = cx - pw / 2, py = cy - ph / 2;
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const backdrop = this.add.rectangle(0, 0, w, h, PAL.soot, 0.7).setOrigin(0, 0).setInteractive();
+    backdrop.on('pointerdown', () => this.closeSaveMenu()); // click-off closes (the menu is non-destructive)
+    objs.push(backdrop);
+    objs.push(this.add.rectangle(cx, cy, pw, ph, PAL.ink, 0.98).setStrokeStyle(2, PAL.brass, 0.95).setInteractive()); // swallow clicks on the panel
+    objs.push(this.mkText(cx, py + 16, 'SAVE / LOAD', { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0));
+
+    const mkBtn = (bx: number, by: number, label: string, color: string, fn: () => void): Phaser.GameObjects.Text => {
+      const t = this.mkText(bx, by, label, { fontFamily: NOIR_DISPLAY, fontSize: '13px', color, fontStyle: 'bold', backgroundColor: '#0a0807' })
+        .setOrigin(0, 0).setPadding(8, 5, 8, 5).setInteractive({ useHandCursor: true });
+      t.on('pointerdown', fn);
+      objs.push(t);
+      return t;
+    };
+
+    // top action row: quick-save / new-save / export / import / close
+    mkBtn(px + 16, py + 50, '⚡ QUICK SAVE', NOIR_PALETTE.brass, () => this.doQuickSave());
+    mkBtn(px + 150, py + 50, '↺ QUICK LOAD', NOIR_PALETTE.brass, () => this.handleLoadResult(quickLoad(), 'quick'));
+    mkBtn(px + 284, py + 50, '＋ NEW', NOIR_PALETTE.brass, () => this.doNewSave());
+    mkBtn(px + pw - 44, py + 12, '✕', SPEC.danger, () => this.closeSaveMenu());
+    mkBtn(px + 16, py + 84, '⬆ IMPORT FILE', NOIR_PALETTE.bone, () => this.doImport());
+    mkBtn(px + 150, py + 84, '⇩ EXPORT FILE', NOIR_PALETTE.bone, () => { exportSaveFile(this.state, 'game', this.nowMs()); this.setStatus('save exported to a file'); });
+
+    // the slot list
+    const slots = listSaveSlots();
+    objs.push(this.mkText(px + 16, py + 122, slots.length ? 'SAVED GAMES' : 'no saves yet — QUICK SAVE or NEW SAVE', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.fog }).setOrigin(0, 0));
+    slots.slice(0, 6).forEach((s, i) => {
+      const ry = py + 146 + i * 36;
+      objs.push(this.mkText(px + 16, ry, this.slotLine(s), { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone }).setOrigin(0, 0));
+      mkBtn(px + pw - 150, ry - 3, 'LOAD', NOIR_PALETTE.brass, () => this.handleLoadResult(readSaveSlot(s.slot), s.label));
+      mkBtn(px + pw - 84, ry - 3, 'DEL', SPEC.danger, () => { deleteSaveSlot(s.slot); this.buildSaveMenu(); });
+    });
+
+    const c = this.add.container(0, 0, objs).setScrollFactor(0).setDepth(130000);
+    this.hudFx(c);
+    this.saveMenu = c;
+  }
+
+  private slotLine(s: SlotInfo): string {
+    const when = s.savedAt > 0 ? new Date(s.savedAt).toLocaleString() : 'unknown time';
+    return `${s.label || s.slot}  ·  ${when}`;
+  }
+
+  private doQuickSave(): void {
+    const r = quickSave(this.state, this.nowMs());
+    this.setStatus(r.ok ? 'quick-saved' : `save failed: ${r.reason}`);
+    if (r.ok) this.buildSaveMenu();
+  }
+
+  private doNewSave(): void {
+    // auto-named numbered slots (slot-1..N); reuse the lowest free number, else overwrite the oldest.
+    const used = new Set(listSaveSlots().map((s) => s.slot));
+    let slot = '';
+    for (let i = 1; i <= 6; i++) { if (!used.has(`s${i}`)) { slot = `s${i}`; break; } }
+    if (!slot) slot = listSaveSlots().sort((a, b) => a.savedAt - b.savedAt)[0]?.slot ?? 's1';
+    const r = writeSaveSlot(slot, this.state, `Week ${this.state.tick} · $${Math.round(this.state.player.cash)}`, this.nowMs());
+    this.setStatus(r.ok ? `saved (${slot})` : `save failed: ${r.reason}`);
+    if (r.ok) this.buildSaveMenu();
+  }
+
+  private doImport(): void {
+    if (typeof document === 'undefined') { this.setStatus('file import needs a browser'); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (f) importSaveFile(f).then((r) => this.handleLoadResult(r, 'file'));
+    };
+    input.click();
   }
 
   // ── RTS-28 fast-forward / skip-week ─────────────────────────────────────────────────────────
