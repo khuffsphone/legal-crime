@@ -209,6 +209,7 @@ import {
   idleUnitIds, nextIdleId, bindGroup, recallGroup, pruneGroup, isCenterRecall, idsInScreenRect,
   type ControlGroups, type RecallTap,
 } from './selectionControl';
+import {
   type UnitOrder, type OrderUnit, holdOrder, attackMoveOrder, resolveAutoOrder,
   ATTACK_MOVE_ACQUIRE_RADIUS,
 } from './combatOrders';
