@@ -12,6 +12,18 @@ import type { GameState } from './types';
 /** Bump when the GameState shape changes in a way old saves can't satisfy. v1 = the first real save format. */
 export const SAVE_SCHEMA_VERSION = 1;
 
+/**
+ * View-layer state that lives OUTSIDE the pure GameState but must restore EXACTLY as saved — chiefly the FOG
+ * of war (the set of revealed tile keys). Persisting it is what makes a load restore visibility byte-for-byte:
+ * explored ground stays explored, and a rival that was hidden stays hidden (NO-X-RAY) instead of the fog being
+ * recomputed from current positions. Additive + optional: a save without a `view` (an older save) simply has
+ * the scene recompute fog as before. Pure data (a plain string[], JSON-faithful).
+ */
+export interface SaveView {
+  /** Revealed fog tile keys ("gx,gy"); the scene rehydrates a Set from this. */
+  fog?: string[];
+}
+
 export interface SaveFile {
   /** The schema version this save was written with. */
   version: number;
@@ -22,6 +34,8 @@ export interface SaveFile {
   label: string;
   /** The COMPLETE deterministic game state (rngState included). */
   state: GameState;
+  /** Optional view-layer state (fog) that must restore exactly as saved. Absent on older saves. */
+  view?: SaveView;
 }
 
 /** A faithful deep clone of the pure GameState. JSON round-trip is exact here because the state tree is pure
@@ -31,18 +45,21 @@ export function cloneState(state: GameState): GameState {
 }
 
 /** Build a version-stamped SaveFile from a live state. `meta.savedAt` is caller-supplied (keeps this pure). */
-export function serializeGame(state: GameState, meta?: { label?: string; savedAt?: number }): SaveFile {
-  return {
+export function serializeGame(state: GameState, meta?: { label?: string; savedAt?: number }, view?: SaveView): SaveFile {
+  const file: SaveFile = {
     version: SAVE_SCHEMA_VERSION,
     savedAt: meta?.savedAt ?? 0,
     label: meta?.label ?? '',
     state: cloneState(state),
   };
+  // Carry the view layer (fog) only when supplied — keeps older callers + saves byte-identical.
+  if (view && view.fog) file.view = { fog: [...view.fog] };
+  return file;
 }
 
 /** The on-disk/localStorage string form of a save. */
-export function serializeToString(state: GameState, meta?: { label?: string; savedAt?: number }): string {
-  return JSON.stringify(serializeGame(state, meta));
+export function serializeToString(state: GameState, meta?: { label?: string; savedAt?: number }, view?: SaveView): string {
+  return JSON.stringify(serializeGame(state, meta, view));
 }
 
 export type LoadResult =
