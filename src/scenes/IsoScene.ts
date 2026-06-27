@@ -243,6 +243,10 @@ import {
   telegraphTier, countFriendlyNear, buildTelegraphReport, type TelegraphTier,
   districtStatusOf,
 } from '../sim';
+// LANE D — earned-intel/dossier: the PURE intel model (imported directly from the module, not the barrel, to
+// keep the lane file-isolated) + the one read-only HUD panel. NO-X-RAY: aged/learned data only, no live position.
+import { createDossier, advanceIntel, type IntelDossier, type IntelObservation } from '../sim/intel';
+import { DossierPanel } from './ui/dossierPanel';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
 import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
@@ -541,6 +545,11 @@ export class IsoScene extends Phaser.Scene {
   private hudCollapsed = true;
   private dossierG?: Phaser.GameObjects.Container;
   private dossierHits: { x: number; y: number; w: number; h: number; id: PanelId }[] = [];
+  // LANE D — earned-intel/dossier: the built-over-time dossier (pure) + its one read-only HUD panel. The
+  // dossier ages by sim tick; advanceIntel runs once per settlement (gated by lastIntelTick).
+  private intel: IntelDossier = createDossier();
+  private dossierPanel?: DossierPanel;
+  private lastIntelTick = -1;
   private crewTitle?: Phaser.GameObjects.Text;
   private crewRows: Phaser.GameObjects.Text[] = [];
   private crewWrong: Phaser.GameObjects.Rectangle[] = [];
@@ -795,6 +804,10 @@ export class IsoScene extends Phaser.Scene {
     this.buildAudioPanel();
     // RTS-30a: split the world + HUD onto two cameras (AFTER all HUD exists) so the HUD never zooms.
     this.setupUiCamera();
+    // LANE D — earned-intel dossier: the ONE HUD mount. Read-only panel on the FIXED HUD camera (sacred);
+    // hudFx makes the WORLD camera ignore it. Toggled with backtick (see setupCameraControls).
+    this.dossierPanel = new DossierPanel(this);
+    this.hudFx(this.dossierPanel.root);
     // RTS-34: the noir mood overlay (grain + vignette) on the fixed UI camera, below every HUD element.
     this.buildFxOverlay();
     this.buildSaveButton(); // SAVE/LOAD entry point (fixed HUD camera)
@@ -1307,6 +1320,56 @@ export class IsoScene extends Phaser.Scene {
 
   private districtName(id: string): string { return this.state.districts.find((d) => d.id === id)?.name ?? id; }
 
+  // ── LANE D — earned-intel / dossier (read-only, NO-X-RAY) ─────────────────────────────────────────
+  /** Toggle the read-only dossier panel; opening renders the current AGED dossier (never live state). */
+  private toggleDossier(): void {
+    this.dossierPanel?.toggle(this.intel, this.state.tick, {
+      rivalName: (id) => this.state.rivals.find((r) => r.id === id)?.name ?? id,
+      districtName: (id) => this.districtName(id),
+    });
+    if (this.dossierPanel?.isOpen()) this.setStatus('DOSSIER — what you’ve learned (aged · not live) · [`] to close');
+  }
+
+  /** Build the scene-observed snapshot advanceIntel earns from: greased channels, rival/collector/controlled
+   * districts. DISTRICT-LEVEL only — no coordinates leave the scene, so nothing live can enter the dossier. */
+  private buildIntelObservation(): IntelObservation {
+    const pid = this.state.player.id;
+    const size = this.world.size;
+    const districtOf = (u: MovableUnit): string | undefined => {
+      const t = unitTile(u);
+      if (t.gx < 0 || t.gy < 0 || t.gx >= size || t.gy >= size) return undefined;
+      return this.world.districtOfTile[t.gy * size + t.gx];
+    };
+    const greasedChannels = (['police', 'judges', 'politicians', 'feds'] as BribeChannel[])
+      .filter((c) => (this.state.player.bribes[c] ?? 0) > 0);
+    const rivals = this.state.rivals.filter((r) => r.alive).map((r) => r.id);
+    const rivalDistrict: Record<string, string | undefined> = {};
+    for (const rid of rivals) {
+      const u = this.state.units.find((x) => x.factionId === rid && x.role !== 'collector' && !x.downed);
+      rivalDistrict[rid] = u ? districtOf(u) : undefined;
+    }
+    const collectorDistricts = this.state.units
+      .filter((u) => u.factionId === pid && u.role === 'collector')
+      .map(districtOf).filter((d): d is string => !!d);
+    const controlledDistricts = districtsHeld(this.state, pid).map((d) => d.id);
+    return { greasedChannels, rivals, rivalDistrict, collectorDistricts, controlledDistricts };
+  }
+
+  /** Once per settlement (tick), let the pure dossier EARN new aged tips from what the player observed, and
+   * refresh the panel if it is open. Called from update(); aging itself is query-time, so this no-ops between
+   * settlements. Never edits the sim tick. */
+  private advanceDossier(): void {
+    if (this.state.tick === this.lastIntelTick) return;
+    this.lastIntelTick = this.state.tick;
+    this.intel = advanceIntel(this.intel, this.buildIntelObservation(), this.state.tick);
+    if (this.dossierPanel?.isOpen()) {
+      this.dossierPanel.render(this.intel, this.state.tick, {
+        rivalName: (id) => this.state.rivals.find((r) => r.id === id)?.name ?? id,
+        districtName: (id) => this.districtName(id),
+      });
+    }
+  }
+
   /** Drive the turf war: steer the visible rival invaders each frame, and on the contest pulse open new
    * border contests (spawning rival muscle), resolve the presence contest, and clean up ended ones.
    * RTS-30c-1.1: the pulse runs on the SIMULATED stepDt (a while-loop, so a skipped/fast week fires the
@@ -1642,6 +1705,7 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     // RTS-17: the contest resolved — surface the win/lose readout.
     if (obs.endgame || this.state.status !== 'playing') this.showEndgame();
+    this.advanceDossier(); // LANE D — earn aged intel once per settlement (no-op between ticks; never edits the sim)
     } // end !paused — sim advancement gate
 
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
@@ -3751,6 +3815,9 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-N', () => { if (this.marketOpen) this.marketSel = (this.marketSel + 1) % 4; });
     this.input.keyboard?.on('keydown-Y', () => { if (this.restartGate.armed) this.doConfirmRestart(); else this.commandTrade('buy'); });
     this.input.keyboard?.on('keydown-J', () => this.commandTrade('sell'));
+    // LANE D — earned-intel DOSSIER toggle. [J] (journal) is already the market SELL key, so the dossier
+    // toggles on BACKTICK (`). Read-only; opening renders the current aged dossier (NO-X-RAY — never live).
+    this.input.keyboard?.on('keydown-BACKTICK', () => this.toggleDossier());
     // RTS-25 — perf overlay: live FPS · frame ms · text rasterisations/sec (the cost this pass cut).
     this.input.keyboard?.on('keydown-P', () => { this.perfVisible = !this.perfVisible; this.perfText?.setVisible(this.perfVisible); });
     // OPERATION-OUTCOME PREVIEWS — HOLD-ALT expands the hover GLANCE card into its DETAIL rows. [ALT] is
