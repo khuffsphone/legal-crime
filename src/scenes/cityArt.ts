@@ -6,6 +6,7 @@
 
 import Phaser from 'phaser';
 import { parseArtMode } from './artMode';
+import type { LandmarkKind } from './art/districtIdentity';
 
 /** RTS-26 — rich (elevated gangster figures) vs lean (pre-rts26 shapes). Read once from the URL. */
 export function richArt(): boolean {
@@ -779,7 +780,7 @@ export function drawIsoBuilding(
   cy: number,
   style: BuildingStyle,
   depth: number,
-  opts: { rich?: boolean; lit?: boolean; sign?: number; faction?: 'player' | 'rival' } = {},
+  opts: { rich?: boolean; lit?: boolean; sign?: number; faction?: 'player' | 'rival'; accent?: number } = {},
 ): { roofX: number; roofY: number; gfx: Phaser.GameObjects.Graphics } {
   const rich = opts.rich ?? richArt();
   const lit = opts.lit ?? true;
@@ -848,6 +849,13 @@ export function drawIsoBuilding(
   // brass deco eave trim
   g.lineStyle(2, style.trim, 0.9);
   g.strokePoints([{ x: bTop.x, y: bTop.y - h }, { x: bRight.x, y: bRight.y - h }, { x: bBottom.x, y: bBottom.y - h }, { x: bLeft.x, y: bLeft.y - h }], true);
+  // CITY DEPTH (Lane C) — a faint district-identity ACCENT course just below the cornice on the lit eave.
+  // NEVER the identity trim itself (style.trim stays brass/rival-red), so the ownership read is preserved;
+  // this is a subtle warm tint that gives each block its neighbourhood flavour. Static (no motion).
+  if (opts.accent !== undefined) {
+    g.lineStyle(1, opts.accent, 0.3);
+    g.strokePoints([{ x: bBottom.x, y: bBottom.y - h + 7 }, { x: bRight.x, y: bRight.y - h + 7 }], false);
+  }
   g.fillStyle(PAL.ink, 1);
   g.fillRect(cx - 5, cy + hh - 16, 10, 16); // door at the front base
 
@@ -862,6 +870,63 @@ export function drawIsoBuilding(
   }
 
   return { roofX: cx, roofY: cy - h - hh, gfx: g };
+}
+
+// ── CITY VISUAL DEPTH (Lane C) — per-district plaza LANDMARKS ───────────────────────────────────
+// Four civic landmarks anchor each district's plaza, picked by its identity (districtIdentity.ts). All
+// stone/brass — no greenery, so the colour law stays unambiguous. Drawn onto the culled GROUND graphics
+// (a handful of ops per visible district, never per-tile); `shimmer01` (0..1) is the caller's slow ambient
+// pulse — calm, never the danger tempo — and only the fountain's water uses it. `accent` is the district's
+// warm tone. Pure drawing.
+const LANDMARK_STONE = 0x322d25; // basin / plinth stone
+const LANDMARK_STONE_DK = 0x29251f; // shadowed stone
+const FOUNTAIN_WATER = 0x2e3a3a; // muted water (never bright)
+
+export function drawLandmark(
+  g: Phaser.GameObjects.Graphics,
+  kind: LandmarkKind,
+  cx: number,
+  cy: number,
+  shimmer01: number,
+  accent: number,
+): void {
+  if (kind === 'fountain') {
+    g.fillStyle(LANDMARK_STONE, 1); g.fillEllipse(cx, cy, 46, 24); // stone basin rim
+    g.fillStyle(LANDMARK_STONE_DK, 1); g.fillEllipse(cx, cy, 38, 19);
+    g.fillStyle(FOUNTAIN_WATER, 1); g.fillEllipse(cx, cy, 30, 15); // water
+    g.fillStyle(0x3a4a4a, 0.5 + 0.3 * shimmer01); g.fillEllipse(cx, cy - 1, 16 + shimmer01 * 4, 8); // shimmer ring
+    g.fillStyle(accent, 0.5); g.fillEllipse(cx, cy - 2, 4, 3); // brass central jet base
+    return;
+  }
+  if (kind === 'statue') {
+    // a low plinth + a dark bronze figure silhouette, accent-trimmed (a founder/general on a pedestal).
+    g.fillStyle(LANDMARK_STONE, 1); g.fillEllipse(cx, cy, 34, 17); // plaza base
+    g.fillStyle(LANDMARK_STONE_DK, 1); g.fillRect(cx - 9, cy - 14, 18, 16); // plinth block
+    g.fillStyle(accent, 0.85); g.fillRect(cx - 10, cy - 2, 20, 2); // plinth cap (brass)
+    g.fillStyle(PAL.gunmetal, 1); // the bronze figure
+    g.fillEllipse(cx, cy - 30, 5, 6); // head
+    g.fillRect(cx - 4, cy - 27, 8, 14); // torso/cloak
+    g.fillRect(cx + 3, cy - 26, 8, 2); // an outstretched arm
+    g.fillStyle(accent, 0.4); g.fillRect(cx - 4, cy - 27, 8, 2); // a faint highlight on the shoulders
+    return;
+  }
+  if (kind === 'clocktower') {
+    // a slender civic tower with a lit clock face + a stepped cap (a neighbourhood time-keeper).
+    g.fillStyle(LANDMARK_STONE, 1); g.fillEllipse(cx, cy, 30, 15); // base footing
+    g.fillStyle(LANDMARK_STONE_DK, 1); g.fillRect(cx - 7, cy - 42, 14, 44); // shaft
+    g.fillStyle(LANDMARK_STONE, 1); g.fillRect(cx - 9, cy - 50, 18, 9); // belfry head
+    g.fillStyle(accent, 0.9); g.fillCircle(cx, cy - 45, 4.5); // the clock face (brass ring)
+    g.fillStyle(PAL.ink, 1); g.fillCircle(cx, cy - 45, 3); // dark dial
+    g.lineStyle(1, accent, 0.9); g.beginPath(); g.moveTo(cx, cy - 45); g.lineTo(cx, cy - 47.5); g.moveTo(cx, cy - 45); g.lineTo(cx + 1.8, cy - 44); g.strokePath(); // hands
+    g.fillStyle(accent, 0.85); g.fillTriangle(cx - 9, cy - 50, cx + 9, cy - 50, cx, cy - 56); // a small deco spire cap
+    return;
+  }
+  // obelisk — a tall stone needle with a brass cap (a war/founders memorial).
+  g.fillStyle(LANDMARK_STONE, 1); g.fillEllipse(cx, cy, 28, 14); // base
+  g.fillStyle(LANDMARK_STONE_DK, 1); g.fillRect(cx - 5, cy - 16, 10, 18); // pedestal
+  g.fillStyle(LANDMARK_STONE, 1); g.fillPoints([{ x: cx - 4, y: cy - 16 }, { x: cx + 4, y: cy - 16 }, { x: cx + 2.5, y: cy - 52 }, { x: cx - 2.5, y: cy - 52 }], true); // tapering shaft
+    g.fillStyle(PAL.sootDeep, 0.3); g.fillPoints([{ x: cx, y: cy - 16 }, { x: cx + 4, y: cy - 16 }, { x: cx + 2.5, y: cy - 52 }, { x: cx, y: cy - 52 }], true); // shaded face
+  g.fillStyle(accent, 0.9); g.fillTriangle(cx - 2.5, cy - 52, cx + 2.5, cy - 52, cx, cy - 58); // brass pyramidion cap
 }
 
 /** RTS-26 — the per-KIND deco facade drawn above the brick massing (and above the ownership plate):

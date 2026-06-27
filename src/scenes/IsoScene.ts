@@ -192,11 +192,15 @@ import {
   actionIconKey,
   richArt,
   drawIsoBuilding,
+  drawLandmark,
   BUILDING_STYLES,
   ENV_HEIGHT_SCALE,
   TEX,
   PAL,
 } from './cityArt';
+import {
+  districtIdentityFor, facadeAccentFor, buildingVariantFor, hashKey, type DistrictIdentity,
+} from './art/districtIdentity';
 import { AudioManager } from './audio';
 import { cycleVolume } from './audioMap';
 import type { MusicPhase } from './audioMap';
@@ -358,7 +362,6 @@ const SEAM = 0x15120e;  // dark lane / paving expansion seam
 const CURB = 0x4a443a;  // light curb edge on a sidewalk
 const PARK_TUFT = 0x3c4e36; // grass tuft fleck
 const PLAZA_INLAY = 0x40392f; // plaza deco seam
-const FOUNTAIN_WATER = 0x2e3a3a; // muted water (never bright)
 
 // RTS-30a — the three discrete zoom stops (CLOSE / MID resting / FAR strategy).
 const ZOOM_STOPS = [1.0, 0.6, 0.35] as const;
@@ -454,6 +457,10 @@ export class IsoScene extends Phaser.Scene {
   // holder — CANON: district control only, never a per-building owner), + the static biz→district map.
   private bizOwnerGlow = new Map<string, Phaser.GameObjects.Image>();
   private bizDistrict = new Map<string, string>();
+  // CITY VISUAL DEPTH (Lane C) — each district's stable visual IDENTITY (archetype + warm accent + plaza
+  // landmark), assigned by district ordinal once in drawCity and read by both the building draw (a faint
+  // facade accent) and the plaza-landmark draw. World-render only — no sim, no HUD.
+  private districtIdentity = new Map<string, DistrictIdentity>();
   // POLISH v2 · PKG4 — static building occlusion hulls (buildings don't move; computed once in drawCity).
   private buildingHulls: BuildingHull[] = [];
   private occEnabled = true; // independently toggleable
@@ -838,6 +845,10 @@ export class IsoScene extends Phaser.Scene {
 
     // businesses — brick storefronts; a protection coin floats over player-extorted fronts
     for (const d of this.state.districts) {
+      // CITY DEPTH (Lane C): the district's stable identity (by ordinal) drives a faint per-building facade
+      // accent + the plaza landmark. Computed once here so both reads agree.
+      const ident = districtIdentityFor(this.state.districts.indexOf(d));
+      this.districtIdentity.set(d.id, ident);
       for (const biz of d.businesses) {
         const t = businessTileOf(this.layout, biz.id);
         if (!t) continue;
@@ -860,7 +871,10 @@ export class IsoScene extends Phaser.Scene {
         // footprint, pathing, or sim position (all untouched).
         const bhw = bstyle.footHalfW ?? 54, bhh = bstyle.footHalfH ?? 27, bh = bstyle.height * ENV_HEIGHT_SCALE;
         this.buildingHulls.push({ cx: c.x, footY: c.y + bhh, roofY: c.y + bhh - bh, halfW: bhw, depth: bdepth });
-        const roof = drawIsoBuilding(this, c.x, c.y, bstyle, bdepth, { lit: !isShutDown(biz) });
+        const roof = drawIsoBuilding(this, c.x, c.y, bstyle, bdepth, {
+          lit: !isShutDown(biz),
+          accent: facadeAccentFor(ident.accent, buildingVariantFor(hashKey(biz.id))), // Lane C — neighbourhood facade variety
+        });
         this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth, shut: isShutDown(biz) });
         const glow = this.add
           .image(roof.roofX, roof.roofY - 6, TEX.glow)
@@ -1040,12 +1054,18 @@ export class IsoScene extends Phaser.Scene {
         if (w) { g.fillStyle(w.c, w.a).fillPoints(pts, true); }
       }
     }
-    // FOUNTAINS — the plaza landmark of each (revealed, in-view) district: concentric ellipses with a
-    // slow shimmer. ~9 districts; only the visible ones draw — a handful of ops, never per-tile.
-    if (!far) for (const d of this.world.districts) {
-      if (d.plaza.gx < minGx || d.plaza.gx > maxGx || d.plaza.gy < minGy || d.plaza.gy > maxGy) continue;
-      if (!isRevealed(this.fog, d.plaza.gx, d.plaza.gy)) continue;
-      this.drawFountain(g, d.plaza.gx, d.plaza.gy);
+    // LANDMARKS — each (revealed, in-view) district's plaza carries a civic landmark chosen by its IDENTITY
+    // (fountain / statue / clocktower / obelisk). ~9 districts; only the visible ones draw — a handful of ops,
+    // never per-tile. A slow calm shimmer (fountain water only); never the danger tempo.
+    if (!far) {
+      const shimmer = 0.5 + 0.5 * Math.sin(this.time.now / 900);
+      for (const d of this.world.districts) {
+        if (d.plaza.gx < minGx || d.plaza.gx > maxGx || d.plaza.gy < minGy || d.plaza.gy > maxGy) continue;
+        if (!isRevealed(this.fog, d.plaza.gx, d.plaza.gy)) continue;
+        const ident = this.districtIdentity.get(d.id) ?? districtIdentityFor(0);
+        const c = gridToScreen(d.plaza.gx, d.plaza.gy);
+        drawLandmark(g, ident.landmark, c.x, c.y, shimmer, ident.accent);
+      }
     }
   }
 
@@ -1064,17 +1084,6 @@ export class IsoScene extends Phaser.Scene {
     } else if (k === 'park' && (gx * 7 + gy * 3) % 4 === 0) {
       g.fillStyle(PARK_TUFT, 0.8); g.fillCircle((left.x + right.x) / 2 + ((gx % 3) - 1) * 8, left.y + ((gy % 3) - 1) * 4, 1.6);
     }
-  }
-
-  /** A plaza FOUNTAIN landmark — concentric basin ellipses + a slow water shimmer (calm, ambient). */
-  private drawFountain(g: Phaser.GameObjects.Graphics, gx: number, gy: number): void {
-    const c = gridToScreen(gx, gy);
-    const shimmer = 0.5 + 0.5 * Math.sin(this.time.now / 900); // slow, never the danger tempo
-    g.fillStyle(0x322d25, 1); g.fillEllipse(c.x, c.y, 46, 24); // stone basin rim
-    g.fillStyle(0x29251f, 1); g.fillEllipse(c.x, c.y, 38, 19);
-    g.fillStyle(FOUNTAIN_WATER, 1); g.fillEllipse(c.x, c.y, 30, 15); // water
-    g.fillStyle(0x3a4a4a, 0.5 + 0.3 * shimmer); g.fillEllipse(c.x, c.y - 1, 16 + shimmer * 4, 8); // shimmer ring
-    g.fillStyle(0x4a5a5a, 0.6); g.fillEllipse(c.x, c.y - 2, 4, 3); // central jet base
   }
 
   // ── units ────────────────────────────────────────────────────────────────────────────────
