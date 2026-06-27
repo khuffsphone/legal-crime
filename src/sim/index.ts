@@ -483,6 +483,22 @@ export {
   type RivalWeakness,
 } from './endgame';
 export {
+  victoryConditions,
+  victoryStage,
+  leadingVictory,
+  imminentVictory,
+  victoryReport,
+  lastStandingCondition,
+  dominanceCondition,
+  goStraightCondition,
+  mayorCondition,
+  type VictoryConditionId,
+  type VictoryStage,
+  type VictoryOutcome,
+  type VictoryCondition,
+  type VictoryReport,
+} from './victory';
+export {
   recordIncident,
   harvestIncidents,
   isLedgerKind,

@@ -64,7 +64,11 @@ import {
   offenseReadout,
   hudPhase,
   victoryProximity,
-  winPaths,
+  victoryConditions,
+  imminentVictory,
+  victoryReport,
+  type VictoryCondition,
+  type VictoryReport,
   viceLadder,
   applyViceUpgrade,
   marketRows,
@@ -3252,36 +3256,43 @@ export class IsoScene extends Phaser.Scene {
     this.audio?.vo([won ? 'vo_win' : 'vo_lose']);
     this.audio?.setPhase(won ? 'TITLE' : 'GAMEOVER');
     const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
-    const last = [...this.state.log].reverse().find((e) => e.kind === 'game-over');
-    const kind = (last?.data as { kind?: string } | undefined)?.kind;
-    const headline = !won ? 'THE CITY TOOK YOU'
-      : kind === 'win-go-straight' ? 'YOU WENT STRAIGHT'
-      : kind === 'win-mayor' ? 'MR. MAYOR'
-      : kind === 'win-dominance' ? 'THE CITY IS YOURS'
-      : 'YOU TOOK THE CITY';
-    const kicker = !won ? 'OUTFIT FOLDS' : kind === 'win-go-straight' ? 'RACKETEER GOES LEGIT'
-      : kind === 'win-mayor' ? 'MACHINE TAKES CITY HALL' : 'A CITY UNDER ONE FAMILY';
+    // Lane E — the victory newspaper is built from the pure report: the named win/loss, the four
+    // telegraphed conditions ranked into a FINAL STANDING, and the deterministic "by the numbers".
+    const report: VictoryReport = victoryReport(this.state);
+    const { headline, kicker } = report;
 
     const objs: Phaser.GameObjects.GameObject[] = [];
     objs.push(this.add.rectangle(0, 0, 6000, 4000, PAL.soot, 0.9).setOrigin(0, 0).setScrollFactor(0).setDepth(200000));
     const paperW = Math.min(700, w - 56), paperH = Math.min(388, h - 56);
     const px = cx - paperW / 2, py = cy - paperH / 2;
     const g = this.add.graphics().setScrollFactor(0).setDepth(200001);
+    const footH = 124; // the lower column carries the FINAL STANDING + BY THE NUMBERS
     g.fillStyle(0xcdc4b0, 1).fillRect(px, py, paperW, paperH);          // aged newsprint
-    g.fillStyle(PAL.ink, 0.05).fillRect(px, py + paperH - 64, paperW, 64); // a faint lower column
+    g.fillStyle(PAL.ink, 0.05).fillRect(px, py + paperH - footH, paperW, footH); // a faint lower column
     g.lineStyle(2, PAL.ink, 0.55).strokeRect(px, py, paperW, paperH);
     g.lineStyle(1, PAL.ink, 0.4); g.strokeRect(px + 7, py + 7, paperW - 14, paperH - 14); // double rule
+    g.lineStyle(1, PAL.ink, 0.35); g.beginPath(); g.moveTo(px + 16, py + paperH - footH); g.lineTo(px + paperW - 16, py + paperH - footH); g.strokePath();
     objs.push(g);
 
     const ink = '#16130f', inkSoft = '#3a322a';
     objs.push(this.mkText(cx, py + 22, 'THE CHICAGO LEDGER', { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
-    objs.push(this.mkText(cx, py + 46, `EXTRA  ·  WEEK ${this.state.tick}  ·  ${kicker}`, { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, py + 46, `EXTRA  ·  WEEK ${report.week}  ·  ${kicker}`, { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
     // masthead rule — brass for a win, plain ink for a loss
     g.lineStyle(2, won ? PAL.brass : PAL.ink, won ? 0.95 : 0.5); g.beginPath(); g.moveTo(px + 24, py + 66); g.lineTo(px + paperW - 24, py + 66); g.strokePath();
 
-    objs.push(this.mkText(cx, cy - 6, headline, { fontFamily: NOIR_DISPLAY, fontSize: '40px', color: ink, fontStyle: 'bold', align: 'center', wordWrap: { width: paperW - 60 } }).setOrigin(0.5).setScrollFactor(0).setDepth(200002));
-    objs.push(this.mkText(cx, cy + 44, (last?.message ?? '').toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '14px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 80 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
-    objs.push(this.mkText(cx, py + paperH - 26, '— 30 —', { fontFamily: NOIR_FONT, fontSize: '13px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    const headY = py + Math.round((paperH - footH) * 0.42) + 30;
+    objs.push(this.mkText(cx, headY, headline, { fontFamily: NOIR_DISPLAY, fontSize: '38px', color: ink, fontStyle: 'bold', align: 'center', wordWrap: { width: paperW - 60 } }).setOrigin(0.5).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, headY + 42, report.dek.toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '13px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 80 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+
+    // ── the FINAL STANDING (left) + BY THE NUMBERS (right) — Lane E's telegraphed-win payoff ──
+    const footTop = py + paperH - footH + 12;
+    const bar = (pct: number): string => { const n = Math.max(0, Math.min(10, Math.round(pct / 10))); return '█'.repeat(n) + '░'.repeat(10 - n); };
+    const standingLines = report.standing.map((c) => `${report.achievedId === c.id ? '✦' : ' '} ${c.label.padEnd(13)} ${bar(c.pct)} ${String(c.pct).padStart(3)}%`);
+    objs.push(this.mkText(px + 24, footTop, 'THE FINAL STANDING', { fontFamily: NOIR_FONT, fontSize: '11px', color: ink, fontStyle: 'bold' }).setOrigin(0, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(px + 24, footTop + 18, standingLines.join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: inkSoft, lineSpacing: 3 }).setOrigin(0, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(px + paperW - 24, footTop, 'BY THE NUMBERS', { fontFamily: NOIR_FONT, fontSize: '11px', color: ink, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(px + paperW - 24, footTop + 18, report.byTheNumbers.join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: inkSoft, lineSpacing: 3, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, py + paperH - 16, '— 30 —', { fontFamily: NOIR_FONT, fontSize: '12px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
 
     this.hudFx(...objs);
     // a brief slam-in (the headline thumps onto the desk)
@@ -4435,14 +4446,17 @@ export class IsoScene extends Phaser.Scene {
     lines.push('');
     lines.push(`— ${phase.phase} —`);
     lines.push(`LOSE ${vp.playerLosePct}%`);
-    // RTS-24: THREE WIN PATHS — each a labeled progress readout (the leader is starred). The player
-    // reads at a glance which route is closest and what advances it.
-    const paths = winPaths(this.state);
-    const lead = paths.reduce((a, b) => (b.pct > a.pct ? b : a), paths[0]);
-    lines.push('— THREE WAYS TO WIN —');
-    for (const w of paths) {
-      const star = w === lead && w.pct > 0 ? '★' : '·';
-      lines.push(`${star} ${w.label} ${w.pct}%`);
+    // Lane E — FOUR TELEGRAPHED VICTORY CONDITIONS. Domination's two triggers (LAST STANDING /
+    // DOMINANCE) read as separate tracks alongside GO STRAIGHT and GET ELECTED, so the player always
+    // sees four concrete ways to win, how close each is, and — via the stage glyph — which are
+    // heating up. The leader is starred; an imminent (≥80%) condition gets a "one move away" banner.
+    const conds = victoryConditions(this.state);
+    const lead = conds.reduce((a, b) => (b.pct > a.pct ? b : a), conds[0]);
+    const brink = imminentVictory(this.state);
+    lines.push(brink ? `— ONE MOVE FROM ${brink.label} —` : '— FOUR WAYS TO WIN —');
+    for (const w of conds) {
+      const glyph = w === lead && w.pct > 0 ? '★' : IsoScene.victoryGlyph(w);
+      lines.push(`${glyph} ${w.label} ${w.pct}%`);
       lines.push(`   ${w.read.length > 38 ? w.read.slice(0, 37) + '…' : w.read}`);
     }
     this.setT(this.strategyPanel, lines.join('\n')).setPosition(right, 290);
@@ -4528,6 +4542,11 @@ export class IsoScene extends Phaser.Scene {
 
   private static crewGlyph(status: string): string {
     return status === 'loyal' ? '●' : status === 'wavering' ? '◐' : '○';
+  }
+
+  /** Lane E — the telegraph glyph for a victory condition by its escalation stage. */
+  private static victoryGlyph(c: VictoryCondition): string {
+    return c.stage === 'won' ? '✔' : c.stage === 'imminent' ? '◉' : c.stage === 'closing' ? '◐' : c.stage === 'building' ? '·' : '·';
   }
 
   /** Paint the crew roster with per-member loyalty animation (RTS-15): loyaltyBob / waverRoll /
