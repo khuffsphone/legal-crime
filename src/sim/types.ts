@@ -7,6 +7,7 @@ import type { Trait } from './traits';
 import type { EmbodiedExtortionAct } from './extortionEmbodied';
 import type { DownedBody } from './downedBodies';
 import type { CrewTie } from './crew';
+import type { RunStats } from './runStats';
 
 export type GameStatus = 'playing' | 'won' | 'lost';
 export type LossReason = 'bankrupt' | 'dead' | 'busted';
@@ -271,6 +272,11 @@ export interface GameState {
   contests?: Contest[];
   /** Real-time seconds accumulated toward the next turf-war pulse (RTS-30c-1). Additive, default 0. */
   contestElapsed?: number;
+  /** Lane L — satisfying per-run STATS accumulated through the match and surfaced at endgame (the
+   * victory/loss newspaper). Additive; absent ⇒ no tally yet (the scene lazily creates it via
+   * ensureRunStats), so createInitialState stays byte-identical and determinism/save-load are untouched.
+   * The shape + helpers live in src/sim/runStats.ts (a type-only import, so there is no runtime cycle). */
+  runStats?: RunStats;
   log: GameEvent[];
 }
 
