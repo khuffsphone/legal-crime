@@ -156,6 +156,13 @@ export class AudioManager {
     this.applyBedVolumes(); this.save();
   }
 
+  // Lane G — named PUBLIC volume setters the settings panel routes through (a thin, intention-revealing
+  // face on setBusVolume that pins the bus, so a settings write can never land on a non-volume key like
+  // `muted`). No audio internals are touched.
+  setMasterVolume(v: number): void { this.setBusVolume('master', v); }
+  setSfxVolume(v: number): void { this.setBusVolume('sfx', v); }
+  setMusicVolume(v: number): void { this.setBusVolume('music', v); }
+
   private busVolume(bus: AudioBus): number {
     if (this.settings.muted) return 0;
     return this.settings.master * (this.settings[bus] as number);

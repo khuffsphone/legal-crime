@@ -2,6 +2,7 @@
 // no game rules live here.
 
 import Phaser from 'phaser';
+import { MainMenuScene } from './scenes/MainMenuScene';
 import { BootScene } from './scenes/BootScene';
 import { IsoScene } from './scenes/IsoScene';
 
@@ -20,9 +21,10 @@ const config: Phaser.Types.Core.GameConfig = {
     // (Per-Text `resolution` = devicePixelRatio is set in IsoScene so text rasterises crisp on HiDPI.)
     roundPixels: true,
   },
-  // RTS branch: the isometric world is the default view; the strategic card scene
-  // (BootScene) stays registered and reachable ([B] from the map, [M] back).
-  scene: [IsoScene, BootScene],
+  // Lane G: MainMenuScene is the boot ENTRY (Phaser auto-starts the first scene); it launches IsoScene on
+  // New Game / Continue. The isometric world + the strategic card scene (BootScene, reachable via [B]/[M])
+  // stay registered but inactive until started.
+  scene: [MainMenuScene, IsoScene, BootScene],
 };
 
 // RTS-25: don't paint the HUD until the noir web fonts are ready, or Phaser measures/rasterises text

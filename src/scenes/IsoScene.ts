@@ -228,11 +228,16 @@ import { applyDevDebug, isDevBuild } from './devDebug';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
-import { initPause, togglePause as togglePauseState, type PauseState } from './pauseGate';
+import { initPause, togglePause as togglePauseState, setPaused as setPausedState, type PauseState } from './pauseGate';
 import {
   listSaveSlots, writeSaveSlot, readSaveSlot, deleteSaveSlot, quickSave, quickLoad,
-  exportSaveFile, importSaveFile, type SlotInfo,
+  exportSaveFile, importSaveFile, LOADED_STATE_KEY, type SlotInfo,
 } from './saveStore';
+// Lane G — the menu/settings shell.
+import { loadSettings, type Settings } from './settings';
+import { resolveKeybinds, normalizeKey, type KeyAction } from './keybinds';
+import { SettingsPanel } from './settingsPanel';
+import { PauseOverlay } from './pauseOverlay';
 import type { LoadResult } from '../sim';
 // COMBAT DEPTH · PART 2 + FINALIZE — the rival offensive planner (conservative; ⚠ needs a human balance
 // playtest) + accuracy/telegraph/retreat helpers (all pure).
@@ -602,6 +607,14 @@ export class IsoScene extends Phaser.Scene {
   private timeScale = 1;            // fast-forward multiplier (1× / 2× / 4×)
   private pause: PauseState = initPause(); // GLOBAL ACTIVE-PAUSE — halts the sim tick; camera/UI stay live
   private pausedBanner?: Phaser.GameObjects.Container; // the PAUSED indicator
+  // Lane G — the menu/settings shell. Settings are loaded at construct so the lighting/shake/keybind flags
+  // are ready before create()'s draw + input wiring runs; volumes apply after the AudioManager exists.
+  private shellSettings: Settings = loadSettings();
+  private keybinds: Record<KeyAction, string> = resolveKeybinds(this.shellSettings.keybinds);
+  private shakeScale = this.shellSettings.screenShake ? 1 : 0; // CANON: scales camera-shake AMPLITUDE only
+  private lightingHigh = this.shellSettings.lighting === 'high';
+  private settingsPanel?: SettingsPanel;
+  private pauseMenu?: PauseOverlay;
   private saveMenu?: Phaser.GameObjects.Container;     // SAVE/LOAD menu (fixed HUD camera)
   private saveButton?: Phaser.GameObjects.Text;        // the HUD entry point
   // INFO-FEEDBACK — SESSION-ONLY event log (#6), live edge alerts, minimap pings (all render-side).
@@ -741,9 +754,9 @@ export class IsoScene extends Phaser.Scene {
     // a 9-district turf war against two active rival families.
     // SAVE/LOAD — if a save was loaded, restart() left the deserialized state in the registry; adopt it (a
     // full clean re-init of every view layer from the saved tree) instead of starting a fresh game.
-    const loaded = this.registry.get('lcr_loaded_state') as GameState | undefined;
+    const loaded = this.registry.get(LOADED_STATE_KEY) as GameState | undefined;
     if (loaded) {
-      this.registry.remove('lcr_loaded_state');
+      this.registry.remove(LOADED_STATE_KEY);
       this.state = loaded;
     } else {
       this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
@@ -811,6 +824,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-34: the noir mood overlay (grain + vignette) on the fixed UI camera, below every HUD element.
     this.buildFxOverlay();
     this.buildSaveButton(); // SAVE/LOAD entry point (fixed HUD camera)
+    this.buildShellOverlays(); // Lane G — pause overlay + settings panel (fixed HUD camera), + apply volumes
     // consigliere: the extort-first tip on a fresh load (gated to once)
     this.fireTipOnce('extort');
   }
@@ -1088,13 +1102,17 @@ export class IsoScene extends Phaser.Scene {
         this.dressingDark.push(poolRec);
         // POLISH v2 · PKG1 — a WET-ASPHALT SHEEN: a faint, longer, tinted streak smeared down-slope from
         // the pool (cheap additive image, NOT a real reflection). Gentler than the pool (wetSheenAlpha).
-        const sheen = this.add.image(c.x, c.y + 16, TEX.glow).setOrigin(0.5, 0.2)
-          .setScale(0.9, 2.6).setTint(PAL.lamp).setAlpha(wetSheenAlpha(0, 1))
-          .setBlendMode(Phaser.BlendModes.ADD)
-          .setDepth(depthValue(p.gx, p.gy) * 10 + 1).setVisible(false);
-        const sheenRec = { img: sheen, gx: p.gx, gy: p.gy };
-        this.dressing.push(sheenRec);
-        this.dressingDark.push(sheenRec);
+        // Lane G — the secondary sheen is the LIGHTING-QUALITY layer: 'low' drops it (the primary gaslight
+        // pool stays, so the noir mood holds). Pure set-dressing — no gameplay/danger-red impact.
+        if (this.lightingHigh) {
+          const sheen = this.add.image(c.x, c.y + 16, TEX.glow).setOrigin(0.5, 0.2)
+            .setScale(0.9, 2.6).setTint(PAL.lamp).setAlpha(wetSheenAlpha(0, 1))
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setDepth(depthValue(p.gx, p.gy) * 10 + 1).setVisible(false);
+          const sheenRec = { img: sheen, gx: p.gx, gy: p.gy };
+          this.dressing.push(sheenRec);
+          this.dressingDark.push(sheenRec);
+        }
       }
     }
   }
@@ -1697,7 +1715,7 @@ export class IsoScene extends Phaser.Scene {
     for (const fid of obs.strategy.fallen) { this.setStatus(`${fid} has been driven out of the city`); this.recordInfoEvent('rival.fallen', `${fid} driven out of the city`); }
     // RTS-17: a rival struck our HQ — telegraph the blow.
     if (obs.strategy.hqStrikes.length > 0) {
-      this.cameras.main.shake(220, 0.006);
+      this.fxShake(220, 0.006);
       this.setStatus('OUR HQ IS UNDER ATTACK');
       const hq = hqTileOf(this.layout, 'player');
       this.recordInfoEvent('hq.attack', 'OUR HQ IS UNDER ATTACK', hq?.gx, hq?.gy);
@@ -2020,11 +2038,10 @@ export class IsoScene extends Phaser.Scene {
     this.worldFx(ring);
     this.tweens.add({ targets: ring, scale: 7, alpha: 0, duration: 600, onComplete: () => ring.destroy() });
 
-    // three sharp 6px shakes.
-    const cam = this.cameras.main;
-    cam.shake(80, 0.006);
-    this.time.delayedCall(110, () => cam.shake(80, 0.006));
-    this.time.delayedCall(220, () => cam.shake(80, 0.006));
+    // three sharp 6px shakes (Lane G — routed through the screen-shake setting via fxShake).
+    this.fxShake(80, 0.006);
+    this.time.delayedCall(110, () => this.fxShake(80, 0.006));
+    this.time.delayedCall(220, () => this.fxShake(80, 0.006));
 
     // grab-able banknotes scatter.
     for (let i = 0; i < 7; i++) {
@@ -2109,8 +2126,14 @@ export class IsoScene extends Phaser.Scene {
 
   private setupSelectionInput(): void {
     this.input.mouse?.disableContextMenu();
-    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { this.pressX = p.x; this.pressY = p.y; this.marqueeActive = false; });
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // Lane G — a pause/settings modal owns the screen: never start a world marquee under it.
+      if (this.pauseMenu?.isOpen() || this.settingsPanel?.isOpen()) return;
+      this.pressX = p.x; this.pressY = p.y; this.marqueeActive = false;
+    });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      // Lane G — swallow world clicks while a pause/settings modal is open (its own handlers run the UI).
+      if (this.pauseMenu?.isOpen() || this.settingsPanel?.isOpen()) return;
       // RTS-30b-ui: a toolbar button press already ran its verb — swallow the world-click so it doesn't
       // also box-select/deselect units beneath the HUD.
       if (this.toolbarClick) { this.toolbarClick = false; return; }
@@ -3135,8 +3158,7 @@ export class IsoScene extends Phaser.Scene {
     this.worldFx(flash);
     this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: MOTION.killFlash * 0.2, onComplete: () => flash.destroy() });
     const nudge = killNudgePx();
-    const cam = this.cameras.main;
-    cam.shake(MOTION.killFlash * 0.18, nudge / 1000);
+    this.fxShake(MOTION.killFlash * 0.18, nudge / 1000);
     // the near-black pool (#1A0A09 @ 60%) — NOT danger-red.
     const pool = this.add.ellipse(wx, wy + 2, 20, 9, hexNum('#1a0a09'), 0.6).setDepth(99998);
     this.worldFx(pool);
@@ -3751,18 +3773,17 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-S', () => this.commandStop());        // [S] STOP — cancel orders, hold tile
     this.input.keyboard?.on('keydown-I', () => this.commandHold());        // [I] HOLD — stand & fight, no chase ([H] = help)
     this.input.keyboard?.on('keydown-A', () => this.beginAttackMove());    // [A] then left-click — ATTACK-MOVE
-    this.input.keyboard?.on('keydown-D', () => this.centerOnSelection());  // [D] center camera on selection (moved off [I])
-    this.input.keyboard?.on('keydown-Z', () => this.frameCity());
+    // Lane G — [D] center-on-selection and [Z] frame-city are REMAPPABLE: they're dispatched from the
+    // central keybind map (see the generic dispatcher below), not bound to a fixed literal here.
     // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).
     this.input.keyboard?.on('keydown-PLUS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-EQUALS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-MINUS', () => this.cycleZoom(-1));
     // HUD PHASE 1 — [T] opens the TURF drawer (the old [T] no-op status hint is retired).
     this.input.keyboard?.on('keydown-T', () => this.panels?.toggle('turf'));
-    this.input.keyboard?.on('keydown-E', () => this.commandExtort());
-    this.input.keyboard?.on('keydown-C', () => this.commandCollect());
-    this.input.keyboard?.on('keydown-R', () => this.commandReinvest());
-    this.input.keyboard?.on('keydown-G', () => this.commandGrease());
+    // Lane G — [E] extort / [C] collect / [R] reinvest / [G] grease are REMAPPABLE: dispatched from the
+    // central keybind map by the generic handler below (so a player can rebind them and never collide).
+    this.input.keyboard?.on('keydown', (e: KeyboardEvent) => this.dispatchKeybind(e));
     // HUD PHASE 1 — [L] Wire / [K] Crew now open their DRAWERS (the old always-on feed/crew panels are retired).
     this.input.keyboard?.on('keydown-L', () => this.panels?.toggle('wire'));
     this.input.keyboard?.on('keydown-K', () => this.panels?.toggle('crew'));
@@ -3771,9 +3792,15 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-B', () => this.armRestartPrompt());
     // HUD PHASE 1 — ESC closes the open drawer first (the common case); else cancels an armed restart prompt.
     this.input.keyboard?.on('keydown-ESC', () => {
+      // Lane G — Esc precedence: a deeper modal closes first, then the pause menu, then existing overlays;
+      // with nothing else open, Esc raises the pause menu.
+      if (this.settingsPanel?.isOpen()) { this.settingsPanel.close(); return; }
+      if (this.pauseMenu?.isOpen()) { this.resumeFromPause(); return; }
       if (this.panels?.isOpen()) { this.panels.close(); return; }
       if (this.restartGate.armed) { this.doCancelRestart(); return; }
-      if (this.tutorialShowing) this.skipTutorial(); // Lane B — [Esc] dismisses the FTUE coach card
+      if (this.tutorialShowing) { this.skipTutorial(); return; } // Lane B — dismiss the FTUE coach card
+      if (this.saveMenu || this.marketOpen || this.audioPanelOpen) return; // another overlay owns Esc
+      this.openPauseMenu();
     });
     // SELECTION/CONTROL QoL — numbered CONTROL GROUPS share the digit keys: Ctrl+1-9 BINDS the current
     // selection, a bare digit RECALLS a bound group (double-tap centres). A digit only acts as a group
@@ -3797,7 +3824,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30c-2b — the two glyphs that shipped without a canon key: PATROL [Q], DEMOLISH [V].
     // INFO-FEEDBACK (canon ruling #1): [Q] = jump to the last/highest-priority unread alert (NOT Space=pause,
     // NOT Tab=idle cycle). PATROL keeps its action-card chip (the [Q] hotkey moved to jump-to-alert).
-    this.input.keyboard?.on('keydown-Q', () => this.jumpToLastAlert());
+    // Lane G — [Q] jump-to-alert is REMAPPABLE (dispatched from the central keybind map below).
     // HUD PHASE 1 — fix the [V]/[2] dupe: [V] opens the PATHS drawer; [2] remains the sole sabotage key.
     this.input.keyboard?.on('keydown-V', () => this.panels?.toggle('paths'));
     // RTS-27 — audio settings surface: [O] options panel, [0] master mute.
@@ -3807,7 +3834,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-28 — pacing: [Space] cycle fast-forward, [>] (period) skip to the next week.
     // [Space] is the conventional PAUSE (the keystone). Fast-forward moves to its always-visible button.
     this.input.keyboard?.on('keydown-SPACE', () => this.togglePause());
-    this.input.keyboard?.on('keydown-PERIOD', () => this.skipWeek());
+    // Lane G — [.] skip-week is REMAPPABLE (dispatched from the central keybind map below).
     // RTS-24 — vice upgrade ([U] on the hovered racket) + THE MARKET ([M] toggle, [N] next good,
     // [Y] buy, [J] sell — buy/sell act only while the market tab is open).
     this.input.keyboard?.on('keydown-U', () => this.commandViceUpgrade());
@@ -4598,7 +4625,7 @@ export class IsoScene extends Phaser.Scene {
     const ring = this.add.circle(label.x, label.y - 4, 10).setStrokeStyle(3, hexNum(lostByPlayer ? SPEC.rival : SPEC.brass), 0.9).setDepth(100001);
     this.worldFx(ring);
     this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 700, ease: 'Quad.Out', onComplete: () => ring.destroy() });
-    if (lostByPlayer) this.cameras.main.shake(160, 0.004);
+    if (lostByPlayer) this.fxShake(160, 0.004);
   }
 
   private toggleCrew(): void {
@@ -5126,14 +5153,109 @@ export class IsoScene extends Phaser.Scene {
    * advancement block), but the camera, HUD and INPUT stay live — an "active pause" where you can look
    * around and issue/queue orders. Resumes at the current speed. */
   private togglePause(): void {
+    // Lane G — if the pause MENU is open, [Space] resumes through the same path as the menu's Resume, so
+    // the two never desync. Otherwise it's the lightweight active-pause (the small banner) as before.
+    if (this.pauseMenu?.isOpen()) { this.resumeFromPause(); return; }
     this.pause = togglePauseState(this.pause);
     this.refreshPausedBanner();
     this.setStatus(this.pause.paused ? 'PAUSED — [Space] resume · you can still look around + give orders' : `resumed — speed ${this.timeScale}×`);
   }
 
-  /** Show/hide the PAUSED indicator: a clear centred banner on the fixed HUD camera (top depth). */
+  // ── Lane G — menu/settings shell wiring ───────────────────────────────────────────────────────
+  private buildShellOverlays(): void {
+    // apply persisted volumes now that the AudioManager exists (lighting/shake/keybind flags were set at
+    // construct, before the world drew + input wired).
+    this.audio?.setMasterVolume(this.shellSettings.master);
+    this.audio?.setSfxVolume(this.shellSettings.sfx);
+    this.audio?.setMusicVolume(this.shellSettings.music);
+
+    this.settingsPanel = new SettingsPanel({
+      scene: this,
+      audio: this.audio,
+      register: (o) => this.hudFx(o),
+      onKeybindsChange: (m) => { this.keybinds = m; },          // the dispatcher reads this live
+      onSettingsChange: (s) => this.applyDisplaySettings(s),    // shake/lighting live
+      depth: 150000,
+    });
+    this.pauseMenu = new PauseOverlay({
+      scene: this,
+      register: (o) => this.hudFx(o),
+      onResume: () => this.resumeFromPause(),
+      onSettings: () => this.settingsPanel?.show(),
+      onQuitToMenu: () => this.quitToMenu(),
+      depth: 140000,
+    });
+    // Tear the overlays down on scene shutdown/restart so a pending keybind-capture's window listener
+    // (capture-phase) can never outlive the scene and fire against a destroyed panel.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => { this.settingsPanel?.destroy(); this.pauseMenu?.destroy(); });
+    this.events.once(Phaser.Scenes.Events.DESTROY, () => { this.settingsPanel?.destroy(); this.pauseMenu?.destroy(); });
+  }
+
+  /** Open the pause menu and engage the existing active-pause gate (the sim freezes via this.pause). */
+  private openPauseMenu(): void {
+    this.pause = setPausedState(this.pause, true);
+    this.pauseMenu?.show();     // open FIRST so refreshPausedBanner sees the menu and suppresses the small banner
+    this.refreshPausedBanner();
+    this.setStatus('PAUSED — Resume / Settings / Quit to menu');
+  }
+
+  /** Resume from the pause menu: close the menu (+ any open settings), release the gate. */
+  private resumeFromPause(): void {
+    this.settingsPanel?.close();
+    this.pauseMenu?.close();
+    this.pause = setPausedState(this.pause, false);
+    this.refreshPausedBanner();
+    this.setStatus(`resumed — speed ${this.timeScale}×`);
+  }
+
+  /** Quit to the main menu: release the pause gate, then start the menu scene. */
+  private quitToMenu(): void {
+    this.pause = setPausedState(this.pause, false);
+    this.scene.start('MainMenuScene');
+  }
+
+  /** Live-apply the display toggles (screen-shake amplitude + lighting quality). */
+  private applyDisplaySettings(s: Settings): void {
+    this.shellSettings = s;
+    this.shakeScale = s.screenShake ? 1 : 0;
+    this.lightingHigh = s.lighting === 'high';
+  }
+
+  /** Camera shake routed through the screen-shake setting: scales AMPLITUDE only (0 disables the shake).
+   * CANON — this never touches the motion-only danger-red loops; it only damps the camera kick. */
+  private fxShake(duration: number, intensity: number): void {
+    if (this.shakeScale <= 0) return;
+    this.cameras.main.shake(duration, intensity * this.shakeScale);
+  }
+
+  /** The remappable-action dispatcher: the input layer CONSUMES the central keybind map here. Fires the
+   * action bound to the pressed key, unless a modal owns input or a modifier combo is held. */
+  private dispatchKeybind(e: KeyboardEvent): void {
+    if (this.pauseMenu?.isOpen() || this.settingsPanel?.isOpen()) return; // a modal swallows gameplay verbs
+    if (e.altKey || e.ctrlKey || e.metaKey) return;                       // leave Ctrl/Alt/Meta combos alone
+    const key = normalizeKey(e.key);
+    if (!key) return;
+    const action = (Object.keys(this.keybinds) as KeyAction[]).find((a) => this.keybinds[a] === key);
+    if (action) this.runAction(action);
+  }
+
+  private runAction(a: KeyAction): void {
+    switch (a) {
+      case 'extort': this.commandExtort(); break;
+      case 'collect': this.commandCollect(); break;
+      case 'reinvest': this.commandReinvest(); break;
+      case 'grease': this.commandGrease(); break;
+      case 'frameCity': this.frameCity(); break;
+      case 'centerSelection': this.centerOnSelection(); break;
+      case 'jumpToAlert': this.jumpToLastAlert(); break;
+      case 'skipWeek': this.skipWeek(); break;
+    }
+  }
+
+  /** Show/hide the PAUSED indicator: a clear centred banner on the fixed HUD camera (top depth). Hidden
+   * while the pause MENU is up (the menu shows its own PAUSED title). */
   private refreshPausedBanner(): void {
-    if (this.pause.paused) {
+    if (this.pause.paused && !this.pauseMenu?.isOpen()) {
       if (this.pausedBanner) return;
       const cx = this.scale.width / 2, y = 110;
       const strip = this.add.rectangle(cx, y, 320, 46, PAL.ink, 0.86).setStrokeStyle(2, PAL.brass, 0.9);
@@ -5153,7 +5275,7 @@ export class IsoScene extends Phaser.Scene {
   /** Adopt a deserialized save: stash it in the registry and RESTART the scene so every view layer is
    * cleanly rebuilt from the loaded tree (create() picks it up). */
   private loadGame(state: GameState): void {
-    this.registry.set('lcr_loaded_state', state);
+    this.registry.set(LOADED_STATE_KEY, state);
     this.scene.restart();
   }
 
