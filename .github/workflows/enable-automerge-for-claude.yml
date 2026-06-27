@@ -7,10 +7,10 @@ on:
 jobs:
   enable-auto-merge:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.user.login == 'khuffsphone'
+    if: github.event.pull_request.user.login == 'claude-code-bot'
     steps:
       - name: Enable GitHub native auto-merge on this PR
-        uses: peter-evans/enable-pull-request-automerge@v2
+        uses: peter-evans/pull-request-automerge@v2
         with:
           pull-request-number: ${{ github.event.pull_request.number }}
           merge-method: squash
