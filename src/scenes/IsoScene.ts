@@ -78,6 +78,12 @@ import {
   recordRacketRun,
   runStatsSummary,
   familyIncome,
+  // Lane — CONSIGLIERE: pure advisor reads player-knowable facts + THE WIRE events → ranked suggestions.
+  topSuggestion,
+  suggestedExtortTarget,
+  type AdvisorSnapshot,
+  type AdvisorPlace,
+  type Suggestion,
   viceLadder,
   applyViceUpgrade,
   marketRows,
@@ -632,6 +638,11 @@ export class IsoScene extends Phaser.Scene {
   private pings: { gx: number; gy: number; tier: EventTier; until: number }[] = [];
   private wireLogG?: Phaser.GameObjects.Container;
   private wireLogHits: { x: number; y: number; w: number; h: number; gx?: number; gy?: number; id: number }[] = [];
+  // Lane — CONSIGLIERE: the advisor's current top suggestion + its HUD surface (recomputed on a throttle so
+  // it never flickers frame-to-frame). Reads THE WIRE (above) + a player-knowable snapshot; NO-X-RAY safe.
+  private advisorG?: Phaser.GameObjects.Container;
+  private advisorTop?: Suggestion | null;
+  private advisorNextMs = 0;
   private edgeAlertG?: Phaser.GameObjects.Graphics;
   private edgeAlertHits: { x: number; y: number; r: number; gx: number; gy: number; id: number }[] = [];
   private minimapG?: Phaser.GameObjects.Graphics;
@@ -1952,6 +1963,7 @@ export class IsoScene extends Phaser.Scene {
     this.drawMinimap(now);
     this.drawEdgeAlerts(now);
     if (!this.hudCollapsed) this.drawWireLog(); // HUD PHASE 1 — full log lives in the [L] Wire drawer when collapsed
+    this.updateAdvisor(now); // Lane — CONSIGLIERE: the distilled "what to do next" nudge, read from THE WIRE
     this.drawOpPreview(); // OPERATION-OUTCOME PREVIEWS — the hover GLANCE/DETAIL card (read-only)
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
@@ -5615,6 +5627,65 @@ export class IsoScene extends Phaser.Scene {
       if (e.gx !== undefined && e.gy !== undefined) this.wireLogHits.push({ x, y: ry, w: 280, h: rowH, gx: e.gx, gy: e.gy, id: e.id });
     });
     this.wireLogG.add(objs);
+  }
+
+  // ── Lane — THE CONSIGLIERE: an in-world advisor that distils THE WIRE + the player's own readouts into one
+  //    actionable nudge. The decision logic is the PURE src/sim/advisor module; the scene only builds the
+  //    player-knowable snapshot, feeds it the WIRE rows, and paints the result on the fixed HUD. NO-X-RAY: the
+  //    snapshot carries only the player's own facts + an extort target on turf they already control, so a
+  //    suggestion can never point at a hidden rival. ─────────────────────────────────────────────────────
+
+  /** Build the PLAYER-KNOWABLE snapshot the advisor reasons over (the same facts already on the HUD/ledger). */
+  private buildAdvisorSnapshot(): AdvisorSnapshot {
+    const hud = realtimeHudView(this.state, SCENE_WEEK_SECONDS).player;
+    const p = this.state.player;
+    const b = p.bribes;
+    // a genuinely-takeable front on turf the player ALREADY controls (player-knowable opportunity).
+    const tgt = suggestedExtortTarget(this.state, p.id);
+    let extortTarget: AdvisorPlace | undefined;
+    if (tgt) {
+      const t = businessTileOf(this.layout, tgt.businessId);
+      const name = inspectBusiness(this.state, tgt.businessId)?.name ?? tgt.districtName;
+      extortTarget = { name, gx: t?.gx, gy: t?.gy };
+    }
+    return {
+      tick: this.state.tick,
+      cleanCash: hud.cleanCash,
+      dirtyCash: hud.dirtyCash,
+      netPerWeek: playerWeeklyNet(this.state),
+      federalExposure: hud.federalExposure,
+      federalTier: hud.federalTier,
+      districtsHeld: districtsHeld(this.state, p.id).length,
+      districtsTotal: this.state.districts.length,
+      crewTotal: p.gangsters.length,
+      crewIdle: p.gangsters.filter((g) => g.assignment.type === 'idle').length,
+      topWinPathPct: victoryConditions(this.state).reduce((m, c) => Math.max(m, c.pct), 0),
+      greaseTotal: b.police + b.judges + b.politicians + b.feds,
+      extortTarget,
+    };
+  }
+
+  /** Recompute the top suggestion on a throttle (no per-frame flicker), then paint it. */
+  private updateAdvisor(now: number): void {
+    if (now >= this.advisorNextMs) {
+      this.advisorTop = topSuggestion(this.buildAdvisorSnapshot(), this.wireLog.entries, now);
+      this.advisorNextMs = now + 1200;
+    }
+    this.drawAdvisor();
+  }
+
+  /** Paint the single most-urgent suggestion as a compact toast under THE WIRE (one fixed-HUD mount). */
+  private drawAdvisor(): void {
+    if (!this.advisorG) { this.advisorG = this.add.container(0, 0).setScrollFactor(0).setDepth(100043); this.hudFx(this.advisorG); }
+    this.advisorG.removeAll(true);
+    const s = this.advisorTop;
+    if (!s) { this.advisorG.setVisible(false); return; }
+    this.advisorG.setVisible(true);
+    const x = 12, y = 240; // just below the 8-row WIRE — LOG; clears the bottom-anchored minimap/toolbar
+    const col = s.urgency === 'critical' ? SPEC.danger : s.urgency === 'warning' ? WAR_AMBER_HEX : s.urgency === 'opportunity' ? NOIR_PALETTE.brass : NOIR_PALETTE.bone;
+    const label = this.mkText(x, y, '⚜ CONSIGLIERE', { fontFamily: NOIR_DISPLAY, fontSize: '11px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807cc' }).setOrigin(0, 0).setPadding(5, 3, 5, 3);
+    const body = this.mkText(x, y + 18, `“${s.text}”`, { fontFamily: NOIR_FONT, fontSize: '11px', color: col, backgroundColor: '#0a080799', wordWrap: { width: 300 } }).setOrigin(0, 0).setPadding(4, 2, 4, 2);
+    this.advisorG.add([label, body]);
   }
 
   /** OPERATION-OUTCOME PREVIEWS — draw the hover card. The pure formatter resolves tone→colour (the colour

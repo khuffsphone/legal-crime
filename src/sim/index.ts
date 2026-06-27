@@ -510,6 +510,18 @@ export {
   type RunStats,
 } from './runStats';
 export {
+  adviseRun,
+  topSuggestion,
+  topSuggestions,
+  rankScore,
+  ADVISOR_RECENT_MS,
+  type Urgency,
+  type AdvisorPlace,
+  type AdvisorSnapshot,
+  type AdvisorEvent,
+  type Suggestion,
+} from './advisor';
+export {
   recordIncident,
   harvestIncidents,
   isLedgerKind,
