@@ -152,6 +152,14 @@ export {
   type TelegraphContext, type RivalRetreatTuning,
 } from './rivalOffense';
 export {
+  telegraphTier, countFriendlyNear, targetRevealed, buildTelegraphReport, telegraphLeadMs,
+  telegraphPressureRow, severityLabel, resolveStrike,
+  TELEGRAPH_TIERS, TELEGRAPH_PRESENCE_RADIUS, TELEGRAPH_SUSPECTED_MUSCLE, TELEGRAPH_CONFIRMED_MUSCLE,
+  TELEGRAPH_TIER_LEAD_BONUS_MS,
+  type TelegraphTier, type PlayerIntel, type ThreatTarget, type TelegraphReport,
+  type RetreatResponse, type StrikeOutcome, type StrikeResolution,
+} from './telegraph';
+export {
   recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
 } from './downedBodies';
 export {
