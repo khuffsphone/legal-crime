@@ -3374,19 +3374,25 @@ export class IsoScene extends Phaser.Scene {
 
     const headY = py + Math.round((paperH - footH) * 0.42) + 30;
     objs.push(this.mkText(cx, headY, headline, { fontFamily: NOIR_DISPLAY, fontSize: '38px', color: ink, fontStyle: 'bold', align: 'center', wordWrap: { width: paperW - 60 } }).setOrigin(0.5).setScrollFactor(0).setDepth(200002));
-    objs.push(this.mkText(cx, headY + 42, report.dek.toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '13px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 80 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    const dekText = this.mkText(cx, headY + 42, report.dek.toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '13px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 80 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002);
+    objs.push(dekText);
 
-    // ── Lane L — THE RUN IN NUMBERS: inject the run-stat summary into Lane E's paper (a centered strip
-    // under the deck, NOT a forked screen). A final observe pins the FINAL turf + weeks survived; the eight
-    // pure tokens print as two centered lines in the gap above the footer. ──
+    // ── Lane L — THE RUN IN NUMBERS: inject the run-stat summary into Lane E's paper (a centered strip in
+    // the gap between the deck and the footer, NOT a forked screen). A final observe pins the FINAL turf +
+    // weeks survived. The tokens render as ONE wrap-aware block (so a narrow paper reflows them across more
+    // lines instead of self-overlapping), and the block is anchored relative to the MEASURED deck bottom +
+    // clamped to prefer sitting just above the footer — so it can never ride up into the deck/headline. ──
     const runStats = ensureRunStats(this.state);
     observeRun(runStats, this.state);
-    const runTokens = runStatsSummary(runStats);
-    const runRuleY = py + paperH - footH; // the footer's top rule — the strip sits just above it
-    const runStripStyle = { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 48 } } as const;
-    objs.push(this.mkText(cx, runRuleY - 48, 'THE RUN IN NUMBERS', { fontFamily: NOIR_FONT, fontSize: '11px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
-    objs.push(this.mkText(cx, runRuleY - 32, runTokens.slice(0, 4).join('   ·   '), runStripStyle).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
-    objs.push(this.mkText(cx, runRuleY - 17, runTokens.slice(4).join('   ·   '), runStripStyle).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    const runTitle = this.mkText(cx, 0, 'THE RUN IN NUMBERS', { fontFamily: NOIR_FONT, fontSize: '11px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002);
+    const runBody = this.mkText(cx, 0, runStatsSummary(runStats).join('   ·   '), { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft, align: 'center', lineSpacing: 3, wordWrap: { width: paperW - 56 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002);
+    const dekBottom = headY + 42 + dekText.height;          // measured — handles a 1- or 2-line deck
+    const footerRuleY = py + paperH - footH;
+    const blockH = runTitle.height + 4 + runBody.height;
+    const runTop = Math.max(dekBottom + 6, footerRuleY - 6 - blockH); // prefer above the footer; never the deck
+    runTitle.setY(runTop);
+    runBody.setY(runTop + runTitle.height + 4);
+    objs.push(runTitle, runBody);
 
     // ── the FINAL STANDING (left) + BY THE NUMBERS (right) — Lane E's telegraphed-win payoff ──
     const footTop = py + paperH - footH + 12;
