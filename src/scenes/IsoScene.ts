@@ -200,7 +200,7 @@ import {
 } from './cityArt';
 import {
   districtIdentityFor, facadeAccentFor, buildingVariantFor, hashKey, type DistrictIdentity,
-} from './districtIdentity';
+} from './art/districtIdentity';
 import { AudioManager } from './audio';
 import { cycleVolume } from './audioMap';
 import type { MusicPhase } from './audioMap';

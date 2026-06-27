@@ -6,7 +6,7 @@
 
 import Phaser from 'phaser';
 import { parseArtMode } from './artMode';
-import type { LandmarkKind } from './districtIdentity';
+import type { LandmarkKind } from './art/districtIdentity';
 
 /** RTS-26 — rich (elevated gangster figures) vs lean (pre-rts26 shapes). Read once from the URL. */
 export function richArt(): boolean {

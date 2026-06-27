@@ -6,7 +6,7 @@ import {
   districtIdentityFor, DISTRICT_ACCENTS, RESERVED_COLOURS,
   buildingVariantFor, facadeAccentFor, hashKey, BUILDING_VARIANTS,
   type LandmarkKind,
-} from '../src/scenes/districtIdentity';
+} from '../src/scenes/art/districtIdentity';
 
 const LANDMARKS: LandmarkKind[] = ['fountain', 'statue', 'clocktower', 'obelisk'];
 
