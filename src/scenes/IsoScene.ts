@@ -17,6 +17,7 @@ import {
   spawnUnit,
   spawnEnforcer,
   issueMove,
+  stopUnit,
   unitTile,
   unitScreenPos,
   pickUnit,
@@ -208,6 +209,10 @@ import {
   idleUnitIds, nextIdleId, bindGroup, recallGroup, pruneGroup, isCenterRecall, idsInScreenRect,
   type ControlGroups, type RecallTap,
 } from './selectionControl';
+  type UnitOrder, type OrderUnit, holdOrder, attackMoveOrder, resolveAutoOrder,
+  ATTACK_MOVE_ACQUIRE_RADIUS,
+} from './combatOrders';
+import { applyDevDebug, isDevBuild } from './devDebug';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
@@ -257,6 +262,10 @@ import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
+import {
+  attackCommitFromCombat, weaponFeedback, hitSfxKey, shouldEmitFeedback,
+  type HitReactParams, type MuzzleFlashParams,
+} from './weaponFeedback';
 import {
   SPEC,
   MOTION,
@@ -382,6 +391,8 @@ interface UnitView {
   attackRigWeapon?: RigAttackWeapon;
   attackFaceRight?: boolean; // recoil direction (away from the target)
   hitUntil?: number; // time.now ms until the hit-react flinch finishes
+  hitKnockbackPx?: number; // per-weapon shove distance for the flinch (default 3)
+  hitDwellMs?: number; // per-weapon flinch dwell = base flinch + weapon stagger (default MOTION.hitFlinch)
   occA?: number; // POLISH v2 · PKG4 — eased occlusion alpha (1 visible → 0 hidden behind a building)
   hpBar?: Phaser.GameObjects.Graphics; // COMBAT READABILITY — the small over-unit health bar (lazy)
   // RTS-32 procedural rig (thug-role units only): the live-posed articulated figure + its gait clock.
@@ -605,6 +616,12 @@ export class IsoScene extends Phaser.Scene {
   private collectorInfoId?: string;
   private marqueeGfx?: Phaser.GameObjects.Graphics; // RTS-30d-3 drag-box selection marquee (fixed UI cam)
   private marqueeActive = false;
+  // COMBAT CONTROL VERBS (input-only) — per-unit STOP/HOLD/ATTACK-MOVE stance, kept RENDER-SIDE (the sim
+  // MovableUnit type is untouched). Absent id ⇒ NORMAL. attackMovePending arms [A]: the next left-click
+  // sets the attack-move destination instead of box-selecting. The stances drive the EXISTING issueMove/
+  // stopUnit + 35a auto-engage each tick (applyUnitOrders) — no new sim mechanic.
+  private unitOrders = new Map<string, UnitOrder>();
+  private attackMovePending = false;
   private selCountText?: Phaser.GameObjects.Text; // RTS-30d-3 "N selected" readout (fixed UI cam)
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
@@ -1465,6 +1482,7 @@ export class IsoScene extends Phaser.Scene {
     }
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
+    this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) {
@@ -1532,8 +1550,9 @@ export class IsoScene extends Phaser.Scene {
         else { kick = dir * 6 * env; lift = -3 * env; } // melee lunge in + up
       }
       if (v.hitUntil && now < v.hitUntil) {
-        const t = (v.hitUntil - now) / MOTION.hitFlinch; // 1→0
-        kick += (v.faction === 'player' ? -1 : 1) * 3 * t; // a recoiling knock-back
+        const dwell = v.hitDwellMs ?? MOTION.hitFlinch; // per-weapon stagger (heavier weapon lingers)
+        const t = (v.hitUntil - now) / dwell; // 1→0
+        kick += (v.faction === 'player' ? -1 : 1) * (v.hitKnockbackPx ?? 3) * t; // weapon-scaled knock-back
       }
       // RTS-35b INTIMIDATE LEAN: a thug squared up at a front (engage/shakedown) leans FORWARD into the
       // storefront — a slow surging menace (computeIntimidateLean) plus periodic shoves on a cadence.
@@ -1917,6 +1936,10 @@ export class IsoScene extends Phaser.Scene {
         // RTS-35c VERB SPLIT: route the right-click by TARGET TYPE — a rival UNIT → ATTACK, a BUILDING →
         // the extort/attack menu, empty ground → MOVE (RTS-22/23 building rule preserved within).
         this.commandContextual(p);
+      } else if (this.attackMovePending) {
+        // [A] is armed: this left-click sets the ATTACK-MOVE destination (instead of box-selecting).
+        this.attackMovePending = false;
+        this.commandAttackMove(p);
       } else {
         this.commandSelect(p, shift);
       }
@@ -2289,6 +2312,7 @@ export class IsoScene extends Phaser.Scene {
     // move-to-engage: walk the selected crew onto the rival's tile — auto-engage does the rest.
     const dest = unitTile(rival);
     const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, dest, this.navGrid);
+    for (const id of res.moved) this.unitOrders.delete(id); // a direct ATTACK order cancels any stance
     const from = unitScreenPos(thug), to = unitScreenPos(rival);
     this.flashAttackIntent(from.x, from.y, to.x, to.y);
     this.signalBeat('attack');
@@ -2314,8 +2338,86 @@ export class IsoScene extends Phaser.Scene {
     const target = screenToTile(p.worldX, p.worldY);
     if (!isCommandableTile(target, this.navGrid)) { this.drawTargetMarker(target, false); return; }
     const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, target, this.navGrid);
+    for (const id of res.moved) this.unitOrders.delete(id); // a fresh MOVE cancels any STOP/HOLD/ATTACK-MOVE stance
     this.drawTargetMarker(target, res.moved.length > 0);
     this.setStatus(`moving ${res.moved.length} → (${target.gx},${target.gy})${res.failed.length ? ` · ${res.failed.length} blocked` : ''}`);
+  }
+
+  // ── COMBAT CONTROL VERBS (input-only: STOP / HOLD / ATTACK-MOVE) ───────────────────────────────
+  // Reuse the EXISTING order system (issueMove / stopUnit) + the 35a proximity auto-engage; the per-unit
+  // stance lives render-side (the sim unit type is untouched) and the pure combatOrders module decides.
+  // Selection is authoritative — these act on the SELECTED commandable player crew.
+
+  /** The selected, commandable PLAYER fighters (thugs/enforcers; collectors stay autonomous). */
+  private selectedCombatViews(): UnitView[] {
+    return this.units.filter((v) =>
+      this.selection.ids.includes(v.unit.id) && v.faction === 'player' && isCommandableUnit(v.unit) && v.unit.role !== 'collector');
+  }
+
+  /** [S] STOP — cancel the selected crew's orders and hold their tile (clears path + any stance). */
+  private commandStop(): void {
+    const sel = this.selectedCombatViews();
+    if (sel.length === 0) { this.setStatus('select crew first, then [S] to stop'); return; }
+    for (const v of sel) { stopUnit(v.unit); this.unitOrders.delete(v.unit.id); } // clear orders → NORMAL, held tile
+    this.attackMovePending = false;
+    this.setStatus(`STOP — ${sel.length} holding position`);
+  }
+
+  /** [I] HOLD — the selected crew stands and fights without chasing (a persistent stance). [H] stays help. */
+  private commandHold(): void {
+    const sel = this.selectedCombatViews();
+    if (sel.length === 0) { this.setStatus('select crew first, then [I] to hold'); return; }
+    for (const v of sel) { stopUnit(v.unit); this.unitOrders.set(v.unit.id, holdOrder()); } // stand; 35a fights what's in range
+    this.attackMovePending = false;
+    this.setStatus(`HOLD — ${sel.length} stand & fight, no chase`);
+  }
+
+  /** [A] — arm ATTACK-MOVE: the next left-click sets the destination (engage any hostile met en route). */
+  private beginAttackMove(): void {
+    if (this.selectedCombatViews().length === 0) { this.setStatus('select crew first, then [A] attack-move'); return; }
+    this.attackMovePending = true;
+    this.setStatus('ATTACK-MOVE — left-click a destination');
+  }
+
+  /** Issue the armed ATTACK-MOVE to the destination under the cursor: path the crew there + tag the stance
+   * so applyUnitOrders diverts them onto any hostile they meet, then resumes the advance. */
+  private commandAttackMove(p: Phaser.Input.Pointer): void {
+    const sel = this.selectedCombatViews();
+    if (sel.length === 0) return;
+    const target = screenToTile(p.worldX, p.worldY);
+    if (!isCommandableTile(target, this.navGrid)) { this.drawTargetMarker(target, false); return; }
+    const ids = sel.map((v) => v.unit.id);
+    const res = resolveMoveCommand(this.units.map((v) => v.unit), ids, target, this.navGrid);
+    for (const id of res.moved) this.unitOrders.set(id, attackMoveOrder(target));
+    this.drawTargetMarker(target, res.moved.length > 0);
+    this.signalBeat('attack');
+    this.setStatus(`ATTACK-MOVE — ${res.moved.length} advancing, engaging hostiles en route`);
+  }
+
+  /** Per-tick: drive the STOP/HOLD/ATTACK-MOVE stances against the EXISTING order system. HOLD stands (no
+   * chase); ATTACK-MOVE diverts to ENGAGE a hostile in acquire range (35a trades blows on contact) then
+   * resumes toward its destination. No new sim mechanic — it only issues moves / stops the player's units. */
+  private applyUnitOrders(): void {
+    if (this.unitOrders.size === 0) return;
+    const orderUnits: OrderUnit[] = this.units.map((v) => ({
+      id: v.unit.id, pos: v.unit.pos, factionId: v.unit.factionId, role: v.unit.role, downed: v.unit.downed,
+    }));
+    for (const v of this.units) {
+      if (v.faction !== 'player') continue;
+      const order = this.unitOrders.get(v.unit.id);
+      if (!order || order.stance === 'NORMAL') continue;
+      const self: OrderUnit = { id: v.unit.id, pos: v.unit.pos, factionId: v.unit.factionId, role: v.unit.role, downed: v.unit.downed };
+      const decision = resolveAutoOrder(self, order, orderUnits, ATTACK_MOVE_ACQUIRE_RADIUS);
+      if (decision.kind === 'engage') {
+        if (v.unit.path.length === 0) issueMove(v.unit, decision.tile, this.navGrid); // walk onto the foe; re-acquire on arrival
+      } else if (decision.kind === 'advance') {
+        if (v.unit.path.length === 0) issueMove(v.unit, decision.tile, this.navGrid); // resume toward the destination
+      } else if (decision.kind === 'hold') {
+        if (order.stance === 'HOLD') v.unit.path = []; // HOLD never moves (defends in place)
+      }
+    }
+    // prune stances for units that left play (downed/removed), so the map can't grow unbounded.
+    for (const id of [...this.unitOrders.keys()]) if (!this.units.some((v) => v.unit.id === id)) this.unitOrders.delete(id);
   }
 
   private drawTargetMarker(tile: { gx: number; gy: number }, ok: boolean): void {
@@ -2642,10 +2744,16 @@ export class IsoScene extends Phaser.Scene {
     view.attackFaceRight = targetWx >= s.x;
   }
 
-  /** RTS-30e — a unit's HIT-REACT flinch (struck / robbed). */
-  private triggerHitReact(unitId: string): void {
+  /** RTS-30e — a unit's HIT-REACT flinch (struck / robbed). With `react`, the flinch dwell + knock-back
+   * scale by WEAPON (a shotgun staggers harder + longer than a pistol tap); without it, the legacy
+   * base flinch (used by the ambush/raid beats) is unchanged. */
+  private triggerHitReact(unitId: string, react?: HitReactParams): void {
     const v = this.units.find((u) => u.unit.id === unitId);
-    if (v) v.hitUntil = this.time.now + MOTION.hitFlinch;
+    if (!v) return;
+    const dwell = MOTION.hitFlinch * (react?.flinchScale ?? 1) + (react?.staggerMs ?? 0);
+    v.hitUntil = this.time.now + dwell;
+    v.hitDwellMs = dwell;
+    v.hitKnockbackPx = react?.knockbackPx ?? 3;
   }
 
   /** RTS-35a — render a unit-vs-unit combat beat from the pure sim (resolveProximityCombat): the
@@ -2659,19 +2767,51 @@ export class IsoScene extends Phaser.Scene {
     // throttled inside the log so swings don't spam). Both carry the event tile.
     const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
     this.recordInfoEvent(combatEventKind(ev.kind), ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`, ev.gx, ev.gy);
+    // ⭐ ONE synced attack-commit event drives the three render channels (muzzle flash / hit-react / hit-SFX),
+    // frame-aligned with the already-merged weaponAttackPose BODY lane — all off the SAME resolved-attack signal.
+    const commit = attackCommitFromCombat(ev, { x: c.x, y: c.y });
+    const fb = weaponFeedback(commit.weaponType);
+    // NO-FOG-X-RAY: the WORLD FLASH + the SOUND fire only when the struck tile is BOTH fog-revealed AND
+    // on-screen, so a brawl never leaks a hidden/off-screen rival's position through a flash or a report.
+    const visible = shouldEmitFeedback(isRevealed(this.fog, ev.gx, ev.gy), this.onScreen(c.x, c.y));
+
+    // channel 0 — BODY: the attacker swings/fires (the merged weaponAttackPose lane), driven off this signal.
     const attacker = this.units.find((v) => v.unit.id === ev.attackerId);
-    if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x); // melee swing / ranged recoil by weapon
-    if (ev.kind === 'hit') {
-      this.triggerHitReact(ev.unitId);         // COMBAT READABILITY (3) — the stagger/flinch (RTS-30e motion)
-      this.hitPip(c.x, c.y);                   // COMBAT READABILITY (2) — a restrained damage-flash pip (no numbers)
+    if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x);
+    // channel 2 — HIT-REACT: the struck body flinches/staggers/knocks back BY WEAPON (tommy burst vs pistol tap).
+    this.triggerHitReact(ev.unitId, fb.hitReact);
+    // channel 1 — MUZZLE FLASH (per weapon) + channel 3 — HIT-SFX KEY (per weapon). Both gated NO-FOG-X-RAY.
+    if (visible) {
+      this.weaponMuzzleFlash(c.x, c.y, fb.muzzle);   // distinct procedural flash per weaponType (motion-only danger)
+      this.audio?.play(hitSfxKey(commit.weaponType)); // sfx_hit_<weapon> — placeholder until the WAV lands
+    }
+
+    if (commit.hitResult === 'hit') {
+      if (visible) this.hitPip(c.x, c.y);      // COMBAT READABILITY (2) — a restrained damage-flash pip (no numbers)
       this.cameraBeat('normalHit');            // POLISH v2 · PKG3 — a small punch on every trade
-      if (ev.weapon) { this.combatContact(c.x, c.y, 'muzzle'); this.audio?.combat('attack'); } // ranged report (melee has no committed punch SFX yet)
     } else {
       this.cameraBeat('kill');                 // POLISH v2 · PKG3 — a heavier hit-stop on a down
-      this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool)
+      this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool; onScreen-gated)
       this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
-      this.audio?.combat('assassinate');       // a decisive report punctuates the down
       this.setStatus(faction === 'player' ? 'one of your thugs went DOWN — pull back or reinforce' : 'a rival thug went DOWN in the brawl');
+    }
+  }
+
+  /** ATTACK-COMMIT channel 1 — the per-weapon MUZZLE FLASH. A transient danger glow + spark streaks, sized
+   * and coloured by the weapon's MuzzleFlashParams (a bigger/hotter weapon throws a larger flash + more
+   * sparks; fists, flashScale 0, lands contact sparks with NO gun-glow). MOTION-ONLY danger — it flashes and
+   * fades, never a static mark. World-layer; the caller has already gated NO-FOG-X-RAY + viewport. */
+  private weaponMuzzleFlash(wx: number, wy: number, m: MuzzleFlashParams): void {
+    if (m.flashScale > 0) {
+      const flash = this.add.image(wx, wy - 16, TEX.glow).setTint(hexNum(dangerColor(m.hot))).setScale(m.flashScale * 0.5).setDepth(100001);
+      this.worldFx(flash);
+      this.tweens.add({ targets: flash, scale: m.flashScale * 2.4, alpha: 0, duration: m.flashMs, ease: 'Quad.Out', onComplete: () => flash.destroy() });
+    }
+    const sp = m.sparkSpreadPx;
+    for (let i = 0; i < m.sparkCount; i++) {
+      const spark = this.add.rectangle(wx, wy - 16, 3, 1.5, hexNum(dangerColor(true)), 1).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
+      this.worldFx(spark);
+      this.tweens.add({ targets: spark, x: wx + Phaser.Math.Between(-sp, sp), y: wy - 16 + Phaser.Math.Between(-Math.round(sp * 0.7), Math.round(sp * 0.4)), alpha: 0, duration: 200 + i * 18, onComplete: () => spark.destroy() });
     }
   }
 
@@ -2906,34 +3046,25 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /**
-   * QA-only scenario hooks. Non-invasive: read the URL query and seed an interesting board by
-   * exercising EXISTING systems (turf pulses, loyalty seeding, the bribe command, the endgame
-   * evaluator) — they change NO sim rule and are a no-op in normal play (no flags) and outside the
-   * browser. Supported:
-   *   • ?arm=1                       — a funded, established, hit-ready outfit (skips the build phase).
-   *   • ?debug=turf|mutiny|all[&pulses=N] — fast-forward the turf war / prime a mutiny.
-   *   • ?debug=win | ?debug=lose     — force the endgame to resolve (the wrapper reads it next frame).
+   * QA-only scenario hooks — DEV-ONLY (gated by isDevBuild(); wholly inert in a production / Steam build).
+   * Read the URL query and seed an interesting board by exercising EXISTING systems — they change NO sim
+   * rule and are a no-op in normal play (no flags) and outside the browser. Supported:
+   *   • ?arm                          — equip each SELECTABLE player unit via the real spawn/equip path
+   *                                     (devDebug.applyDevDebug — never an invalid weapon state).
+   *   • ?debug=win | ?debug=lose      — flip ONLY the resolved endgame status (no HQ raze, no corruption).
+   *   • ?debug=turf|mutiny|all[&pulses=N] — fast-forward the turf war / prime a mutiny (legacy QA tools).
    */
   private applyDebugScenario(): void {
+    if (!isDevBuild()) return; // the GUARD: nothing below ever runs in a production build
     const search = typeof window !== 'undefined' ? (window.location?.search ?? '') : '';
     if (!search) return;
+
+    // ?arm + ?debug=win|lose — the guarded dev-debug module (routes through the real spawn/equip + a
+    // status-only endgame flip). Refresh the armed units' views so the new enforcer silhouettes show.
+    const report = applyDevDebug(this.state, search, true); // already dev-gated above
+    for (const id of report.armed) this.refreshArmedView(id);
+
     const params = new URLSearchParams(search);
-
-    // ?arm=1 — the UAT injector: a strong, funded, established outfit so QA can drive the full arc
-    // (raid/lockout/assassinate) immediately, bypassing the economy→offense build-up.
-    if (params.get('arm') === '1') {
-      const p = this.state.player;
-      p.cash = 12000; p.dirtyCash = 3000;
-      // muscle: three made men guarding the home block → strength ≥ 12 (unlocks ASSASSINATE).
-      for (let i = 0; i < 3; i++) {
-        p.gangsters.push({ id: `player-arm-${i}`, name: 'Made Man', skill: 6, loyalty: 80, upkeep: 0, assignment: { type: 'guard', districtId: 'district-0' } });
-      }
-      const home = this.state.districts.find((d) => d.id === 'district-0');
-      if (home) home.control.player = 60; // HOLD the home block (unlocks RAID)
-      applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: 'feds', amount: 20 }); // The Bureau (unlocks LOCKOUT)
-      this.state = harvestIncidents(this.state);
-    }
-
     const debug = params.get('debug');
     if (!debug) return;
     const want = (k: string): boolean => debug === k || debug === 'all';
@@ -2948,14 +3079,17 @@ export class IsoScene extends Phaser.Scene {
       // Prime a mutiny: starve the crew's loyalty so the mutiny telegraph + desertions surface.
       for (const g of this.state.player.gangsters) g.loyalty = Math.min(g.loyalty, 8);
     }
-    if (debug === 'win') {
-      // Topple every rival; the wrapper's evaluateEndgame resolves a WIN on the next frame.
-      for (const r of this.state.rivals) { r.alive = false; r.hqIntegrity = 0; }
-    }
-    if (debug === 'lose') {
-      // Raze the player's HQ; the wrapper's evaluateEndgame resolves a LOSS on the next frame.
-      this.state.player.hqIntegrity = 0;
-    }
+  }
+
+  /** ?arm view refresh: a just-equipped unit is now a weapon-tier ENFORCER — swap to its baked enforcer
+   * silhouette and drop the plain button-man procedural rig (an enforcer renders the baked sprite). */
+  private refreshArmedView(id: string): void {
+    const v = this.units.find((u) => u.unit.id === id);
+    if (!v) return;
+    if (v.unit.weapon) v.sprite.setTexture(enforcerTexKey(v.unit.weapon)).setVisible(true);
+    if (v.rig) { v.rig.destroy(); v.rig = undefined; }
+    if (v.rigDebug) { v.rigDebug.destroy(); v.rigDebug = undefined; }
+    if (v.rigText) { v.rigText.destroy(); v.rigText = undefined; }
   }
 
   /** The victory/defeat readout when the contest resolves (RTS-17). */
@@ -3368,10 +3502,13 @@ export class IsoScene extends Phaser.Scene {
   private setupCameraControls(): void {
     const cam = this.cameras.main;
     this.cursors = this.input.keyboard?.createCursorKeys();
-    const K = Phaser.Input.Keyboard.KeyCodes;
-    this.wasd = this.input.keyboard?.addKeys({ up: K.W, down: K.S, left: K.A, right: K.D }) as typeof this.wasd;
+    // COMBAT CONTROL VERBS — WASD is FREED for the standard RTS command keys (S=STOP, A=ATTACK-MOVE;
+    // W/D now unused, D re-homes the old [I]=center-on-selection). The camera still pans via the ARROW
+    // keys + screen-edge + middle-drag + wheel — full keyboard coverage without WASD. `this.wasd` stays
+    // undefined; the pan reads it with optional chaining, so dropping it is safe.
+    this.wasd = undefined;
     // RTS-30d-3: LEFT-drag = selection MARQUEE; MIDDLE-drag = pan the camera (a real drag past slop).
-    // (WASD / arrows / edge / wheel still pan/zoom; right-click still moves/commands.)
+    // (Arrows / edge / wheel still pan/zoom; right-click still moves/commands.)
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!p.isDown || Math.hypot(p.x - this.pressX, p.y - this.pressY) <= CLICK_SLOP) return;
       if (p.middleButtonDown()) { cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom; cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom; }
@@ -3390,7 +3527,11 @@ export class IsoScene extends Phaser.Scene {
     // HUD PHASE 1 — [F] now opens the FINANCE drawer; the camera CENTRE-ON-SELECTION it displaced moves to
     // [I] (the only collision the L/T/V/K/F bindings introduce; the larger remap is deferred).
     this.input.keyboard?.on('keydown-F', () => this.panels?.toggle('finance'));
-    this.input.keyboard?.on('keydown-I', () => this.centerOnSelection());
+    // COMBAT CONTROL VERBS (input-only; reuse the order system + 35a engage):
+    this.input.keyboard?.on('keydown-S', () => this.commandStop());        // [S] STOP — cancel orders, hold tile
+    this.input.keyboard?.on('keydown-I', () => this.commandHold());        // [I] HOLD — stand & fight, no chase ([H] = help)
+    this.input.keyboard?.on('keydown-A', () => this.beginAttackMove());    // [A] then left-click — ATTACK-MOVE
+    this.input.keyboard?.on('keydown-D', () => this.centerOnSelection());  // [D] center camera on selection (moved off [I])
     this.input.keyboard?.on('keydown-Z', () => this.frameCity());
     // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).
     this.input.keyboard?.on('keydown-PLUS', () => this.cycleZoom(1));
@@ -5221,7 +5362,7 @@ export class IsoScene extends Phaser.Scene {
   // ── onboarding ───────────────────────────────────────────────────────────────────────────
 
   private buildLegend(): void {
-    const w = 600, h = 372;
+    const w = 600, h = 396;
     const cx = this.scale.width / 2, cy = this.scale.height / 2;
     const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
     const title = this.mkText(0, -h / 2 + 16, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
@@ -5229,12 +5370,13 @@ export class IsoScene extends Phaser.Scene {
       'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
       '',
       'CAMERA — move around and read the city',
-      '  WASD / arrows pan · left-drag box-select · middle-drag pan · wheel zoom-to-cursor · [F] follow selection · [Z] frame whole city',
+      '  ARROW keys / screen-edge pan · left-drag box-select · middle-drag pan · wheel zoom · [F] follow · [Z] frame city · [D] center on selection',
       '',
       'MOUSE — drive your thugs',
       '  LEFT-CLICK a thug to select (SHIFT-click adds more)',
       '  RIGHT-CLICK a storefront → EXTORT (take protection) or ATTACK (shut it down)',
       '  RIGHT-CLICK the street → move the selected thugs',
+      '  COMBAT CONTROL — [S] stop (hold tile) · [I] hold (stand & fight, no chase) · [A] then left-click → attack-move',
       '  The coloured plate under a shop = its allegiance: fog new · brass yours · red rival.',
       '',
       'EXTORT-FIRST — the early game',
