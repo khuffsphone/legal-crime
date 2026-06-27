@@ -99,9 +99,16 @@ export {
   nextRunIsProtected,
   carryingRunIsProtected,
   firstObjective,
+  tutorialCard,
+  tutorialComplete,
+  TUTORIAL_STEPS,
+  INITIAL_TUTORIAL_PROGRESS,
   type Objective,
   type ObjectiveStep,
   type ExtortTarget,
+  type TutorialCard,
+  type TutorialStepId,
+  type TutorialProgress,
 } from './onboarding';
 export {
   formatCountdown,

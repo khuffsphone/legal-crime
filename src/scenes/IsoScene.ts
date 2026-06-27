@@ -42,6 +42,9 @@ import {
   affordableOperation,
   strongholdDistrict,
   firstObjective,
+  tutorialCard,
+  tutorialComplete,
+  type TutorialProgress,
   hqTileOf,
   businessTileOf,
   businessAtTile,
@@ -301,6 +304,10 @@ const MAX_ZOOM = 2.6;
 const ZOOM_STEP = 0.12; // per wheel notch (fraction of current zoom)
 const CLICK_SLOP = 6;
 
+// Lane B — FTUE coach card geometry (one fixed-HUD mount, bottom-centred above the toolbar).
+const TUTORIAL_CARD_W = 460;
+const TUTORIAL_CARD_BOTTOM = 92; // gap above the bottom edge so it clears the toolbar row
+
 // RTS-28 PACING: the scene runs a tighter real-time week than the sim's 120s default so a week isn't
 // mostly dead waiting (the economy PER week is identical — only the real-time spacing tightens). The
 // rival-pulse cadence scales with it (~5.5 pulses/week, same as before). Fast-forward multiplies dt.
@@ -544,6 +551,19 @@ export class IsoScene extends Phaser.Scene {
   private klaxon?: Phaser.GameObjects.Graphics;
   private objTitle?: Phaser.GameObjects.Text;
   private objDetail?: Phaser.GameObjects.Text;
+  // Lane B — the FTUE coach card (one HUD mount). Its frame + the three text rows live in this container;
+  // `tutorialProgress` is the only non-derived bit (did the player SKIP). `tutorialShowing` lets the top
+  // objective banner stand down while the richer coach card is up, so the early loop isn't double-coached.
+  private tutorialCardC?: Phaser.GameObjects.Container;
+  private tutorialFrame?: Phaser.GameObjects.Graphics;
+  private tutorialStepText?: Phaser.GameObjects.Text;
+  private tutorialTitle?: Phaser.GameObjects.Text;
+  private tutorialBody?: Phaser.GameObjects.Text;
+  private tutorialAction?: Phaser.GameObjects.Text;
+  private tutorialSkipHint?: Phaser.GameObjects.Text;
+  private tutorialProgress: TutorialProgress = { skipped: false };
+  private tutorialShowing = false;
+  private tutorialDoneFired = false;
   private highlight?: Phaser.GameObjects.Ellipse;
   private routeWarn?: Phaser.GameObjects.Ellipse;
   // RTS-24 — THE MARKET tab (right dock) + the hovered racket for [U] vice-upgrade.
@@ -758,6 +778,7 @@ export class IsoScene extends Phaser.Scene {
     this.setupHoverTooltip();
     this.drawHud();
     this.buildObjective();
+    this.buildTutorialCard(); // Lane B — the skippable FTUE coach card (one HUD mount)
     this.buildLegend();
 
     // ── RTS-27 AUDIO: wire the manager, start the beds (on unlock), seed the phase machine ──
@@ -833,8 +854,93 @@ export class IsoScene extends Phaser.Scene {
         }
       }
     }
+    // Lane B — while the FTUE coach card is up it teaches this same early beat (richer, skippable, with
+    // progress dots), so stand the top banner down to avoid double-coaching. The world spotlight ring set
+    // above STAYS — it points at the extort target the coach card references. The banner resumes the moment
+    // the tutorial is skipped or graduates (grease onward), guiding the mid/late game as before.
+    if (this.tutorialShowing) {
+      this.objTitle.setVisible(false);
+      this.objDetail.setVisible(false);
+      return;
+    }
     this.setTC(this.objTitle, `▶  ${o.title}`, o.done ? NOIR_PALETTE.fog : NOIR_PALETTE.brass).setPosition(cx, 62);
     this.setT(this.objDetail, detail).setPosition(cx, 82);
+  }
+
+  // ── Lane B — the first-time-user tutorial (FTUE) coach card ───────────────────────────────
+  // ONE fixed-HUD mount: a bottom-centre coach card that walks a new player through the core loop
+  // (extort → collect → protect → grow) one beat at a time, skippable. The card content is a PURE
+  // derivation of game state (sim/onboarding.tutorialCard) — it advances itself as the player acts.
+
+  private buildTutorialCard(): void {
+    const D = 100000; // same band as the objective banner; the FX overlay (200000) still sits above
+    this.tutorialFrame = this.add.graphics();
+    this.tutorialStepText = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.fog, fontStyle: 'bold' }).setOrigin(0, 0);
+    this.tutorialTitle = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '18px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0);
+    this.tutorialBody = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, wordWrap: { width: TUTORIAL_CARD_W - 32 } }).setOrigin(0, 0);
+    this.tutorialAction = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass, fontStyle: 'bold', wordWrap: { width: TUTORIAL_CARD_W - 32 } }).setOrigin(0, 0);
+    this.tutorialSkipHint = this.mkText(0, 0, 'SKIP TUTORIAL  [Esc]', { fontFamily: NOIR_FONT, fontSize: '11px', color: NOIR_PALETTE.fog }).setOrigin(1, 0);
+    this.tutorialCardC = this.add.container(0, 0, [
+      this.tutorialFrame, this.tutorialStepText, this.tutorialTitle, this.tutorialBody, this.tutorialAction, this.tutorialSkipHint,
+    ]).setScrollFactor(0).setDepth(D).setVisible(false);
+    this.hudFx(this.tutorialCardC); // fixed HUD camera only — the world camera must ignore it (never drift on zoom/pan)
+  }
+
+  private refreshTutorial(): void {
+    const frame = this.tutorialFrame, stepT = this.tutorialStepText, titleT = this.tutorialTitle;
+    const bodyT = this.tutorialBody, actionT = this.tutorialAction, skipT = this.tutorialSkipHint;
+    const cont = this.tutorialCardC;
+    if (!cont || !frame || !stepT || !titleT || !bodyT || !actionT || !skipT) { this.tutorialShowing = false; return; }
+    const card = tutorialCard(this.state, this.tutorialProgress);
+
+    // One-shot "tutorial complete" beat: the player worked all the way through the loop (not via SKIP).
+    if (!card && !this.tutorialProgress.skipped && !this.tutorialDoneFired && tutorialComplete(this.state)) {
+      this.tutorialDoneFired = true;
+      this.setStatus('TUTORIAL COMPLETE — you’ve got the loop. The objective up top guides the rest.');
+    }
+
+    if (!card) {
+      this.tutorialShowing = false;
+      cont.setVisible(false);
+      return;
+    }
+    this.tutorialShowing = true;
+
+    // Layout: a bottom-centred card clear of the toolbar. Height grows to fit the wrapped body.
+    this.setT(stepT, `TUTORIAL  ${'●'.repeat(card.index)}${'○'.repeat(card.total - card.index)}  STEP ${card.index} / ${card.total}`);
+    this.setT(titleT, card.title);
+    this.setT(bodyT, card.body);
+    this.setT(actionT, `▶  ${card.action}`);
+
+    const w = TUTORIAL_CARD_W;
+    const pad = 16;
+    const bodyH = bodyT.height;
+    const actH = actionT.height;
+    const h = pad + 16 + 24 + bodyH + 8 + actH + pad;
+    const x = Math.round(this.scale.width / 2 - w / 2);
+    const y = Math.round(this.scale.height - h - TUTORIAL_CARD_BOTTOM);
+
+    frame.clear();
+    frame.fillStyle(PAL.ink, 0.92).fillRect(x, y, w, h);
+    this.decoFrame(frame, x, y, w, h, PAL.brass, 0.9);
+
+    stepT.setPosition(x + pad, y + pad);
+    skipT.setPosition(x + w - pad, y + pad);
+    titleT.setPosition(x + pad, y + pad + 16);
+    bodyT.setPosition(x + pad, y + pad + 16 + 24);
+    actionT.setPosition(x + pad, y + pad + 16 + 24 + bodyH + 8);
+    cont.setVisible(true);
+  }
+
+  /** SKIP — retire the coach card for the rest of the session (the [Esc] / world-click affordance). The
+   * ongoing objective banner resumes immediately, so an experienced player loses the hand-holding, not the
+   * guidance. Pure UI: nothing is written to the sim. */
+  private skipTutorial(): void {
+    if (this.tutorialProgress.skipped || !this.tutorialShowing) return;
+    this.tutorialProgress = { skipped: true };
+    this.tutorialShowing = false;
+    this.tutorialCardC?.setVisible(false);
+    this.setStatus('Tutorial skipped — press [H] anytime for the full controls.');
   }
 
   // ── the city ─────────────────────────────────────────────────────────────────────────────
@@ -1941,6 +2047,12 @@ export class IsoScene extends Phaser.Scene {
       // also box-select/deselect units beneath the HUD.
       if (this.toolbarClick) { this.toolbarClick = false; return; }
       if (this.legend?.visible) { this.hideLegend(); return; }
+      // Lane B — a click on the FTUE coach card's SKIP hint dismisses the tutorial (for mouse users who
+      // don't reach for [Esc]). Hit-test the fixed-HUD label in screen space before any world click.
+      if (this.tutorialShowing && this.tutorialSkipHint?.visible) {
+        const b = this.tutorialSkipHint.getBounds();
+        if (p.x >= b.x - 6 && p.x <= b.x + b.width + 6 && p.y >= b.y - 4 && p.y <= b.y + b.height + 6) { this.skipTutorial(); return; }
+      }
       // HUD PHASE 1 — the dossier strip + the open drawer OVERLAY the world: a click on a chip toggles its
       // panel; a click anywhere inside the open drawer is swallowed (so it never box-selects the city beneath).
       if (this.handleDossierClick(p.x, p.y)) return;
@@ -3585,7 +3697,8 @@ export class IsoScene extends Phaser.Scene {
     // HUD PHASE 1 — ESC closes the open drawer first (the common case); else cancels an armed restart prompt.
     this.input.keyboard?.on('keydown-ESC', () => {
       if (this.panels?.isOpen()) { this.panels.close(); return; }
-      if (this.restartGate.armed) this.doCancelRestart();
+      if (this.restartGate.armed) { this.doCancelRestart(); return; }
+      if (this.tutorialShowing) this.skipTutorial(); // Lane B — [Esc] dismisses the FTUE coach card
     });
     // SELECTION/CONTROL QoL — numbered CONTROL GROUPS share the digit keys: Ctrl+1-9 BINDS the current
     // selection, a bare digit RECALLS a bound group (double-tap centres). A digit only acts as a group
@@ -3645,6 +3758,7 @@ export class IsoScene extends Phaser.Scene {
     // GLOBAL ACTIVE-PAUSE — the living city freezes too (a paused frame advances ambient by 0).
     this.ambient?.update(this.pause.paused ? 0 : dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
     this.refreshHud();
+    this.refreshTutorial(); // Lane B — before refreshObjective: sets tutorialShowing so the banner stands down
     this.refreshObjective();
     if (!this.hudCollapsed) { this.refreshFeed(); this.refreshCrew(); } // HUD PHASE 1 — legacy side panels retired
     this.refreshPanels(); // HUD PHASE 1 — the dossier strip + the open drawer's body
