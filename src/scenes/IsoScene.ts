@@ -206,6 +206,9 @@ import {
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
 import {
+  idleUnitIds, nextIdleId, bindGroup, recallGroup, pruneGroup, isCenterRecall, idsInScreenRect,
+  type ControlGroups, type RecallTap,
+} from './selectionControl';
   type UnitOrder, type OrderUnit, holdOrder, attackMoveOrder, resolveAutoOrder,
   ATTACK_MOVE_ACQUIRE_RADIUS,
 } from './combatOrders';
@@ -495,6 +498,8 @@ export class IsoScene extends Phaser.Scene {
   private lastIncidentSeq = -1;
   private lastSeenWireSeq = -1; // §4: incidents past this seq are "unread"
   private selection: Selection = emptySelection();
+  private controlGroups: ControlGroups = {}; // QoL: Ctrl+1-9 bind / 1-9 recall numbered groups
+  private lastRecall?: RecallTap;            // last group recall (for the double-tap-centres gesture)
   private pressX = 0;
   private pressY = 0;
   private greaseIndex = 0;
@@ -3549,15 +3554,25 @@ export class IsoScene extends Phaser.Scene {
       if (this.panels?.isOpen()) { this.panels.close(); return; }
       if (this.restartGate.armed) this.doCancelRestart();
     });
+    // SELECTION/CONTROL QoL — numbered CONTROL GROUPS share the digit keys: Ctrl+1-9 BINDS the current
+    // selection, a bare digit RECALLS a bound group (double-tap centres). A digit only acts as a group
+    // recall once that group is BOUND, so an unused digit still fires its offense/build verb / audio bus.
     // RTS-17 — the offensive. RTS-27: when the audio panel is open, 1–5 adjust the volume buses
     // instead of firing offense/build verbs (so the settings surface is keyboard-drivable).
-    this.input.keyboard?.on('keydown-ONE', () => this.audioPanelOpen ? this.cycleAudioBus(0) : this.commandRaid());
-    this.input.keyboard?.on('keydown-TWO', () => this.audioPanelOpen ? this.cycleAudioBus(1) : this.commandSabotage());
-    this.input.keyboard?.on('keydown-THREE', () => this.audioPanelOpen ? this.cycleAudioBus(2) : this.commandAssassinate());
-    this.input.keyboard?.on('keydown-FOUR', () => this.audioPanelOpen ? this.cycleAudioBus(3) : this.commandLockout());
+    this.input.keyboard?.on('keydown-ONE', (e: KeyboardEvent) => { if (this.handleGroupDigit(1, e)) return; this.audioPanelOpen ? this.cycleAudioBus(0) : this.commandRaid(); });
+    this.input.keyboard?.on('keydown-TWO', (e: KeyboardEvent) => { if (this.handleGroupDigit(2, e)) return; this.audioPanelOpen ? this.cycleAudioBus(1) : this.commandSabotage(); });
+    this.input.keyboard?.on('keydown-THREE', (e: KeyboardEvent) => { if (this.handleGroupDigit(3, e)) return; this.audioPanelOpen ? this.cycleAudioBus(2) : this.commandAssassinate(); });
+    this.input.keyboard?.on('keydown-FOUR', (e: KeyboardEvent) => { if (this.handleGroupDigit(4, e)) return; this.audioPanelOpen ? this.cycleAudioBus(3) : this.commandLockout(); });
     // RTS-20 — the build verbs (leave ESTABLISH).
-    this.input.keyboard?.on('keydown-FIVE', () => this.audioPanelOpen ? this.cycleAudioBus(4) : this.commandExpand());
-    this.input.keyboard?.on('keydown-SIX', () => this.commandRecruit());
+    this.input.keyboard?.on('keydown-FIVE', (e: KeyboardEvent) => { if (this.handleGroupDigit(5, e)) return; this.audioPanelOpen ? this.cycleAudioBus(4) : this.commandExpand(); });
+    this.input.keyboard?.on('keydown-SIX', (e: KeyboardEvent) => { if (this.handleGroupDigit(6, e)) return; this.commandRecruit(); });
+    // 7-9 have no verb — they are pure control-group slots (bind with Ctrl, recall with the bare digit).
+    this.input.keyboard?.on('keydown-SEVEN', (e: KeyboardEvent) => { this.handleGroupDigit(7, e); });
+    this.input.keyboard?.on('keydown-EIGHT', (e: KeyboardEvent) => { this.handleGroupDigit(8, e); });
+    this.input.keyboard?.on('keydown-NINE', (e: KeyboardEvent) => { this.handleGroupDigit(9, e); });
+    // TAB cycles the player's IDLE (no-order) units; Shift+TAB reverses. preventDefault stops the
+    // browser stealing TAB for focus traversal.
+    this.input.keyboard?.on('keydown-TAB', (e: KeyboardEvent) => { e.preventDefault?.(); this.cycleIdleUnit(!!e.shiftKey); });
     // RTS-30c-2b — the two glyphs that shipped without a canon key: PATROL [Q], DEMOLISH [V].
     // INFO-FEEDBACK (canon ruling #1): [Q] = jump to the last/highest-priority unread alert (NOT Space=pause,
     // NOT Tab=idle cycle). PATROL keeps its action-card chip (the [Q] hotkey moved to jump-to-alert).
@@ -4000,6 +4015,58 @@ export class IsoScene extends Phaser.Scene {
     return this.units.filter((v) => v.faction === 'player' && isCommandableUnit(v.unit));
   }
 
+  /** The ids of every live commandable player unit — the "still in play" set control groups prune against. */
+  private liveCommandableIds(): string[] {
+    return this.commandableViews().map((v) => v.unit.id);
+  }
+
+  /** SELECTION QoL — TAB selects the next IDLE (no-order) player unit (reverse=Shift+TAB) and centres on
+   * it so an idle man off-screen is easy to find. No idle units → a status hint, selection unchanged. */
+  private cycleIdleUnit(reverse: boolean): void {
+    const next = nextIdleId(idleUnitIds(this.commandableViews().map((v) => v.unit)), this.selection.ids, reverse);
+    if (!next) { this.setStatus('no idle units to cycle'); return; }
+    this.focusBizId = undefined;
+    this.hideCollectorInfo();
+    this.selection = selectOnly(next);
+    this.centerOnSelection();
+    this.refreshSelCount(this.selection.ids.length);
+  }
+
+  /** SELECTION QoL — route a digit key for control groups: Ctrl/⌘+digit BINDS the current selection to
+   * that group; a bare digit RECALLS a bound group. Returns true when the key was consumed as a group
+   * action (so the caller skips its offense/build-verb / audio-bus fallback). */
+  private handleGroupDigit(n: number, e: KeyboardEvent): boolean {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault?.(); this.bindControlGroup(n); return true; }
+    return this.recallControlGroup(n);
+  }
+
+  /** Bind the current selection to control group `n` (empty selection clears the group). */
+  private bindControlGroup(n: number): void {
+    this.controlGroups = bindGroup(this.controlGroups, n, this.selection.ids);
+    const count = this.selection.ids.length;
+    this.setStatus(count ? `control group ${n} ← ${count} unit${count > 1 ? 's' : ''}` : `control group ${n} cleared`);
+  }
+
+  /** Recall control group `n`: select its surviving members (stale/dead ids pruned). A double-tap of the
+   * same group within the window also centres the camera on it. Returns false (no-op) for an unbound
+   * group, so the digit falls through to its verb. */
+  private recallControlGroup(n: number): boolean {
+    if (!Array.isArray(this.controlGroups[n])) return false; // never bound → let the verb fire
+    const live = recallGroup(this.controlGroups, n, this.liveCommandableIds());
+    this.controlGroups = pruneGroup(this.controlGroups, n, this.liveCommandableIds()); // drop the dead
+    if (live.length === 0) { this.setStatus(`control group ${n} is empty`); return true; }
+    const now = this.time.now;
+    const center = isCenterRecall(this.lastRecall, n, now);
+    this.lastRecall = { group: n, atMs: now };
+    this.focusBizId = undefined;
+    this.hideCollectorInfo();
+    this.selection = selectMany(live);
+    this.refreshSelCount(this.selection.ids.length);
+    if (center) this.centerOnSelection();
+    this.setStatus(`control group ${n} — ${live.length} selected`);
+    return true;
+  }
+
   /** RTS-30d-3 — paint the live drag-box marquee: a brass-line rectangle in SCREEN space (scrollFactor 0,
    * so it never drifts with the camera). Corners may be given in any order. */
   private drawMarquee(x0: number, y0: number, x1: number, y1: number): void {
@@ -4025,12 +4092,9 @@ export class IsoScene extends Phaser.Scene {
    * the marquee rect. Shift ADDS to the current selection; otherwise it replaces. Collectors + non-units are
    * excluded (they are not in commandableViews). */
   private resolveMarquee(p: Phaser.Input.Pointer, shift: boolean): void {
-    const x0 = Math.min(this.pressX, p.x), x1 = Math.max(this.pressX, p.x);
-    const y0 = Math.min(this.pressY, p.y), y1 = Math.max(this.pressY, p.y);
-    const hits = this.commandableViews().filter((v) => {
-      const s = this.unitScreenXY(v.unit);
-      return s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1;
-    }).map((v) => v.unit.id);
+    // Project each commandable unit to screen space, then reuse the pure screen-rect hit math.
+    const points = this.commandableViews().map((v) => ({ id: v.unit.id, ...this.unitScreenXY(v.unit) }));
+    const hits = idsInScreenRect(points, this.pressX, this.pressY, p.x, p.y);
     this.focusBizId = undefined;
     this.hideCollectorInfo();
     if (shift) { this.selection = selectMany([...this.selection.ids, ...hits]); }
