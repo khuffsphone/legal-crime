@@ -13,8 +13,9 @@ export type EventTier = 'info' | 'warning' | 'critical';
 export type EventKind =
   | 'front.converted' | 'front.retaken' | 'extort.failed'
   | 'district.lost' | 'district.captured' | 'rival.fallen'
-  | 'unit.down' | 'collector.robbed' | 'hq.attack'
+  | 'unit.down' | 'collector.robbed' | 'collector.banked' | 'hq.attack'
   | 'rival.telegraph'
+  | 'bribe.landed' | 'bribe.failed'
   | 'federal.threshold'
   | 'combat.hit';
 
@@ -41,11 +42,19 @@ export const EVENT_TAXONOMY: Record<EventKind, EventMeta> = {
   'rival.fallen':     { tier: 'info',     positional: false, dedupe: false, alert: false, ping: false },
   'unit.down':        { tier: 'warning',  positional: true,  dedupe: false, alert: true,  ping: true },
   'collector.robbed': { tier: 'warning',  positional: true,  dedupe: false, alert: true,  ping: true },
+  // LANE K — a collector REPORTED IN (banked its take): routine GOOD news. Positional (the player's own HQ
+  // vault, so the row is click-to-jump) but it must NOT spam an edge arrow or a minimap ping every week.
+  'collector.banked': { tier: 'info',     positional: true,  dedupe: false, alert: false, ping: false },
   'hq.attack':        { tier: 'critical', positional: true,  dedupe: false, alert: true,  ping: true },
   // COMBAT DEPTH FINALIZE (Part C-1) — the rival STRIKE telegraph: a pre-strike WARNING (the player's one
   // defensive window). Positional (it has a where), raises an edge alert + a ping, and never dedupes (each
   // committed strike is its own state-change beat).
   'rival.telegraph':  { tier: 'warning',  positional: true,  dedupe: false, alert: true,  ping: true },
+  // LANE K — greasing a bribe channel is an ABSTRACT channel action with no world location (like federal),
+  // so both outcomes are NON-positional: they log + (landed) read as gain / (failed) as a warning, with no
+  // arrow and no ping. A bribe is the PLAYER's own action — it can never leak a rival's whereabouts.
+  'bribe.landed':     { tier: 'info',     positional: false, dedupe: false, alert: false, ping: false },
+  'bribe.failed':     { tier: 'warning',  positional: false, dedupe: false, alert: false, ping: false },
   'federal.threshold':{ tier: 'critical', positional: false, dedupe: false, alert: false, ping: false }, // #3
   'combat.hit':       { tier: 'info',     positional: true,  dedupe: true,  alert: false, ping: false }, // #4
 };
@@ -66,6 +75,11 @@ export function extortionEventKind(ev: { converted: boolean; retook: boolean; fa
   if (ev.converted) return ev.retook ? 'front.retaken' : 'front.converted';
   if (ev.failed) return 'extort.failed';
   return null;
+}
+
+/** A [G] grease outcome → bribe.landed (the channel was paid) or bribe.failed (couldn't afford it). LANE K. */
+export function bribeEventKind(landed: boolean): EventKind {
+  return landed ? 'bribe.landed' : 'bribe.failed';
 }
 
 /** A turf-war capture → district.lost (the player lost it) or district.captured (the player took it). */
