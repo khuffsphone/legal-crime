@@ -9,6 +9,7 @@
 // should be passed as 0 (weight it out) — see the wiring note. It reads game STATE, never Phaser visuals.
 
 import type { MusicPhase } from '../audioMap';
+import type { HudPhase } from '../../sim/pacing';
 
 export interface ConductorInputs {
   /** 0..1 — collector/unit threat (0 safe → 1 ambush). From threatenedCollectors levels. */
@@ -114,4 +115,120 @@ export function conductWithHysteresis(
  * directly). The wiring uses intensity for these and bypasses it for TITLE/GAMEOVER/FIRST BLOOD. Pure. */
 export function isIntensityBed(phase: MusicPhase): boolean {
   return ORDER.includes(phase);
+}
+
+// ── SOURCE-PHASE STING GOVERNOR — the CONDUCTOR half of the anti-thrash pass ─────────────────────────
+// The narrative `hudPhase` (ESTABLISH → FIRST BLOOD → CONTEST → DECAPITATE) is a DISCRETE signal derived
+// from matchPhase + districtsHeld, and it can OSCILLATE fast (e.g. districtsHeld flicking 1↔2 flips
+// FIRST BLOOD↔CONTEST every beat). A raw "fire a sting whenever phase !== lastPhase" re-triggers and
+// cross-fades a phase sting on every flicker = thrash. (The intensity-driven BED above already has its own
+// hysteresis; the soft-SFX governor caps concurrent voices. This is the missing STING half.)
+//
+// This governor is the discrete-signal mirror of conductWithHysteresis: it applies TIME-DOMAIN HYSTERESIS
+// (a candidate phase must HOLD continuously for a min dwell before it's committed — the Schmitt equivalent
+// for a categorical signal; a flicker back to the old value resets the dwell clock so oscillation collapses
+// to ONE stable state) and a Schmitt-style MARGIN (de-escalations to a calmer stage must hold LONGER than
+// escalations — the score heats up promptly but drops out of a tense stage reluctantly). It also DEBOUNCES
+// the sting so one can't re-fire within a min interval. Pure; no Phaser, no audio, builds no SFX key.
+//
+// WIRING (the playtest-gated half — NOT in this PR): in IsoScene.detectHudBeats, replace the raw
+//   `if (this.lastPhase && this.lastPhase !== phase) this.audio?.play(this.audio.stingForPhaseKey(phase))`
+// with a held PhaseStingState: `const r = governPhaseSting(this.phaseSting, phase, this.time.now);
+// this.phaseSting = r.state; if (r.sting) this.audio?.play(this.audio.stingForPhaseKey(r.sting));`
+// — the scene still owns the SFX-key mapping (stingForPhaseKey) and the play() call.
+
+/** A new phase must HOLD continuously for this long before its sting is allowed (the dwell). */
+export const STING_PHASE_DWELL_MS = 1000;
+/** Schmitt MARGIN — a DE-escalation (dropping to a lower-rank/calmer phase) must hold this much LONGER
+ * than an escalation before it commits, so the score doesn't drop out of a tense stage on a flicker. */
+export const STING_DEESCALATION_MARGIN_MS = 1500;
+/** Debounce — a phase sting can't re-fire within this interval of the previous one. */
+export const MIN_STING_INTERVAL_MS = 2500;
+
+/** Escalation order for the Schmitt margin (calmer → hotter). */
+const PHASE_RANK: Readonly<Record<HudPhase, number>> = {
+  ESTABLISH: 0,
+  'FIRST BLOOD': 1,
+  CONTEST: 2,
+  DECAPITATE: 3,
+};
+
+export interface PhaseStingState {
+  /** The phase we've STABLY accepted (the last one whose sting was considered). */
+  committed: HudPhase;
+  /** The most recently OBSERVED phase, still serving out its dwell. */
+  candidate: HudPhase;
+  /** When `candidate` was first observed (absolute ms) — the dwell clock. */
+  candidateSinceMs: number;
+  /** When a sting last fired (absolute ms) — the debounce anchor. */
+  lastStingMs: number;
+}
+
+export interface PhaseStingResult {
+  /** The (possibly unchanged) state to carry to the next call. */
+  state: PhaseStingState;
+  /** The phase whose sting should fire NOW (already hysteretic + debounced), or null to stay silent. */
+  sting: HudPhase | null;
+}
+
+/** Seed the governor on the first observed phase WITHOUT firing a sting (mirrors the scene's `lastPhase`
+ * seed). `lastStingMs` is −∞ so the first genuine, settled phase change can sting immediately. */
+export function initPhaseSting(
+  phase: HudPhase = 'ESTABLISH',
+  nowMs: number = Number.NEGATIVE_INFINITY,
+): PhaseStingState {
+  return { committed: phase, candidate: phase, candidateSinceMs: nowMs, lastStingMs: Number.NEGATIVE_INFINITY };
+}
+
+/**
+ * Fold one observed `hudPhase` into the governor. Returns the next state and whether a sting should fire.
+ * Pure & deterministic — `nowMs` is the only clock.
+ *
+ *  1. A change in the observed phase RESTARTS the dwell clock — so a phase must hold CONTINUOUSLY to commit;
+ *     an oscillating input never serves out its dwell and collapses to the committed state (no thrash).
+ *  2. The candidate commits only once it has held for the required dwell: `dwellMs`, plus
+ *     `deescalationMarginMs` extra when it's a de-escalation (Schmitt asymmetry — calmer stages are
+ *     reluctant; hotter stages are prompt).
+ *  3. On commit, the sting fires only if one hasn't fired within `minStingIntervalMs` (debounce). If it's
+ *     debounced, the phase still commits (state advances) but the sting is suppressed.
+ */
+export function governPhaseSting(
+  s: PhaseStingState,
+  observed: HudPhase,
+  nowMs: number,
+  dwellMs: number = STING_PHASE_DWELL_MS,
+  deescalationMarginMs: number = STING_DEESCALATION_MARGIN_MS,
+  minStingIntervalMs: number = MIN_STING_INTERVAL_MS,
+): PhaseStingResult {
+  // 1. (re)start the dwell clock whenever the observed phase changes.
+  let candidate = s.candidate;
+  let candidateSinceMs = s.candidateSinceMs;
+  if (observed !== candidate) {
+    candidate = observed;
+    candidateSinceMs = nowMs;
+  }
+
+  // 2. Already settled here → nothing to commit, nothing to sting.
+  if (candidate === s.committed) {
+    return { state: { ...s, candidate, candidateSinceMs }, sting: null };
+  }
+
+  // 3. Hysteresis: require the candidate to HOLD for the dwell (+ margin for a de-escalation).
+  const deescalating = PHASE_RANK[candidate] < PHASE_RANK[s.committed];
+  const required = dwellMs + (deescalating ? deescalationMarginMs : 0);
+  if (nowMs - candidateSinceMs < required) {
+    return { state: { ...s, candidate, candidateSinceMs }, sting: null };
+  }
+
+  // 4. Commit the phase change; debounce the sting.
+  const canSting = nowMs - s.lastStingMs >= minStingIntervalMs;
+  return {
+    state: {
+      committed: candidate,
+      candidate,
+      candidateSinceMs,
+      lastStingMs: canSting ? nowMs : s.lastStingMs,
+    },
+    sting: canSting ? candidate : null,
+  };
 }
