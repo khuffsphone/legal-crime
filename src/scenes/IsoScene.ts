@@ -17,6 +17,7 @@ import {
   spawnUnit,
   spawnEnforcer,
   issueMove,
+  stopUnit,
   unitTile,
   unitScreenPos,
   pickUnit,
@@ -204,6 +205,10 @@ import {
 } from './playability';
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
+import {
+  type UnitOrder, type OrderUnit, holdOrder, attackMoveOrder, resolveAutoOrder,
+  ATTACK_MOVE_ACQUIRE_RADIUS,
+} from './combatOrders';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
@@ -599,6 +604,12 @@ export class IsoScene extends Phaser.Scene {
   private collectorInfoId?: string;
   private marqueeGfx?: Phaser.GameObjects.Graphics; // RTS-30d-3 drag-box selection marquee (fixed UI cam)
   private marqueeActive = false;
+  // COMBAT CONTROL VERBS (input-only) — per-unit STOP/HOLD/ATTACK-MOVE stance, kept RENDER-SIDE (the sim
+  // MovableUnit type is untouched). Absent id ⇒ NORMAL. attackMovePending arms [A]: the next left-click
+  // sets the attack-move destination instead of box-selecting. The stances drive the EXISTING issueMove/
+  // stopUnit + 35a auto-engage each tick (applyUnitOrders) — no new sim mechanic.
+  private unitOrders = new Map<string, UnitOrder>();
+  private attackMovePending = false;
   private selCountText?: Phaser.GameObjects.Text; // RTS-30d-3 "N selected" readout (fixed UI cam)
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
@@ -1459,6 +1470,7 @@ export class IsoScene extends Phaser.Scene {
     }
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
+    this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) {
@@ -1911,6 +1923,10 @@ export class IsoScene extends Phaser.Scene {
         // RTS-35c VERB SPLIT: route the right-click by TARGET TYPE — a rival UNIT → ATTACK, a BUILDING →
         // the extort/attack menu, empty ground → MOVE (RTS-22/23 building rule preserved within).
         this.commandContextual(p);
+      } else if (this.attackMovePending) {
+        // [A] is armed: this left-click sets the ATTACK-MOVE destination (instead of box-selecting).
+        this.attackMovePending = false;
+        this.commandAttackMove(p);
       } else {
         this.commandSelect(p, shift);
       }
@@ -2283,6 +2299,7 @@ export class IsoScene extends Phaser.Scene {
     // move-to-engage: walk the selected crew onto the rival's tile — auto-engage does the rest.
     const dest = unitTile(rival);
     const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, dest, this.navGrid);
+    for (const id of res.moved) this.unitOrders.delete(id); // a direct ATTACK order cancels any stance
     const from = unitScreenPos(thug), to = unitScreenPos(rival);
     this.flashAttackIntent(from.x, from.y, to.x, to.y);
     this.signalBeat('attack');
@@ -2308,8 +2325,86 @@ export class IsoScene extends Phaser.Scene {
     const target = screenToTile(p.worldX, p.worldY);
     if (!isCommandableTile(target, this.navGrid)) { this.drawTargetMarker(target, false); return; }
     const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, target, this.navGrid);
+    for (const id of res.moved) this.unitOrders.delete(id); // a fresh MOVE cancels any STOP/HOLD/ATTACK-MOVE stance
     this.drawTargetMarker(target, res.moved.length > 0);
     this.setStatus(`moving ${res.moved.length} → (${target.gx},${target.gy})${res.failed.length ? ` · ${res.failed.length} blocked` : ''}`);
+  }
+
+  // ── COMBAT CONTROL VERBS (input-only: STOP / HOLD / ATTACK-MOVE) ───────────────────────────────
+  // Reuse the EXISTING order system (issueMove / stopUnit) + the 35a proximity auto-engage; the per-unit
+  // stance lives render-side (the sim unit type is untouched) and the pure combatOrders module decides.
+  // Selection is authoritative — these act on the SELECTED commandable player crew.
+
+  /** The selected, commandable PLAYER fighters (thugs/enforcers; collectors stay autonomous). */
+  private selectedCombatViews(): UnitView[] {
+    return this.units.filter((v) =>
+      this.selection.ids.includes(v.unit.id) && v.faction === 'player' && isCommandableUnit(v.unit) && v.unit.role !== 'collector');
+  }
+
+  /** [S] STOP — cancel the selected crew's orders and hold their tile (clears path + any stance). */
+  private commandStop(): void {
+    const sel = this.selectedCombatViews();
+    if (sel.length === 0) { this.setStatus('select crew first, then [S] to stop'); return; }
+    for (const v of sel) { stopUnit(v.unit); this.unitOrders.delete(v.unit.id); } // clear orders → NORMAL, held tile
+    this.attackMovePending = false;
+    this.setStatus(`STOP — ${sel.length} holding position`);
+  }
+
+  /** [I] HOLD — the selected crew stands and fights without chasing (a persistent stance). [H] stays help. */
+  private commandHold(): void {
+    const sel = this.selectedCombatViews();
+    if (sel.length === 0) { this.setStatus('select crew first, then [I] to hold'); return; }
+    for (const v of sel) { stopUnit(v.unit); this.unitOrders.set(v.unit.id, holdOrder()); } // stand; 35a fights what's in range
+    this.attackMovePending = false;
+    this.setStatus(`HOLD — ${sel.length} stand & fight, no chase`);
+  }
+
+  /** [A] — arm ATTACK-MOVE: the next left-click sets the destination (engage any hostile met en route). */
+  private beginAttackMove(): void {
+    if (this.selectedCombatViews().length === 0) { this.setStatus('select crew first, then [A] attack-move'); return; }
+    this.attackMovePending = true;
+    this.setStatus('ATTACK-MOVE — left-click a destination');
+  }
+
+  /** Issue the armed ATTACK-MOVE to the destination under the cursor: path the crew there + tag the stance
+   * so applyUnitOrders diverts them onto any hostile they meet, then resumes the advance. */
+  private commandAttackMove(p: Phaser.Input.Pointer): void {
+    const sel = this.selectedCombatViews();
+    if (sel.length === 0) return;
+    const target = screenToTile(p.worldX, p.worldY);
+    if (!isCommandableTile(target, this.navGrid)) { this.drawTargetMarker(target, false); return; }
+    const ids = sel.map((v) => v.unit.id);
+    const res = resolveMoveCommand(this.units.map((v) => v.unit), ids, target, this.navGrid);
+    for (const id of res.moved) this.unitOrders.set(id, attackMoveOrder(target));
+    this.drawTargetMarker(target, res.moved.length > 0);
+    this.signalBeat('attack');
+    this.setStatus(`ATTACK-MOVE — ${res.moved.length} advancing, engaging hostiles en route`);
+  }
+
+  /** Per-tick: drive the STOP/HOLD/ATTACK-MOVE stances against the EXISTING order system. HOLD stands (no
+   * chase); ATTACK-MOVE diverts to ENGAGE a hostile in acquire range (35a trades blows on contact) then
+   * resumes toward its destination. No new sim mechanic — it only issues moves / stops the player's units. */
+  private applyUnitOrders(): void {
+    if (this.unitOrders.size === 0) return;
+    const orderUnits: OrderUnit[] = this.units.map((v) => ({
+      id: v.unit.id, pos: v.unit.pos, factionId: v.unit.factionId, role: v.unit.role, downed: v.unit.downed,
+    }));
+    for (const v of this.units) {
+      if (v.faction !== 'player') continue;
+      const order = this.unitOrders.get(v.unit.id);
+      if (!order || order.stance === 'NORMAL') continue;
+      const self: OrderUnit = { id: v.unit.id, pos: v.unit.pos, factionId: v.unit.factionId, role: v.unit.role, downed: v.unit.downed };
+      const decision = resolveAutoOrder(self, order, orderUnits, ATTACK_MOVE_ACQUIRE_RADIUS);
+      if (decision.kind === 'engage') {
+        if (v.unit.path.length === 0) issueMove(v.unit, decision.tile, this.navGrid); // walk onto the foe; re-acquire on arrival
+      } else if (decision.kind === 'advance') {
+        if (v.unit.path.length === 0) issueMove(v.unit, decision.tile, this.navGrid); // resume toward the destination
+      } else if (decision.kind === 'hold') {
+        if (order.stance === 'HOLD') v.unit.path = []; // HOLD never moves (defends in place)
+      }
+    }
+    // prune stances for units that left play (downed/removed), so the map can't grow unbounded.
+    for (const id of [...this.unitOrders.keys()]) if (!this.units.some((v) => v.unit.id === id)) this.unitOrders.delete(id);
   }
 
   private drawTargetMarker(tile: { gx: number; gy: number }, ok: boolean): void {
@@ -3362,10 +3457,13 @@ export class IsoScene extends Phaser.Scene {
   private setupCameraControls(): void {
     const cam = this.cameras.main;
     this.cursors = this.input.keyboard?.createCursorKeys();
-    const K = Phaser.Input.Keyboard.KeyCodes;
-    this.wasd = this.input.keyboard?.addKeys({ up: K.W, down: K.S, left: K.A, right: K.D }) as typeof this.wasd;
+    // COMBAT CONTROL VERBS — WASD is FREED for the standard RTS command keys (S=STOP, A=ATTACK-MOVE;
+    // W/D now unused, D re-homes the old [I]=center-on-selection). The camera still pans via the ARROW
+    // keys + screen-edge + middle-drag + wheel — full keyboard coverage without WASD. `this.wasd` stays
+    // undefined; the pan reads it with optional chaining, so dropping it is safe.
+    this.wasd = undefined;
     // RTS-30d-3: LEFT-drag = selection MARQUEE; MIDDLE-drag = pan the camera (a real drag past slop).
-    // (WASD / arrows / edge / wheel still pan/zoom; right-click still moves/commands.)
+    // (Arrows / edge / wheel still pan/zoom; right-click still moves/commands.)
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!p.isDown || Math.hypot(p.x - this.pressX, p.y - this.pressY) <= CLICK_SLOP) return;
       if (p.middleButtonDown()) { cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom; cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom; }
@@ -3384,7 +3482,11 @@ export class IsoScene extends Phaser.Scene {
     // HUD PHASE 1 — [F] now opens the FINANCE drawer; the camera CENTRE-ON-SELECTION it displaced moves to
     // [I] (the only collision the L/T/V/K/F bindings introduce; the larger remap is deferred).
     this.input.keyboard?.on('keydown-F', () => this.panels?.toggle('finance'));
-    this.input.keyboard?.on('keydown-I', () => this.centerOnSelection());
+    // COMBAT CONTROL VERBS (input-only; reuse the order system + 35a engage):
+    this.input.keyboard?.on('keydown-S', () => this.commandStop());        // [S] STOP — cancel orders, hold tile
+    this.input.keyboard?.on('keydown-I', () => this.commandHold());        // [I] HOLD — stand & fight, no chase ([H] = help)
+    this.input.keyboard?.on('keydown-A', () => this.beginAttackMove());    // [A] then left-click — ATTACK-MOVE
+    this.input.keyboard?.on('keydown-D', () => this.centerOnSelection());  // [D] center camera on selection (moved off [I])
     this.input.keyboard?.on('keydown-Z', () => this.frameCity());
     // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).
     this.input.keyboard?.on('keydown-PLUS', () => this.cycleZoom(1));
@@ -5156,7 +5258,7 @@ export class IsoScene extends Phaser.Scene {
   // ── onboarding ───────────────────────────────────────────────────────────────────────────
 
   private buildLegend(): void {
-    const w = 600, h = 372;
+    const w = 600, h = 396;
     const cx = this.scale.width / 2, cy = this.scale.height / 2;
     const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
     const title = this.mkText(0, -h / 2 + 16, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
@@ -5164,12 +5266,13 @@ export class IsoScene extends Phaser.Scene {
       'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
       '',
       'CAMERA — move around and read the city',
-      '  WASD / arrows pan · left-drag box-select · middle-drag pan · wheel zoom-to-cursor · [F] follow selection · [Z] frame whole city',
+      '  ARROW keys / screen-edge pan · left-drag box-select · middle-drag pan · wheel zoom · [F] follow · [Z] frame city · [D] center on selection',
       '',
       'MOUSE — drive your thugs',
       '  LEFT-CLICK a thug to select (SHIFT-click adds more)',
       '  RIGHT-CLICK a storefront → EXTORT (take protection) or ATTACK (shut it down)',
       '  RIGHT-CLICK the street → move the selected thugs',
+      '  COMBAT CONTROL — [S] stop (hold tile) · [I] hold (stand & fight, no chase) · [A] then left-click → attack-move',
       '  The coloured plate under a shop = its allegiance: fog new · brass yours · red rival.',
       '',
       'EXTORT-FIRST — the early game',
