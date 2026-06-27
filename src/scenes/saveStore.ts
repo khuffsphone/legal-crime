@@ -12,6 +12,10 @@ const QUICK_SLOT = 'quick';        // the [F5]/[F9] quick-save slot
 export const AUTOSAVE_SLOT = 'auto'; // the rolling autosave slot (cadence + key events)
 export const MAX_SLOTS = 6;
 
+/** The Phaser registry key the load HANDOFF uses: a scene sets the deserialized GameState here, then starts
+ * IsoScene, whose create() adopts it. Shared so the menu's "Continue" and the in-game loader agree. */
+export const LOADED_STATE_KEY = 'lcr_loaded_state';
+
 export type { SaveView };
 
 export interface SlotInfo {
