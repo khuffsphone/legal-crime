@@ -248,7 +248,7 @@ import {
 import { createDossier, advanceIntel, type IntelDossier, type IntelObservation } from '../sim/intel';
 import { DossierPanel } from './ui/dossierPanel';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
-import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
+import { metaFor, combatEventKind, extortionEventKind, captureEventKind, bribeEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
 import { edgeAlertMarker } from './info/edgeAlerts';
 import {
@@ -1686,7 +1686,17 @@ export class IsoScene extends Phaser.Scene {
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
     this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
-    for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
+    for (const dep of processCollectorArrivals(this.state, this.layout)) {
+      this.flashDeposit(dep.collectorId, dep.banked);
+      // LANE K — a collector REPORTED IN: log the bank so income shows up on THE WIRE, not just a one-frame
+      // float. ⭐ NO-X-RAY: PLAYER deposits only — processCollectorArrivals also yields rival collectors, and
+      // a rival's bank is NOT a player-knowable fact. Positional to the player's OWN HQ vault (click-to-jump),
+      // no alert/ping (routine good news).
+      if (dep.familyId === 'player' && dep.banked > 0) {
+        const vault = hqTileOf(this.layout, 'player');
+        this.recordInfoEvent('collector.banked', `a collector banked $${dep.banked}`, vault?.gx, vault?.gy);
+      }
+    }
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) {
       this.flashTerritory(cap.districtId, cap.before === 'player');
@@ -2732,7 +2742,11 @@ export class IsoScene extends Phaser.Scene {
     this.state = harvestIncidents(this.state);
     const paid = this.state.player.bribes[ch] > cur;
     if (paid) { this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); } // RTS-27 distinct cue per channel
-    this.setStatus(paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`);
+    const greaseMsg = paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`;
+    this.setStatus(greaseMsg);
+    // LANE K — surface the bribe outcome on THE WIRE so the player can read that a channel landed (or that
+    // they came up short). Non-positional (an abstract channel action) — logs only, no arrow/ping.
+    this.recordInfoEvent(bribeEventKind(paid), greaseMsg);
   }
 
   /** RTS-27 — fire a consigliere VO tip the FIRST time its onboarding trigger occurs (don't spam). */
