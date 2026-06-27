@@ -22,7 +22,18 @@ import type { Command } from './commands';
 import { applyCommand } from './commands';
 import { Rng } from './rng';
 import { controlOf } from './territory';
+import {
+  rivalPosture, postureDamp, districtToDefend, districtToAttack, bribeAllocation, canAffordBribe,
+  RIVAL_STRATEGY_TUNING,
+} from './rivalStrategy';
 import type { District, Family, GameState, OperationKind } from './types';
+
+// Lane A (rival AI depth) — base scores for the strategic candidates the rivalStrategy overlay adds. Kept
+// local (not in constants.ts) so the lane stays file-isolated. DEFEND outranks opportunistic expansion; a
+// federal-pressure bribe outranks a fresh offensive bet (protect what you have before reaching further).
+const AI_DEFEND_BONUS = 30;   // added to a defensive expandControl on a threatened hold
+const AI_SETBRIBE_BASE = 55;  // base for a federal-pressure channel bribe (setBribe)
+const AI_SETBRIBE_PER_TIER = 12; // +per federal warning tier (a looming bust is bought down hard)
 
 /** The district where a family has the most uncollected takings waiting, if any. */
 function richestPendingDistrict(
@@ -126,14 +137,44 @@ export function rivalCandidates(state: GameState, rival: Family): ScoredAction[]
     });
   }
 
-  // Expand control toward holding the stronghold.
+  // Expand control — STRATEGICALLY TARGETED (lane A): DEFEND a threatened hold first, else push the best
+  // attack TARGET while the posture allows it, else fall back to holding the stronghold (the prior behaviour).
+  // Type + base are unchanged from before in the no-threat / expand case, so the base AI contract is preserved;
+  // only the district chosen (and a defend bonus when a hold is slipping) changes.
+  const posture = rivalPosture(rival, RIVAL_STRATEGY_TUNING);
+  const defend = districtToDefend(state, rival.id, RIVAL_STRATEGY_TUNING);
   if (rival.cash >= EXPAND_COST) {
     const stronghold = strongholdDistrict(state, rival.id);
     const needsHolding = controlOf(stronghold, rival.id) < CONTROL_HOLD ? 10 : 0;
+    const attack = posture === 'expand' ? districtToAttack(state, rival.id, RIVAL_STRATEGY_TUNING) : undefined;
+    const targetId = defend?.districtId ?? attack?.districtId ?? stronghold.id;
     out.push({
-      command: { type: 'expandControl', familyId: rival.id, districtId: stronghold.id },
-      base: AI_EXPAND_BASE + needsHolding,
+      command: { type: 'expandControl', familyId: rival.id, districtId: targetId },
+      base: AI_EXPAND_BASE + needsHolding + (defend ? AI_DEFEND_BONUS : 0),
     });
+  }
+
+  // Allocate bribery across the four channels under FEDERAL pressure (lane A). Police stays the flat heat
+  // retainer above; this adds judges/feds/politicians via the existing setBribe slider, keyed to the
+  // telegraphed federal warning. Only appears once a federal warning is active (fedWarningLevel ≥ 1).
+  const plan = bribeAllocation(rival, RIVAL_STRATEGY_TUNING);
+  if (plan && canAffordBribe(rival, plan)) {
+    out.push({
+      command: { type: 'setBribe', familyId: rival.id, channel: plan.channel, amount: plan.amount },
+      base: AI_SETBRIBE_BASE + rival.fedWarningLevel * AI_SETBRIBE_PER_TIER,
+    });
+  }
+
+  // RETREAT UNDER HEAT (lane A): damp OFFENSIVE bets (expand / establish) while consolidating or retreating, so
+  // a hot rival stops reaching for new turf and leans on collecting + buying protection. Defensive expansion is
+  // exempt (a threatened hold still scores its defend bonus); cooling actions (bribe/collect) are never damped.
+  if (posture !== 'expand') {
+    const damp = postureDamp(posture, RIVAL_STRATEGY_TUNING);
+    for (const c of out) {
+      if (c.command.type === 'establishOperation') c.base *= damp;
+      // a DEFENSIVE expand (retargeted onto the threatened hold) is exempt — never damp shoring up a slipping hold.
+      else if (c.command.type === 'expandControl' && c.command.districtId !== defend?.districtId) c.base *= damp;
+    }
   }
 
   return out;
