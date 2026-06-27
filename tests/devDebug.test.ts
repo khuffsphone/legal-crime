@@ -4,8 +4,8 @@
 // the resolved status and NEVER corrupt sim state (no HQ raze, no family kill, no cash/turf change).
 import { describe, it, expect } from 'vitest';
 import {
-  parseDebugFlags, applyDevDebug, armPlayerUnits, equipAsEnforcer, forceEndgame,
-  ARM_WEAPON, ARM_SKILL,
+  parseDebugFlags, parseArmWeapon, applyDevDebug, armPlayerUnits, equipAsEnforcer, forceEndgame,
+  ARM_WEAPON, ARM_SKILL, ARM_WEAPONS,
 } from '../src/scenes/devDebug';
 import { createInitialState } from '../src/sim/state';
 import { spawnUnit, spawnCollector, spawnEnforcer } from '../src/sim/movement';
@@ -22,19 +22,21 @@ function withPlayerUnits(): GameState {
 }
 
 describe('the GUARD — inert without a dev build OR without a param', () => {
+  const INERT = { arm: false, armWeapon: ARM_WEAPON, forceWin: false, forceLose: false };
+
   it('parseDebugFlags is all-false unless dev AND the param is present', () => {
-    expect(parseDebugFlags('?arm', false)).toEqual({ arm: false, forceWin: false, forceLose: false }); // not dev
-    expect(parseDebugFlags('', true)).toEqual({ arm: false, forceWin: false, forceLose: false }); // no param
+    expect(parseDebugFlags('?arm', false)).toEqual(INERT); // not dev
+    expect(parseDebugFlags('', true)).toEqual(INERT); // no param
     expect(parseDebugFlags('?arm', true).arm).toBe(true);
     expect(parseDebugFlags('?debug=win', true).forceWin).toBe(true);
     expect(parseDebugFlags('?debug=lose', true).forceLose).toBe(true);
-    expect(parseDebugFlags('?debug=turf', true)).toEqual({ arm: false, forceWin: false, forceLose: false }); // unrelated flag
+    expect(parseDebugFlags('?debug=turf', true)).toEqual(INERT); // unrelated flag
   });
 
   it('applyDevDebug is a pure no-op when not a dev build, or with no param', () => {
     const a = withPlayerUnits();
     const r1 = applyDevDebug(a, '?arm&debug=win', false); // production build → wholly inert
-    expect(r1).toEqual({ active: false, armed: [], endgame: null });
+    expect(r1).toEqual({ active: false, armed: [], endgame: null, dismissIntro: false });
     expect(a.units.find((u) => u.id === 'thug-1')!.weapon).toBeUndefined();
     expect(a.status).toBe('playing');
 
@@ -43,6 +45,48 @@ describe('the GUARD — inert without a dev build OR without a param', () => {
     expect(r2.active).toBe(false);
     expect(b.units.find((u) => u.id === 'thug-1')!.weapon).toBeUndefined();
     expect(b.status).toBe('playing');
+  });
+});
+
+describe('?arm=<tier> — equips ANY valid weapon tier (default pistol) via the real path', () => {
+  it('parseArmWeapon maps each tier, defaulting unknown / legacy / empty to pistol', () => {
+    for (const t of ARM_WEAPONS) expect(parseArmWeapon(t)).toBe(t);
+    expect(parseArmWeapon('HITMAN')).toBe('hitman'); // case-insensitive
+    expect(parseArmWeapon('')).toBe(ARM_WEAPON); // bare ?arm
+    expect(parseArmWeapon(null)).toBe(ARM_WEAPON); // param absent
+    expect(parseArmWeapon('1')).toBe(ARM_WEAPON); // legacy ?arm=1
+    expect(parseArmWeapon('bazooka')).toBe(ARM_WEAPON); // unknown → never an invalid weapon
+  });
+
+  it('parseDebugFlags carries the requested tier', () => {
+    expect(parseDebugFlags('?arm=hitman', true).armWeapon).toBe('hitman');
+    expect(parseDebugFlags('?arm=demolitions', true).armWeapon).toBe('demolitions');
+    expect(parseDebugFlags('?arm', true).armWeapon).toBe(ARM_WEAPON); // bare ?arm → default
+  });
+
+  it('?arm=<tier> equips the player thug with THAT tier (via spawnEnforcer), not just pistol', () => {
+    for (const tier of ARM_WEAPONS) {
+      const s = withPlayerUnits();
+      const report = applyDevDebug(s, `?arm=${tier}`, true);
+      expect(report.armed).toContain('thug-1');
+      const thug = s.units.find((u) => u.id === 'thug-1')!;
+      expect(thug.role).toBe('enforcer');
+      expect(thug.weapon).toBe(tier);
+      expect(thug.skill).toBe(ARM_SKILL);
+    }
+  });
+
+  it('?arm does not dismiss the intro overlay (only win/lose do)', () => {
+    expect(applyDevDebug(withPlayerUnits(), '?arm=hitman', true).dismissIntro).toBe(false);
+  });
+
+  it('?arm (bare) and ?arm=bogus fall back to the default pistol', () => {
+    const a = withPlayerUnits();
+    applyDevDebug(a, '?arm', true);
+    expect(a.units.find((u) => u.id === 'thug-1')!.weapon).toBe(ARM_WEAPON);
+    const b = withPlayerUnits();
+    applyDevDebug(b, '?arm=bogus', true);
+    expect(b.units.find((u) => u.id === 'thug-1')!.weapon).toBe(ARM_WEAPON);
   });
 });
 
@@ -95,6 +139,7 @@ describe('?debug=win|lose — flips ONLY the resolved result, never corrupts sim
     const report = applyDevDebug(s, '?debug=win', true);
     expect(s.status).toBe('won');
     expect(report.endgame?.status).toBe('won');
+    expect(report.dismissIntro).toBe(true); // the scene dismisses the intro overlay so the readout shows
     // NO corruption: rivals still alive, player HQ + cash untouched
     expect(s.rivals.map((r) => r.alive)).toEqual(rivalsAliveBefore);
     expect(s.rivals.every((r) => r.alive)).toBe(true);
@@ -109,6 +154,7 @@ describe('?debug=win|lose — flips ONLY the resolved result, never corrupts sim
     expect(s.status).toBe('lost');
     expect(s.lossReason).toBe('dead');
     expect(report.endgame?.status).toBe('lost');
+    expect(report.dismissIntro).toBe(true);
     expect(s.player.hqIntegrity).toBe(hqBefore); // HQ NOT razed — only the result flipped
     expect(s.player.alive).not.toBe(false); // the family was not eliminated
   });

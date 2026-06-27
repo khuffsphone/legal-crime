@@ -3084,6 +3084,9 @@ export class IsoScene extends Phaser.Scene {
     // status-only endgame flip). Refresh the armed units' views so the new enforcer silhouettes show.
     const report = applyDevDebug(this.state, search, true); // already dev-gated above
     for (const id of report.armed) this.refreshArmedView(id);
+    // ?debug=win|lose — dismiss the opening legend so the forced endgame readout is actually reachable
+    // (it otherwise renders behind the intro overlay). The endgame resolves on the next sim-advance frame.
+    if (report.dismissIntro) this.hideLegend();
 
     const params = new URLSearchParams(search);
     const debug = params.get('debug');

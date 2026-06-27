@@ -30,10 +30,30 @@ export function isDevBuild(): boolean {
 
 export interface DebugFlags {
   arm: boolean;
+  /** The weapon tier ?arm should equip (defaults to ARM_WEAPON / pistol; ignored unless `arm`). */
+  armWeapon: WeaponTier;
   forceWin: boolean;
   forceLose: boolean;
 }
-const INERT: DebugFlags = { arm: false, forceWin: false, forceLose: false };
+
+/** ?arm's default loadout: a hit-ready pistol enforcer with solid skill (a VALID weapon tier). */
+export const ARM_WEAPON: WeaponTier = 'pistol';
+export const ARM_SKILL = 6;
+
+/** Every VALID weapon tier ?arm can equip (canon set). Anything else falls back to the default. */
+export const ARM_WEAPONS: readonly WeaponTier[] = ['pistol', 'shotgun', 'rifle', 'hitman', 'demolitions'];
+
+const INERT: DebugFlags = { arm: false, armWeapon: ARM_WEAPON, forceWin: false, forceLose: false };
+
+/**
+ * Resolve a `?arm` value to a VALID weapon tier. `?arm` (no value) and `?arm=1` (the legacy form) → the
+ * default pistol; `?arm=hitman|shotgun|rifle|demolitions|pistol` → that tier; anything unrecognised → the
+ * default. Case-insensitive. Always returns a valid WeaponTier — never an invalid weapon state. Pure.
+ */
+export function parseArmWeapon(value: string | null): WeaponTier {
+  const v = (value ?? '').toLowerCase();
+  return (ARM_WEAPONS as readonly string[]).includes(v) ? (v as WeaponTier) : ARM_WEAPON;
+}
 
 /**
  * Parse the dev-debug flags from a URL query string. THE GUARD: returns all-false unless `isDev` is true AND
@@ -46,14 +66,11 @@ export function parseDebugFlags(search: string, isDev: boolean): DebugFlags {
   const debug = p.get('debug');
   return {
     arm: p.has('arm'),
+    armWeapon: parseArmWeapon(p.get('arm')),
     forceWin: debug === 'win',
     forceLose: debug === 'lose',
   };
 }
-
-/** ?arm's default loadout: a hit-ready pistol enforcer with solid skill (a VALID weapon tier). */
-export const ARM_WEAPON: WeaponTier = 'pistol';
-export const ARM_SKILL = 6;
 
 /**
  * Equip one live unit as a proper enforcer by routing through the REAL constructor: build the canonical
@@ -115,6 +132,9 @@ export interface DevDebugReport {
   armed: string[];
   /** The forced endgame, if ?debug=win|lose fired. */
   endgame: EndgameResult | null;
+  /** Whether the scene should DISMISS the intro/help overlay so a forced endgame is reachable. True iff a
+   * ?debug=win|lose flip fired — the endgame readout sits behind the opening legend otherwise. */
+  dismissIntro: boolean;
 }
 
 /**
@@ -125,9 +145,9 @@ export interface DevDebugReport {
 export function applyDevDebug(state: GameState, search: string, isDev: boolean = isDevBuild()): DevDebugReport {
   const flags = parseDebugFlags(search, isDev);
   if (!flags.arm && !flags.forceWin && !flags.forceLose) {
-    return { active: false, armed: [], endgame: null };
+    return { active: false, armed: [], endgame: null, dismissIntro: false };
   }
-  const armed = flags.arm ? armPlayerUnits(state) : [];
+  const armed = flags.arm ? armPlayerUnits(state, flags.armWeapon) : [];
   const endgame = flags.forceWin ? forceEndgame(state, 'win') : flags.forceLose ? forceEndgame(state, 'lose') : null;
-  return { active: true, armed, endgame };
+  return { active: true, armed, endgame, dismissIntro: endgame !== null };
 }

@@ -14,6 +14,7 @@ import {
   type SoftVoice, admitSoftSfx, SOFT_SFX_MAX, softBurstActive, SOFT_BURST_WINDOW_MS,
   SOFT_BURST_THRESHOLD,
 } from './audioMap';
+import { registerAudioPreload } from './audioPreload';
 
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
 
@@ -120,10 +121,11 @@ export class AudioManager {
   private currentPhase: MusicPhase = 'TITLE';
   private lastVoIndex = -1;
 
-  /** Register every clip for loading (call from a scene preload). Missing files 404 → graceful. */
+  /** Register every clip for loading (call from a scene preload). Routed through the GUARDED, unit-tested
+   * registerAudioPreload: a missing/404 clip is skipped quietly (and silent placeholder WAVs ship at the
+   * not-yet-real paths), so a fresh load logs ZERO "Unable to decode audio data" errors. */
   static preload(scene: Phaser.Scene): void {
-    scene.load.on('loaderror', () => { /* expected for not-yet-dropped clips */ });
-    for (const d of LIBRARY) scene.load.audio(d.key, [`audio/${d.file}`]);
+    registerAudioPreload(scene.load, LIBRARY);
   }
 
   constructor(scene: Phaser.Scene) {
