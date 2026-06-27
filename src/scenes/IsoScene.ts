@@ -69,6 +69,15 @@ import {
   victoryReport,
   type VictoryCondition,
   type VictoryReport,
+  // Lane L — RUN STATS: pure tally accumulated at existing outcome points + the endgame summary block.
+  ensureRunStats,
+  observeRun,
+  recordFundsBanked,
+  recordIncomeEarned,
+  recordBribePaid,
+  recordRacketRun,
+  runStatsSummary,
+  familyIncome,
   viceLadder,
   applyViceUpgrade,
   marketRows,
@@ -231,7 +240,7 @@ import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout
 import { initPause, togglePause as togglePauseState, setPaused as setPausedState, type PauseState } from './pauseGate';
 import {
   listSaveSlots, writeSaveSlot, readSaveSlot, deleteSaveSlot, quickSave, quickLoad,
-  exportSaveFile, importSaveFile, LOADED_STATE_KEY, type SlotInfo,
+  exportSaveFile, importSaveFile, autoSave, LOADED_STATE_KEY, type SlotInfo, type SaveView,
 } from './saveStore';
 // Lane G — the menu/settings shell.
 import { loadSettings, type Settings } from './settings';
@@ -253,7 +262,7 @@ import {
 import { createDossier, advanceIntel, type IntelDossier, type IntelObservation } from '../sim/intel';
 import { DossierPanel } from './ui/dossierPanel';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
-import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
+import { metaFor, combatEventKind, extortionEventKind, captureEventKind, bribeEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
 import { edgeAlertMarker } from './info/edgeAlerts';
 import {
@@ -682,6 +691,8 @@ export class IsoScene extends Phaser.Scene {
   private selCountText?: Phaser.GameObjects.Text; // RTS-30d-3 "N selected" readout (fixed UI cam)
   // RTS-29 reshape — fog of war, the CONTROL readout, fixed per-business collectors, extort-visits.
   private fog: FogState = createFog();
+  private loadedFog?: string[]; // LANE F — saved fog to restore on a load (else fog is recomputed)
+  private lastAutosaveTick = -1; // LANE F — autosave cadence gate
   private controlTitle?: Phaser.GameObjects.Text;
   private controlBody?: Phaser.GameObjects.Text;
   private cityRowHits: { x: number; y: number; w: number; h: number; districtId: string }[] = [];
@@ -755,9 +766,12 @@ export class IsoScene extends Phaser.Scene {
     // SAVE/LOAD — if a save was loaded, restart() left the deserialized state in the registry; adopt it (a
     // full clean re-init of every view layer from the saved tree) instead of starting a fresh game.
     const loaded = this.registry.get(LOADED_STATE_KEY) as GameState | undefined;
+    const loadedView = this.registry.get('lcr_loaded_view') as SaveView | undefined;
     if (loaded) {
       this.registry.remove(LOADED_STATE_KEY);
+      this.registry.remove('lcr_loaded_view');
       this.state = loaded;
+      this.loadedFog = loadedView?.fog; // LANE F — restore saved fog at the fog-seed step (NO-X-RAY)
     } else {
       this.state = createInitialState(1, { startingCrew: true, tutorialFreeRuns: 1, bigCity: true });
       // RTS-29: rivals stay DORMANT (no territorial contact) for the first weeks — the peaceful runway.
@@ -782,7 +796,10 @@ export class IsoScene extends Phaser.Scene {
     this.spawnUnits();
     // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
     // the opening pocket around the HQ + starting units into the revealed set.
-    this.seedFogAroundPlayer();
+    // LANE F — on a load, restore the fog EXACTLY as saved (explored stays explored; hidden rivals stay
+    // hidden). Otherwise seed fresh fog around the player. Play then continues to reveal as normal.
+    if (this.loadedFog) { this.fog = new Set(this.loadedFog); this.loadedFog = undefined; }
+    else this.seedFogAroundPlayer();
 
     // RTS-22: frame the player's home neighbourhood (where the extort-first opening happens), zoomed
     // out enough to read the block. The camera is fully driveable (WASD / drag / wheel / F-follow).
@@ -1689,6 +1706,18 @@ export class IsoScene extends Phaser.Scene {
       if (this.marketEnabled) advanceWeeklyContent(this.state, obs.result.weeksFired);
       else for (let i = 0; i < obs.result.weeksFired; i++) advanceCivics(this.state);
     }
+    // Lane L — RUN STATS: once per SETTLED week, sample the peak/final counters (turf, rivals down, heat
+    // peak, weeks survived) and book the gross weekly income the empire produced. Pure observe — it only
+    // READS state; tick()/applyCommand() are untouched.
+    const runStats = ensureRunStats(this.state);
+    if (obs.result.weeksFired > 0) {
+      observeRun(runStats, this.state);
+      recordIncomeEarned(runStats, familyIncome(this.state, 'player') * obs.result.weeksFired);
+    }
+    // FUNDS: snapshot the player's cash here so every deposit banked below (route + manual collectors) is
+    // tallied. Settlement/expenses already resolved inside observeWorld above, and NO command runs in this
+    // loop, so the only cash movement between here and processCollectorArrivals is banked takings.
+    const cashBeforeDeposits = this.state.player.cash;
     // RTS-22/29: advance the fixed per-business collectors (gather → bank → loop). No-op without one.
     advanceRoutes(this.state, this.layout, this.navGrid);
     // RTS-35b: react to the embodied-extortion transitions (the sim already drove the acts + fired the
@@ -1704,7 +1733,19 @@ export class IsoScene extends Phaser.Scene {
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
     this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
-    for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
+    for (const dep of processCollectorArrivals(this.state, this.layout)) {
+      this.flashDeposit(dep.collectorId, dep.banked);
+      // LANE K — a collector REPORTED IN: log the bank so income shows up on THE WIRE, not just a one-frame
+      // float. ⭐ NO-X-RAY: PLAYER deposits only — processCollectorArrivals also yields rival collectors, and
+      // a rival's bank is NOT a player-knowable fact. Positional to the player's OWN HQ vault (click-to-jump),
+      // no alert/ping (routine good news).
+      if (dep.familyId === 'player' && dep.banked > 0) {
+        const vault = hqTileOf(this.layout, 'player');
+        this.recordInfoEvent('collector.banked', `a collector banked $${dep.banked}`, vault?.gx, vault?.gy);
+      }
+    }
+    // Lane L — RUN STATS: the cash gained across the deposit calls above is the funds banked this frame.
+    recordFundsBanked(runStats, this.state.player.cash - cashBeforeDeposits);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) {
       this.flashTerritory(cap.districtId, cap.before === 'player');
@@ -1724,6 +1765,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-17: the contest resolved — surface the win/lose readout.
     if (obs.endgame || this.state.status !== 'playing') this.showEndgame();
     this.advanceDossier(); // LANE D — earn aged intel once per settlement (no-op between ticks; never edits the sim)
+    this.advanceAutosave(); // LANE F — autosave once per settlement (no-op between ticks)
     } // end !paused — sim advancement gate
 
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
@@ -2350,6 +2392,7 @@ export class IsoScene extends Phaser.Scene {
       if (ev.converted) {
         // the EXISTING conversion already set extortedBy — surface the felt beat (mirror of the old flow).
         this.state = harvestIncidents(this.state);
+        recordRacketRun(ensureRunStats(this.state)); // Lane L — a front shaken into a paying racket
         if (c) {
           this.triggerAttackMotion(thugView, undefined, c.x); // a final committing SHOVE on the storefront
           this.seedBackPay(ev.frontId); this.leanBeat(c.x, c.y); this.signalBeat('extort');
@@ -2739,6 +2782,7 @@ export class IsoScene extends Phaser.Scene {
     const d = strongholdDistrict(this.state, 'player');
     applyCommand(this.state, { type: 'establishOperation', familyId: 'player', districtId: d.id, kind });
     this.state = harvestIncidents(this.state);
+    recordRacketRun(ensureRunStats(this.state)); // Lane L — a racket brought online
     const hq = hqTileOf(this.layout, 'player');
     if (hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, `OPENED ${kind.toUpperCase()} RACKET`, NOIR_PALETTE.brass); }
     this.audio?.laundering(); this.audio?.confirm(); this.fireTipOnce('launder'); // RTS-34 typewriter (cooking the books) + RTS-27 confirm + money tip
@@ -2754,8 +2798,15 @@ export class IsoScene extends Phaser.Scene {
     applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: ch, amount: cur + 10 });
     this.state = harvestIncidents(this.state);
     const paid = this.state.player.bribes[ch] > cur;
-    if (paid) { this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); } // RTS-27 distinct cue per channel
-    this.setStatus(paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`);
+    if (paid) {
+      recordBribePaid(ensureRunStats(this.state), ch, this.state.player.bribes[ch] - cur); // Lane L — greased $ by channel
+      this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); // RTS-27 distinct cue per channel
+    }
+    const greaseMsg = paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`;
+    this.setStatus(greaseMsg);
+    // LANE K — surface the bribe outcome on THE WIRE so the player can read that a channel landed (or that
+    // they came up short). Non-positional (an abstract channel action) — logs only, no arrow/ping.
+    this.recordInfoEvent(bribeEventKind(paid), greaseMsg);
   }
 
   /** RTS-27 — fire a consigliere VO tip the FIRST time its onboarding trigger occurs (don't spam). */
@@ -3370,6 +3421,18 @@ export class IsoScene extends Phaser.Scene {
     objs.push(this.mkText(cx, headY, headline, { fontFamily: NOIR_DISPLAY, fontSize: '38px', color: ink, fontStyle: 'bold', align: 'center', wordWrap: { width: paperW - 60 } }).setOrigin(0.5).setScrollFactor(0).setDepth(200002));
     objs.push(this.mkText(cx, headY + 42, report.dek.toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '13px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 80 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
 
+    // ── Lane L — THE RUN IN NUMBERS: inject the run-stat summary into Lane E's paper (a centered strip
+    // under the deck, NOT a forked screen). A final observe pins the FINAL turf + weeks survived; the eight
+    // pure tokens print as two centered lines in the gap above the footer. ──
+    const runStats = ensureRunStats(this.state);
+    observeRun(runStats, this.state);
+    const runTokens = runStatsSummary(runStats);
+    const runRuleY = py + paperH - footH; // the footer's top rule — the strip sits just above it
+    const runStripStyle = { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 48 } } as const;
+    objs.push(this.mkText(cx, runRuleY - 48, 'THE RUN IN NUMBERS', { fontFamily: NOIR_FONT, fontSize: '11px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, runRuleY - 32, runTokens.slice(0, 4).join('   ·   '), runStripStyle).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, runRuleY - 17, runTokens.slice(4).join('   ·   '), runStripStyle).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+
     // ── the FINAL STANDING (left) + BY THE NUMBERS (right) — Lane E's telegraphed-win payoff ──
     const footTop = py + paperH - footH + 12;
     const bar = (pct: number): string => { const n = Math.max(0, Math.min(10, Math.round(pct / 10))); return '█'.repeat(n) + '░'.repeat(10 - n); };
@@ -3845,6 +3908,11 @@ export class IsoScene extends Phaser.Scene {
     // LANE D — earned-intel DOSSIER toggle. [J] (journal) is already the market SELL key, so the dossier
     // toggles on BACKTICK (`). Read-only; opening renders the current aged dossier (NO-X-RAY — never live).
     this.input.keyboard?.on('keydown-BACKTICK', () => this.toggleDossier());
+    // LANE F — quicksave [F5] / quickload [F9]. Both are unbound in-app; F5 is the browser refresh, so we
+    // preventDefault to keep it in-game (the SAVE/LOAD menu's buttons remain the fallback if the browser still
+    // intercepts it). Quickload restarts the scene with the saved state + restored fog.
+    this.input.keyboard?.on('keydown-F5', (e: KeyboardEvent) => { e.preventDefault?.(); this.doQuickSave(); });
+    this.input.keyboard?.on('keydown-F9', (e: KeyboardEvent) => { e.preventDefault?.(); this.handleLoadResult(quickLoad(), 'quick'); });
     // RTS-25 — perf overlay: live FPS · frame ms · text rasterisations/sec (the cost this pass cut).
     this.input.keyboard?.on('keydown-P', () => { this.perfVisible = !this.perfVisible; this.perfText?.setVisible(this.perfVisible); });
     // OPERATION-OUTCOME PREVIEWS — HOLD-ALT expands the hover GLANCE card into its DETAIL rows. [ALT] is
@@ -5274,13 +5342,28 @@ export class IsoScene extends Phaser.Scene {
 
   /** Adopt a deserialized save: stash it in the registry and RESTART the scene so every view layer is
    * cleanly rebuilt from the loaded tree (create() picks it up). */
-  private loadGame(state: GameState): void {
+  /** LANE F — autosave once per settlement (week), gated by lastAutosaveTick so it never fires per-frame.
+   * Carries the fog so a resumed autosave restores visibility exactly. Skips a finished game. */
+  private advanceAutosave(): void {
+    if (this.state.tick === this.lastAutosaveTick) return;
+    this.lastAutosaveTick = this.state.tick;
+    if (this.state.status !== 'playing') return;
+    autoSave(this.state, `Autosave · Week ${this.state.tick}`, this.nowMs(), this.saveView());
+  }
+
+  private loadGame(state: GameState, view?: SaveView): void {
     this.registry.set(LOADED_STATE_KEY, state);
+    if (view) this.registry.set('lcr_loaded_view', view); // LANE F — restore fog exactly as saved (NO-X-RAY)
     this.scene.restart();
   }
 
+  /** LANE F — the view-layer blob a save carries so visibility restores EXACTLY as saved: the fog set. */
+  private saveView(): SaveView {
+    return { fog: [...this.fog] };
+  }
+
   private handleLoadResult(r: LoadResult, sourceLabel: string): void {
-    if (r.ok) { this.closeSaveMenu(); this.loadGame(r.state); }
+    if (r.ok) { this.closeSaveMenu(); this.loadGame(r.state, r.file.view); }
     else this.setStatus(`load failed (${sourceLabel}): ${r.reason}`);
   }
 
@@ -5334,7 +5417,7 @@ export class IsoScene extends Phaser.Scene {
     mkBtn(px + 284, py + 50, '＋ NEW', NOIR_PALETTE.brass, () => this.doNewSave());
     mkBtn(px + pw - 44, py + 12, '✕', SPEC.danger, () => this.closeSaveMenu());
     mkBtn(px + 16, py + 84, '⬆ IMPORT FILE', NOIR_PALETTE.bone, () => this.doImport());
-    mkBtn(px + 150, py + 84, '⇩ EXPORT FILE', NOIR_PALETTE.bone, () => { exportSaveFile(this.state, 'game', this.nowMs()); this.setStatus('save exported to a file'); });
+    mkBtn(px + 150, py + 84, '⇩ EXPORT FILE', NOIR_PALETTE.bone, () => { exportSaveFile(this.state, 'game', this.nowMs(), this.saveView()); this.setStatus('save exported to a file'); });
 
     // the slot list
     const slots = listSaveSlots();
@@ -5357,7 +5440,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private doQuickSave(): void {
-    const r = quickSave(this.state, this.nowMs());
+    const r = quickSave(this.state, this.nowMs(), this.saveView());
     this.setStatus(r.ok ? 'quick-saved' : `save failed: ${r.reason}`);
     if (r.ok) this.buildSaveMenu();
   }
@@ -5368,7 +5451,7 @@ export class IsoScene extends Phaser.Scene {
     let slot = '';
     for (let i = 1; i <= 6; i++) { if (!used.has(`s${i}`)) { slot = `s${i}`; break; } }
     if (!slot) slot = listSaveSlots().sort((a, b) => a.savedAt - b.savedAt)[0]?.slot ?? 's1';
-    const r = writeSaveSlot(slot, this.state, `Week ${this.state.tick} · $${Math.round(this.state.player.cash)}`, this.nowMs());
+    const r = writeSaveSlot(slot, this.state, `Week ${this.state.tick} · $${Math.round(this.state.player.cash)}`, this.nowMs(), this.saveView());
     this.setStatus(r.ok ? `saved (${slot})` : `save failed: ${r.reason}`);
     if (r.ok) this.buildSaveMenu();
   }

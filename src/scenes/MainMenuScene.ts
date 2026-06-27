@@ -11,7 +11,7 @@
 import Phaser from 'phaser';
 import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY } from './theme';
 import { PAL } from './cityArt';
-import { listSaveSlots, readSaveSlot, LOADED_STATE_KEY } from './saveStore';
+import { listSaveSlots, loadContinue, hasAnySave, LOADED_STATE_KEY } from './saveStore';
 import { SettingsPanel } from './settingsPanel';
 
 interface MenuButton {
@@ -53,7 +53,7 @@ export class MainMenuScene extends Phaser.Scene {
     let y = H * 0.5;
     const gap = 56;
     this.mkButton(cx, y, 'NEW GAME', 'a fresh outfit', true, () => this.startGame(true)); y += gap;
-    this.mkButton(cx, y, 'CONTINUE', newest ? `resume ${newest.label || 'your last game'}` : 'no save found', !!newest, () => this.continueGame(newest?.slot)); y += gap;
+    this.mkButton(cx, y, 'CONTINUE', newest ? `resume ${newest.label || 'your last game'}` : 'no save found', hasAnySave(), () => this.continueGame()); y += gap;
     this.mkButton(cx, y, 'SETTINGS', 'audio · controls · display', true, () => this.openSettings()); y += gap;
     this.mkButton(cx, y, 'QUIT', 'leave the city', true, () => this.quit());
 
@@ -90,11 +90,12 @@ export class MainMenuScene extends Phaser.Scene {
     this.scene.start('IsoScene');
   }
 
-  private continueGame(slot?: string): void {
-    if (!slot) return;
-    const res = readSaveSlot(slot);
+  private continueGame(): void {
+    // loadContinue picks the newest slot across autosave / quick / manual (Lane F's purpose-built entry).
+    const res = loadContinue();
     if (!res.ok) { this.setNote(`could not load: ${res.reason}`); return; }
-    this.registry.set(LOADED_STATE_KEY, res.state); // IsoScene.create adopts this on start
+    this.registry.set(LOADED_STATE_KEY, res.state);          // IsoScene.create adopts this on start
+    if (res.file.view) this.registry.set('lcr_loaded_view', res.file.view); // restore fog exactly (NO-X-RAY)
     this.scene.start('IsoScene');
   }
 

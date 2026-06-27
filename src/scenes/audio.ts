@@ -15,8 +15,11 @@ import {
   SOFT_BURST_THRESHOLD,
 } from './audioMap';
 import { registerAudioPreload } from './audioPreload';
+import { registerSynthSfx } from './audioSynth';
 
-interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
+// `synth` clips carry NO file — their AudioBuffer is generated at boot (audioSynth.ts) and registered in the
+// cache under the same key, so there is no WAV to 404 or fail to decode (procedural SFX, Lane I).
+interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; synth?: boolean; }
 
 // The catalogued library (from the Drive ASSET_MANIFEST). Files present in the current drop load and
 // sound now; the rest (grease cues, door/typewriter, wire rings, stings, VO) are wired with their
@@ -30,16 +33,22 @@ const LIBRARY: ClipDef[] = [
   { key: 'siren', file: 'LCR_sfx_siren.m4a', bus: 'sfx', vol: 0.7, urgent: true }, // the law at 85 / lockout
   { key: 'warning', file: 'LCR_sfx_warning.m4a', bus: 'sfx', vol: 0.8, urgent: true }, // 🔔 teletype 50/70/85
   { key: 'mutiny', file: 'LCR_sfx_mutiny.m4a', bus: 'sfx', vol: 0.85, urgent: true }, // crew defection stinger
-  // ── per-weapon HIT-SFX hooks (attack-commit feedback). Keys are by CONTRACT (weaponFeedback.ts); the
-  // real WAVs drop into public/audio/ later and light up automatically (missing-clip graceful no-op). The
-  // gun reports ride the EXISTING urgent governor (one-at-a-time + duck, like tommygun/pistol); a fists
-  // punch is a soft cue under the soft governor. No conductor/timing change — just catalogued keys. ──
-  { key: 'sfx_hit_fists', file: 'sfx_hit_fists.wav', bus: 'sfx', vol: 0.7 }, // a knuckle thud (soft)
-  { key: 'sfx_hit_pistol', file: 'sfx_hit_pistol.wav', bus: 'sfx', vol: 0.82, urgent: true },
-  { key: 'sfx_hit_shotgun', file: 'sfx_hit_shotgun.wav', bus: 'sfx', vol: 0.85, urgent: true },
-  { key: 'sfx_hit_rifle', file: 'sfx_hit_rifle.wav', bus: 'sfx', vol: 0.8, urgent: true }, // the tommy
-  { key: 'sfx_hit_hitman', file: 'sfx_hit_hitman.wav', bus: 'sfx', vol: 0.82, urgent: true },
-  { key: 'sfx_hit_demolitions', file: 'sfx_hit_demolitions.wav', bus: 'sfx', vol: 0.85, urgent: true },
+  // ── per-weapon HIT-SFX hooks (attack-commit feedback). Keys are by CONTRACT (weaponFeedback.ts). Lane I:
+  // these are now SYNTHESIZED at boot (audioSynth.ts) under these exact keys — no WAV, so no decode error is
+  // even possible. The gun reports ride the EXISTING urgent governor (one-at-a-time + duck, like tommygun/
+  // pistol); a fists punch is a soft cue under the soft governor. No conductor/timing change. ──
+  { key: 'sfx_hit_fists', file: '', bus: 'sfx', vol: 0.7, synth: true }, // a knuckle thud (soft)
+  { key: 'sfx_hit_pistol', file: '', bus: 'sfx', vol: 0.82, urgent: true, synth: true },
+  { key: 'sfx_hit_shotgun', file: '', bus: 'sfx', vol: 0.85, urgent: true, synth: true },
+  { key: 'sfx_hit_rifle', file: '', bus: 'sfx', vol: 0.8, urgent: true, synth: true }, // the tommy
+  { key: 'sfx_hit_hitman', file: '', bus: 'sfx', vol: 0.82, urgent: true, synth: true },
+  { key: 'sfx_hit_demolitions', file: '', bus: 'sfx', vol: 0.85, urgent: true, synth: true },
+  // ── per-surface FOOTSTEP taps (Lane I) — synthesized filtered-noise; catalogued + governed on the sfx bus,
+  // ready for a locomotion lane to play by surface. No file. ──
+  { key: 'sfx_step_pavement', file: '', bus: 'sfx', vol: 0.4, synth: true },
+  { key: 'sfx_step_wood', file: '', bus: 'sfx', vol: 0.4, synth: true },
+  { key: 'sfx_step_gravel', file: '', bus: 'sfx', vol: 0.4, synth: true },
+  { key: 'sfx_step_interior', file: '', bus: 'sfx', vol: 0.35, synth: true },
   // ── grease level-ups / extras — RTS-30e-audio: reconciled to the user's ACTUAL asset filenames (.wav) ──
   { key: 'grease_beat', file: 'sfx_the_beat_whistle.wav', bus: 'sfx', vol: 0.8 }, // a cop's whistle
   { key: 'grease_bench', file: 'sfx_the_bench_gavel.wav', bus: 'sfx', vol: 0.8 }, // a gavel
@@ -125,7 +134,8 @@ export class AudioManager {
    * registerAudioPreload: a missing/404 clip is skipped quietly (and silent placeholder WAVs ship at the
    * not-yet-real paths), so a fresh load logs ZERO "Unable to decode audio data" errors. */
   static preload(scene: Phaser.Scene): void {
-    registerAudioPreload(scene.load, LIBRARY);
+    // synth clips carry no file — they're generated at boot (ready()), so they're never queued on the loader.
+    registerAudioPreload(scene.load, LIBRARY.filter((d) => !d.synth));
   }
 
   constructor(scene: Phaser.Scene) {
@@ -133,8 +143,10 @@ export class AudioManager {
     this.settings = AudioManager.loadSettings();
   }
 
-  /** After preload: record which clips actually loaded (the rest no-op). */
+  /** After preload: synthesize the procedural SFX into the cache (Lane I), then record which clips are
+   * present (loaded WAVs + the freshly-synthesized buffers); the rest no-op. */
   ready(): void {
+    registerSynthSfx(this.scene); // generate + cache the synth SFX ONCE under their exact keys
     for (const d of LIBRARY) if (this.scene.cache.audio.exists(d.key)) this.loaded.add(d.key);
   }
 
