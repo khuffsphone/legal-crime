@@ -204,6 +204,7 @@ import {
 } from './playability';
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
+import { applyDevDebug, isDevBuild } from './devDebug';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
@@ -2945,34 +2946,25 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /**
-   * QA-only scenario hooks. Non-invasive: read the URL query and seed an interesting board by
-   * exercising EXISTING systems (turf pulses, loyalty seeding, the bribe command, the endgame
-   * evaluator) — they change NO sim rule and are a no-op in normal play (no flags) and outside the
-   * browser. Supported:
-   *   • ?arm=1                       — a funded, established, hit-ready outfit (skips the build phase).
-   *   • ?debug=turf|mutiny|all[&pulses=N] — fast-forward the turf war / prime a mutiny.
-   *   • ?debug=win | ?debug=lose     — force the endgame to resolve (the wrapper reads it next frame).
+   * QA-only scenario hooks — DEV-ONLY (gated by isDevBuild(); wholly inert in a production / Steam build).
+   * Read the URL query and seed an interesting board by exercising EXISTING systems — they change NO sim
+   * rule and are a no-op in normal play (no flags) and outside the browser. Supported:
+   *   • ?arm                          — equip each SELECTABLE player unit via the real spawn/equip path
+   *                                     (devDebug.applyDevDebug — never an invalid weapon state).
+   *   • ?debug=win | ?debug=lose      — flip ONLY the resolved endgame status (no HQ raze, no corruption).
+   *   • ?debug=turf|mutiny|all[&pulses=N] — fast-forward the turf war / prime a mutiny (legacy QA tools).
    */
   private applyDebugScenario(): void {
+    if (!isDevBuild()) return; // the GUARD: nothing below ever runs in a production build
     const search = typeof window !== 'undefined' ? (window.location?.search ?? '') : '';
     if (!search) return;
+
+    // ?arm + ?debug=win|lose — the guarded dev-debug module (routes through the real spawn/equip + a
+    // status-only endgame flip). Refresh the armed units' views so the new enforcer silhouettes show.
+    const report = applyDevDebug(this.state, search, true); // already dev-gated above
+    for (const id of report.armed) this.refreshArmedView(id);
+
     const params = new URLSearchParams(search);
-
-    // ?arm=1 — the UAT injector: a strong, funded, established outfit so QA can drive the full arc
-    // (raid/lockout/assassinate) immediately, bypassing the economy→offense build-up.
-    if (params.get('arm') === '1') {
-      const p = this.state.player;
-      p.cash = 12000; p.dirtyCash = 3000;
-      // muscle: three made men guarding the home block → strength ≥ 12 (unlocks ASSASSINATE).
-      for (let i = 0; i < 3; i++) {
-        p.gangsters.push({ id: `player-arm-${i}`, name: 'Made Man', skill: 6, loyalty: 80, upkeep: 0, assignment: { type: 'guard', districtId: 'district-0' } });
-      }
-      const home = this.state.districts.find((d) => d.id === 'district-0');
-      if (home) home.control.player = 60; // HOLD the home block (unlocks RAID)
-      applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: 'feds', amount: 20 }); // The Bureau (unlocks LOCKOUT)
-      this.state = harvestIncidents(this.state);
-    }
-
     const debug = params.get('debug');
     if (!debug) return;
     const want = (k: string): boolean => debug === k || debug === 'all';
@@ -2987,14 +2979,17 @@ export class IsoScene extends Phaser.Scene {
       // Prime a mutiny: starve the crew's loyalty so the mutiny telegraph + desertions surface.
       for (const g of this.state.player.gangsters) g.loyalty = Math.min(g.loyalty, 8);
     }
-    if (debug === 'win') {
-      // Topple every rival; the wrapper's evaluateEndgame resolves a WIN on the next frame.
-      for (const r of this.state.rivals) { r.alive = false; r.hqIntegrity = 0; }
-    }
-    if (debug === 'lose') {
-      // Raze the player's HQ; the wrapper's evaluateEndgame resolves a LOSS on the next frame.
-      this.state.player.hqIntegrity = 0;
-    }
+  }
+
+  /** ?arm view refresh: a just-equipped unit is now a weapon-tier ENFORCER — swap to its baked enforcer
+   * silhouette and drop the plain button-man procedural rig (an enforcer renders the baked sprite). */
+  private refreshArmedView(id: string): void {
+    const v = this.units.find((u) => u.unit.id === id);
+    if (!v) return;
+    if (v.unit.weapon) v.sprite.setTexture(enforcerTexKey(v.unit.weapon)).setVisible(true);
+    if (v.rig) { v.rig.destroy(); v.rig = undefined; }
+    if (v.rigDebug) { v.rigDebug.destroy(); v.rigDebug = undefined; }
+    if (v.rigText) { v.rigText.destroy(); v.rigText = undefined; }
   }
 
   /** The victory/defeat readout when the contest resolves (RTS-17). */
