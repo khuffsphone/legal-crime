@@ -4,12 +4,15 @@
 // the pure core. localStorage is guarded (typeof !== 'undefined') exactly like the audio-settings persistence,
 // so headless/test contexts degrade gracefully instead of throwing.
 
-import { serializeToString, deserializeGame, type LoadResult } from '../sim/saveLoad';
+import { serializeToString, deserializeGame, type LoadResult, type SaveView } from '../sim/saveLoad';
 import type { GameState } from '../sim';
 
 const PREFIX = 'lcr_save_';        // named slots → localStorage key = PREFIX + slot
 const QUICK_SLOT = 'quick';        // the [F5]/[F9] quick-save slot
+export const AUTOSAVE_SLOT = 'auto'; // the rolling autosave slot (cadence + key events)
 export const MAX_SLOTS = 6;
+
+export type { SaveView };
 
 export interface SlotInfo {
   slot: string;
@@ -40,12 +43,13 @@ export function listSaveSlots(): SlotInfo[] {
   return out.sort((a, b) => b.savedAt - a.savedAt);
 }
 
-/** Write a named slot. `nowMs` is the caller's clock (keeps the pure core clock-free). Returns ok/why. */
-export function writeSaveSlot(slot: string, state: GameState, label: string, nowMs: number): { ok: boolean; reason?: string } {
+/** Write a named slot. `nowMs` is the caller's clock (keeps the pure core clock-free). `view` carries the fog
+ * so visibility restores exactly as saved. Returns ok/why. */
+export function writeSaveSlot(slot: string, state: GameState, label: string, nowMs: number, view?: SaveView): { ok: boolean; reason?: string } {
   const store = ls();
   if (!store) return { ok: false, reason: 'no local storage available' };
   try {
-    store.setItem(PREFIX + slot, serializeToString(state, { label, savedAt: nowMs }));
+    store.setItem(PREFIX + slot, serializeToString(state, { label, savedAt: nowMs }, view));
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: e instanceof Error && e.name === 'QuotaExceededError' ? 'storage full — delete a save or export to a file' : 'could not write the save' };
@@ -65,19 +69,40 @@ export function deleteSaveSlot(slot: string): void {
   ls()?.removeItem(PREFIX + slot);
 }
 
-export function quickSave(state: GameState, nowMs: number): { ok: boolean; reason?: string } {
-  return writeSaveSlot(QUICK_SLOT, state, 'Quick Save', nowMs);
+export function quickSave(state: GameState, nowMs: number, view?: SaveView): { ok: boolean; reason?: string } {
+  return writeSaveSlot(QUICK_SLOT, state, 'Quick Save', nowMs, view);
 }
 
 export function quickLoad(): LoadResult {
   return readSaveSlot(QUICK_SLOT);
 }
 
+// ── AUTOSAVE + CONTINUE ───────────────────────────────────────────────────────────────────────────
+/** Write the rolling autosave slot (called on a cadence / key events by the scene). Carries the fog. */
+export function autoSave(state: GameState, label: string, nowMs: number, view?: SaveView): { ok: boolean; reason?: string } {
+  return writeSaveSlot(AUTOSAVE_SLOT, state, label, nowMs, view);
+}
+
+/** Whether ANY save exists (for a "Continue" affordance — e.g. Lane G's title-screen button). */
+export function hasAnySave(): boolean {
+  return listSaveSlots().length > 0;
+}
+
+/**
+ * The CONTINUE entry: load the most recent save across all slots (autosave / quick / manual), newest first.
+ * The single clean call a title-screen "Continue" can use. Returns a LoadResult (ok:false if there is none).
+ */
+export function loadContinue(): LoadResult {
+  const newest = listSaveSlots()[0]; // listSaveSlots already sorts newest-first
+  if (!newest) return { ok: false, reason: 'no save to continue' };
+  return readSaveSlot(newest.slot);
+}
+
 // ── downloadable / importable save FILE (survives a cache clear) ─────────────────────────────────
 /** Trigger a download of the save as a .json file (browser only; no-op without a DOM). */
-export function exportSaveFile(state: GameState, label: string, nowMs: number): void {
+export function exportSaveFile(state: GameState, label: string, nowMs: number, view?: SaveView): void {
   if (typeof document === 'undefined' || typeof URL === 'undefined') return;
-  const blob = new Blob([serializeToString(state, { label, savedAt: nowMs })], { type: 'application/json' });
+  const blob = new Blob([serializeToString(state, { label, savedAt: nowMs }, view)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

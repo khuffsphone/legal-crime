@@ -499,6 +499,17 @@ export {
   type VictoryReport,
 } from './victory';
 export {
+  createRunStats,
+  ensureRunStats,
+  recordFundsBanked,
+  recordIncomeEarned,
+  recordBribePaid,
+  recordRacketRun,
+  observeRun,
+  runStatsSummary,
+  type RunStats,
+} from './runStats';
+export {
   recordIncident,
   harvestIncidents,
   isLedgerKind,
