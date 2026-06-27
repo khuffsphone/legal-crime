@@ -69,6 +69,15 @@ import {
   victoryReport,
   type VictoryCondition,
   type VictoryReport,
+  // Lane L — RUN STATS: pure tally accumulated at existing outcome points + the endgame summary block.
+  ensureRunStats,
+  observeRun,
+  recordFundsBanked,
+  recordIncomeEarned,
+  recordBribePaid,
+  recordRacketRun,
+  runStatsSummary,
+  familyIncome,
   viceLadder,
   applyViceUpgrade,
   marketRows,
@@ -1671,6 +1680,18 @@ export class IsoScene extends Phaser.Scene {
       if (this.marketEnabled) advanceWeeklyContent(this.state, obs.result.weeksFired);
       else for (let i = 0; i < obs.result.weeksFired; i++) advanceCivics(this.state);
     }
+    // Lane L — RUN STATS: once per SETTLED week, sample the peak/final counters (turf, rivals down, heat
+    // peak, weeks survived) and book the gross weekly income the empire produced. Pure observe — it only
+    // READS state; tick()/applyCommand() are untouched.
+    const runStats = ensureRunStats(this.state);
+    if (obs.result.weeksFired > 0) {
+      observeRun(runStats, this.state);
+      recordIncomeEarned(runStats, familyIncome(this.state, 'player') * obs.result.weeksFired);
+    }
+    // FUNDS: snapshot the player's cash here so every deposit banked below (route + manual collectors) is
+    // tallied. Settlement/expenses already resolved inside observeWorld above, and NO command runs in this
+    // loop, so the only cash movement between here and processCollectorArrivals is banked takings.
+    const cashBeforeDeposits = this.state.player.cash;
     // RTS-22/29: advance the fixed per-business collectors (gather → bank → loop). No-op without one.
     advanceRoutes(this.state, this.layout, this.navGrid);
     // RTS-35b: react to the embodied-extortion transitions (the sim already drove the acts + fired the
@@ -1687,6 +1708,8 @@ export class IsoScene extends Phaser.Scene {
     if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
     this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
     for (const dep of processCollectorArrivals(this.state, this.layout)) this.flashDeposit(dep.collectorId, dep.banked);
+    // Lane L — RUN STATS: the cash gained across the deposit calls above is the funds banked this frame.
+    recordFundsBanked(runStats, this.state.player.cash - cashBeforeDeposits);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
     for (const cap of obs.strategy.captures) {
       this.flashTerritory(cap.districtId, cap.before === 'player');
@@ -2327,6 +2350,7 @@ export class IsoScene extends Phaser.Scene {
       if (ev.converted) {
         // the EXISTING conversion already set extortedBy — surface the felt beat (mirror of the old flow).
         this.state = harvestIncidents(this.state);
+        recordRacketRun(ensureRunStats(this.state)); // Lane L — a front shaken into a paying racket
         if (c) {
           this.triggerAttackMotion(thugView, undefined, c.x); // a final committing SHOVE on the storefront
           this.seedBackPay(ev.frontId); this.leanBeat(c.x, c.y); this.signalBeat('extort');
@@ -2716,6 +2740,7 @@ export class IsoScene extends Phaser.Scene {
     const d = strongholdDistrict(this.state, 'player');
     applyCommand(this.state, { type: 'establishOperation', familyId: 'player', districtId: d.id, kind });
     this.state = harvestIncidents(this.state);
+    recordRacketRun(ensureRunStats(this.state)); // Lane L — a racket brought online
     const hq = hqTileOf(this.layout, 'player');
     if (hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, `OPENED ${kind.toUpperCase()} RACKET`, NOIR_PALETTE.brass); }
     this.audio?.laundering(); this.audio?.confirm(); this.fireTipOnce('launder'); // RTS-34 typewriter (cooking the books) + RTS-27 confirm + money tip
@@ -2731,7 +2756,10 @@ export class IsoScene extends Phaser.Scene {
     applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: ch, amount: cur + 10 });
     this.state = harvestIncidents(this.state);
     const paid = this.state.player.bribes[ch] > cur;
-    if (paid) { this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); } // RTS-27 distinct cue per channel
+    if (paid) {
+      recordBribePaid(ensureRunStats(this.state), ch, this.state.player.bribes[ch] - cur); // Lane L — greased $ by channel
+      this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); // RTS-27 distinct cue per channel
+    }
     this.setStatus(paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`);
   }
 
@@ -3347,6 +3375,18 @@ export class IsoScene extends Phaser.Scene {
     const headY = py + Math.round((paperH - footH) * 0.42) + 30;
     objs.push(this.mkText(cx, headY, headline, { fontFamily: NOIR_DISPLAY, fontSize: '38px', color: ink, fontStyle: 'bold', align: 'center', wordWrap: { width: paperW - 60 } }).setOrigin(0.5).setScrollFactor(0).setDepth(200002));
     objs.push(this.mkText(cx, headY + 42, report.dek.toUpperCase(), { fontFamily: NOIR_FONT, fontSize: '13px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 80 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+
+    // ── Lane L — THE RUN IN NUMBERS: inject the run-stat summary into Lane E's paper (a centered strip
+    // under the deck, NOT a forked screen). A final observe pins the FINAL turf + weeks survived; the eight
+    // pure tokens print as two centered lines in the gap above the footer. ──
+    const runStats = ensureRunStats(this.state);
+    observeRun(runStats, this.state);
+    const runTokens = runStatsSummary(runStats);
+    const runRuleY = py + paperH - footH; // the footer's top rule — the strip sits just above it
+    const runStripStyle = { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft, align: 'center', wordWrap: { width: paperW - 48 } } as const;
+    objs.push(this.mkText(cx, runRuleY - 48, 'THE RUN IN NUMBERS', { fontFamily: NOIR_FONT, fontSize: '11px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, runRuleY - 32, runTokens.slice(0, 4).join('   ·   '), runStripStyle).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, runRuleY - 17, runTokens.slice(4).join('   ·   '), runStripStyle).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
 
     // ── the FINAL STANDING (left) + BY THE NUMBERS (right) — Lane E's telegraphed-win payoff ──
     const footTop = py + paperH - footH + 12;
