@@ -187,7 +187,11 @@ describe('RTS-33 — the federal ladder is REACHABLE in normal play', () => {
 
   it('GREASING THE BUREAU cools federal exposure back down (the channel has a real purpose)', () => {
     const s = createInitialState(1, { bigCity: true });
-    extortFronts(s, 'player', 8);
+    // 12 fronts (was 8) so exposure is ROBUSTLY hot at the week-12 snapshot — a point-in-time read near the
+    // tier-1 threshold is sensitive to the seeded RNG trajectory (which rival-AI changes legitimately shift);
+    // a deeper dirty hoard saturates exposure so the precondition holds regardless. The subject under test
+    // (greasing feds cools exposure by the relief cap) is unchanged.
+    extortFronts(s, 'player', 12);
     for (let w = 0; w < 12; w++) tick(s);
     const hot = federalExposure(s.player);
     expect(fedWarningTier(hot)).toBeGreaterThanOrEqual(1); // the Bureau is onto them
