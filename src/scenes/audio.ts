@@ -11,6 +11,7 @@ import Phaser from 'phaser';
 import {
   type AudioBus, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
   combatCueKey, pickTake, conductBeds, orphanCueKey, holdBed, BED_MIN_INTERVAL_MS,
+  type SoftVoice, admitSoftSfx, SOFT_SFX_MAX, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD, softBurstActive,
   // soft-SFX/VO governor (PR #11) — restored: a base merge (codex pass) dropped this import line while
   // keeping the body that uses these, leaving base un-typecheckable. See PR notes.
   // soft-SFX/VO governor (PR #11). A later base merge (the codex game-feel pass) dropped this import
