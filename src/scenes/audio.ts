@@ -14,12 +14,6 @@ import {
   type SoftVoice, admitSoftSfx, SOFT_SFX_MAX, softBurstActive, SOFT_BURST_WINDOW_MS,
   SOFT_BURST_THRESHOLD,
   type SoftVoice, admitSoftSfx, SOFT_SFX_MAX, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD, softBurstActive,
-  // soft-SFX/VO governor (PR #11) — restored: a base merge (codex pass) dropped this import line while
-  // keeping the body that uses these, leaving base un-typecheckable. See PR notes.
-  // soft-SFX/VO governor (PR #11). A later base merge (the codex game-feel pass) dropped this import
-  // line while keeping the body that uses these symbols, leaving base un-typecheckable — restored here.
-  type SoftVoice, admitSoftSfx, softBurstActive,
-  SOFT_SFX_MAX, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD,
 } from './audioMap';
 
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
