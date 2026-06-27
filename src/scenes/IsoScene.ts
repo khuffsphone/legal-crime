@@ -209,6 +209,7 @@ import {
   idleUnitIds, nextIdleId, bindGroup, recallGroup, pruneGroup, isCenterRecall, idsInScreenRect,
   type ControlGroups, type RecallTap,
 } from './selectionControl';
+import {
   type UnitOrder, type OrderUnit, holdOrder, attackMoveOrder, resolveAutoOrder,
   ATTACK_MOVE_ACQUIRE_RADIUS,
 } from './combatOrders';
@@ -227,6 +228,9 @@ import type { LoadResult } from '../sim';
 import {
   planRivalOffense, committedForce, planTelegraph, shouldRetreat, unitCombatStrength,
   RIVAL_OFFENSE_TUNING, type RivalOffenseInput, type RivalStrikeReason,
+  // FAIRNESS slice — telegraph visibility tiers (player-side intel → graduated, NO-X-RAY warning).
+  telegraphTier, countFriendlyNear, buildTelegraphReport, type TelegraphTier,
+  districtStatusOf,
 } from '../sim';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
 import { metaFor, combatEventKind, extortionEventKind, captureEventKind, type EventKind, type EventTier } from './info/infoEvents';
@@ -1362,12 +1366,16 @@ export class IsoScene extends Phaser.Scene {
     return true;
   }
 
-  /** COMBAT DEPTH FINALIZE (Part C-1) — TELEGRAPH a committed strike through q7: a WIRE line + an edge alert +
-   * a ping, with a 'why' reason and a consequence-scaled LEAD (higher stakes ⇒ longer warning). Records the
-   * pending strike so advanceRivalStrike fires it after the lead. The pre-strike beat is the player's one
-   * meaningful defensive decision. */
+  /** COMBAT DEPTH FINALIZE (Part C-1) + FAIRNESS slice — TELEGRAPH a committed strike through q7: a WIRE line +
+   * an edge alert + a ping, with a 'why' reason and a consequence-scaled LEAD (higher stakes ⇒ longer warning).
+   * FAIRNESS: the warning is now GRADUATED by the player's OWN intel near the target (telegraphTier) — a
+   * well-defended block earns an earlier, clearer read; a blind one gets only a rumor — and the tier extends
+   * the reaction window. ⭐ NO-X-RAY: the ping + message describe the player's OWN asset/district under threat
+   * (order.gx/gy is the TARGET, the player's front/unit — never the hidden rival's position). PLAYTEST-GATED
+   * presentation; the pure tier/window/report logic lives in sim/telegraph.ts (non-HITL, unit-tested). */
   private telegraphRivalStrike(rid: string, order: { kind: 'contestFront' | 'interceptUnit'; gx: number; gy: number; frontId?: string; targetUnitId?: string }, units: MovableUnit[]): void {
     let consequence01 = 0.3; let carrying = false; let escorted = false;
+    let assetLabel: string | undefined;
     const size = this.world.size;
     const inb = order.gx >= 0 && order.gy >= 0 && order.gx < size && order.gy < size;
     const did = inb ? this.world.districtOfTile[Math.round(order.gy) * size + Math.round(order.gx)] : undefined;
@@ -1375,20 +1383,33 @@ export class IsoScene extends Phaser.Scene {
     if (order.kind === 'contestFront') {
       const biz = allBusinesses(this.state).find((b) => b.id === order.frontId);
       consequence01 = Math.min(1, (biz?.baseIncome ?? 0) / 200); // richer block = higher stakes = longer lead
+      assetLabel = biz?.name;
     } else {
       const target = this.state.units.find((u) => u.id === order.targetUnitId);
       carrying = !!target && (target.carrying ?? 0) > 0;
       consequence01 = carrying ? Math.min(1, (target!.carrying ?? 0) / 600) : 0.2;
       escorted = carrying && this.nearestPlayerThug(target!) !== undefined; // a thug guarding the carrier
+      assetLabel = carrying ? 'your collector' : undefined;
     }
     const tg = planTelegraph(order.kind, { consequence01, carrying, escorted });
-    const message = order.kind === 'interceptUnit' && carrying
-      ? `Your collector is being watched on ${where} — ${tg.reason}`
-      : `Rival lookouts near ${where} — ${tg.reason}`;
+    // FAIRNESS — the player's OWN intel near the target grades the warning (presence + eyes-on + control). All
+    // player-side reads; never a rival query. A blind block gets a rumor, a watched one a confirmed read.
+    const pid = this.state.player.id;
+    const friendly = this.state.units
+      .filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed)
+      .map((u) => u.pos);
+    const tier: TelegraphTier = telegraphTier({
+      friendlyNearby: countFriendlyNear(friendly, { gx: order.gx, gy: order.gy }),
+      targetRevealed: isRevealed(this.fog, order.gx, order.gy),
+      controlsDistrict: !!did && districtStatusOf(this.state, did)?.owner === pid,
+    });
+    const report = buildTelegraphReport(tier, tg.reason, consequence01, { districtName: where, assetLabel });
+    const lede = tier === 'confirmed' ? 'Confirmed threat' : tier === 'suspected' ? 'Rival lookouts' : 'Word on the street';
+    const message = `${lede}: ${report.where} — ${tg.reason} · ${report.eta}`;
     this.recordInfoEvent('rival.telegraph', message, order.gx, order.gy);
     this.rivalStrikes.set(rid, {
       phase: 'telegraphed', kind: order.kind, gx: order.gx, gy: order.gy,
-      fireAtMs: this.time.now + tg.leadMs, expireAtMs: 0,
+      fireAtMs: this.time.now + report.leadMs, expireAtMs: 0, // tier-extended reaction window (fairness)
       unitIds: units.map((u) => u.id), initialCount: units.length, reason: tg.reason,
     });
   }
