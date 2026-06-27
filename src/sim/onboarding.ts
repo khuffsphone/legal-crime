@@ -198,3 +198,112 @@ export function firstObjective(state: GameState): Objective {
     done: true,
   };
 }
+
+// ── Lane B — FIRST-TIME-USER tutorial (FTUE) ───────────────────────────────────────────────────
+// A short, SKIPPABLE coach sequence that walks a new player through the core earn loop, ONE card at a
+// time: EXTORT → COLLECT → PROTECT → GROW. Pure & Phaser-free, like the rest of this module. The card
+// is DERIVED from the live `firstObjective` step, so it advances automatically the moment the player
+// actually performs each beat — there is no scripted lockstep to drift out of sync with the sim, and a
+// loaded mid-game save simply shows no tutorial (the loop is already learned). The scene owns exactly
+// one bit of non-derived presentation state — whether the player pressed SKIP — and nothing is written
+// back to GameState, so the save format is untouched.
+
+/** The four beats of the core loop, in teaching order. The terminal objective steps
+ * (grease→hold→specialist→war→win) graduate the player out of the tutorial. */
+export type TutorialStepId = 'extort' | 'collect' | 'protect' | 'grow';
+
+/** The ordered FTUE spine — drives the progress dots and each card's "STEP n / N" index. */
+export const TUTORIAL_STEPS: readonly TutorialStepId[] = ['extort', 'collect', 'protect', 'grow'];
+
+/** The scene-owned presentation cursor: the ONLY non-derived bit of tutorial state. */
+export interface TutorialProgress {
+  /** The player dismissed the tutorial (the SKIP affordance). Retires the coach card for good. */
+  skipped: boolean;
+}
+
+export const INITIAL_TUTORIAL_PROGRESS: TutorialProgress = { skipped: false };
+
+export interface TutorialCard {
+  step: TutorialStepId;
+  /** 1-based position in the four-beat sequence (for "STEP 2 / 4"). */
+  index: number;
+  total: number;
+  title: string;
+  /** The plain-English teach — WHY this beat matters. */
+  body: string;
+  /** The control that advances this beat (e.g. "press [C]"). */
+  action: string;
+  /** The building to spotlight for this beat, if any (extort only). */
+  targetBusinessId: string | null;
+}
+
+/** Map the broader objective step onto a tutorial beat. Returns null once the player has graduated past
+ * the earn loop (greasing onward) — the FTUE is done and the ongoing objective banner takes over. */
+function tutorialStepFor(step: ObjectiveStep): TutorialStepId | null {
+  switch (step) {
+    case 'extort':
+      return 'extort';
+    case 'collect':
+      return 'collect';
+    case 'protect':
+      return 'protect';
+    case 'grease':
+      return 'grow'; // earning with nothing pending: the final loop lesson is to put the money to work
+    default:
+      return null; // hold / specialist / war / win — the loop is learned; the tutorial retires
+  }
+}
+
+const TUTORIAL_COPY: Record<TutorialStepId, { title: string; body: string; action: string }> = {
+  extort: {
+    title: 'SHAKE DOWN YOUR FIRST FRONT',
+    body: 'Every empire starts with protection money. The glowing storefront is a soft first target — lean on it and it starts paying you a cut every week.',
+    action: 'SELECT a thug, then RIGHT-CLICK the lit front → EXTORT  (or press [E])',
+  },
+  collect: {
+    title: 'BRING THE TAKE HOME',
+    body: "The cut piles up at the front, but it isn't yours until it's banked at HQ. Send a collector to walk it back — your first run rides home safe.",
+    action: 'press [C] to send a collector',
+  },
+  protect: {
+    title: 'GUARD THE RUN',
+    body: 'A collector on the street is a target. Rival muscle that catches him takes the whole satchel — keep him clear of the prowling enforcer, or escort him with your crew.',
+    action: 'walk the take clear of the rival enforcer',
+  },
+  grow: {
+    title: 'PUT THE MONEY TO WORK',
+    body: "You're earning — now buy protection. Grease one of the four channels to cool heat, slow the raids, and unlock real specialists. That's the loop; the city is yours to take from here.",
+    action: 'press [G] to grease a channel',
+  },
+};
+
+/**
+ * The current FTUE coach card, or null when the tutorial should not show — either the player SKIPPED it,
+ * or they've graduated past the earn loop (a returning/advanced player, or a loaded mid-game save). Pure:
+ * never mutates state.
+ */
+export function tutorialCard(
+  state: GameState,
+  progress: TutorialProgress = INITIAL_TUTORIAL_PROGRESS,
+): TutorialCard | null {
+  if (progress.skipped) return null;
+  const obj = firstObjective(state);
+  const step = tutorialStepFor(obj.step);
+  if (!step) return null;
+  const copy = TUTORIAL_COPY[step];
+  return {
+    step,
+    index: TUTORIAL_STEPS.indexOf(step) + 1,
+    total: TUTORIAL_STEPS.length,
+    title: copy.title,
+    body: copy.body,
+    action: copy.action,
+    targetBusinessId: step === 'extort' ? obj.targetBusinessId : null,
+  };
+}
+
+/** True once the player has worked all the way through the earn loop — the FTUE has nothing left to
+ * teach (independent of SKIP). The scene uses this to fire a one-shot "tutorial complete" beat. */
+export function tutorialComplete(state: GameState): boolean {
+  return tutorialStepFor(firstObjective(state).step) === null;
+}
