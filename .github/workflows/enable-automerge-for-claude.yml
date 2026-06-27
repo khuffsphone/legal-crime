@@ -1,16 +1,16 @@
-name: Enable auto-merge for Claude PRs
-
+name: Enable auto-merge for agent PRs
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
-
+    types: [opened, reopened, synchronize, labeled]
+permissions:
+  contents: write
+  pull-requests: write
 jobs:
   enable-auto-merge:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.user.login == 'claude-code-bot'
+    if: contains(github.event.pull_request.labels.*.name, 'auto-merge')
     steps:
-      - name: Enable GitHub native auto-merge on this PR
-        uses: peter-evans/pull-request-automerge@v2
+      - uses: peter-evans/enable-pull-request-automerge@v2
         with:
           pull-request-number: ${{ github.event.pull_request.number }}
           merge-method: squash
