@@ -11,6 +11,8 @@ import Phaser from 'phaser';
 import {
   type AudioBus, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
   combatCueKey, pickTake, conductBeds, orphanCueKey, holdBed, BED_MIN_INTERVAL_MS,
+  // soft-SFX/VO governor (PR #11) — restored: a base merge (codex pass) dropped this import line while
+  // keeping the body that uses these, leaving base un-typecheckable. See PR notes.
   // soft-SFX/VO governor (PR #11). A later base merge (the codex game-feel pass) dropped this import
   // line while keeping the body that uses these symbols, leaving base un-typecheckable — restored here.
   type SoftVoice, admitSoftSfx, softBurstActive,
@@ -31,6 +33,16 @@ const LIBRARY: ClipDef[] = [
   { key: 'siren', file: 'LCR_sfx_siren.m4a', bus: 'sfx', vol: 0.7, urgent: true }, // the law at 85 / lockout
   { key: 'warning', file: 'LCR_sfx_warning.m4a', bus: 'sfx', vol: 0.8, urgent: true }, // 🔔 teletype 50/70/85
   { key: 'mutiny', file: 'LCR_sfx_mutiny.m4a', bus: 'sfx', vol: 0.85, urgent: true }, // crew defection stinger
+  // ── per-weapon HIT-SFX hooks (attack-commit feedback). Keys are by CONTRACT (weaponFeedback.ts); the
+  // real WAVs drop into public/audio/ later and light up automatically (missing-clip graceful no-op). The
+  // gun reports ride the EXISTING urgent governor (one-at-a-time + duck, like tommygun/pistol); a fists
+  // punch is a soft cue under the soft governor. No conductor/timing change — just catalogued keys. ──
+  { key: 'sfx_hit_fists', file: 'sfx_hit_fists.wav', bus: 'sfx', vol: 0.7 }, // a knuckle thud (soft)
+  { key: 'sfx_hit_pistol', file: 'sfx_hit_pistol.wav', bus: 'sfx', vol: 0.82, urgent: true },
+  { key: 'sfx_hit_shotgun', file: 'sfx_hit_shotgun.wav', bus: 'sfx', vol: 0.85, urgent: true },
+  { key: 'sfx_hit_rifle', file: 'sfx_hit_rifle.wav', bus: 'sfx', vol: 0.8, urgent: true }, // the tommy
+  { key: 'sfx_hit_hitman', file: 'sfx_hit_hitman.wav', bus: 'sfx', vol: 0.82, urgent: true },
+  { key: 'sfx_hit_demolitions', file: 'sfx_hit_demolitions.wav', bus: 'sfx', vol: 0.85, urgent: true },
   // ── grease level-ups / extras — RTS-30e-audio: reconciled to the user's ACTUAL asset filenames (.wav) ──
   { key: 'grease_beat', file: 'sfx_the_beat_whistle.wav', bus: 'sfx', vol: 0.8 }, // a cop's whistle
   { key: 'grease_bench', file: 'sfx_the_bench_gavel.wav', bus: 'sfx', vol: 0.8 }, // a gavel

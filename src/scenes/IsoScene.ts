@@ -254,6 +254,10 @@ import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
 import {
+  attackCommitFromCombat, weaponFeedback, hitSfxKey, shouldEmitFeedback,
+  type HitReactParams, type MuzzleFlashParams,
+} from './weaponFeedback';
+import {
   SPEC,
   MOTION,
   hexNum,
@@ -378,6 +382,8 @@ interface UnitView {
   attackRigWeapon?: RigAttackWeapon;
   attackFaceRight?: boolean; // recoil direction (away from the target)
   hitUntil?: number; // time.now ms until the hit-react flinch finishes
+  hitKnockbackPx?: number; // per-weapon shove distance for the flinch (default 3)
+  hitDwellMs?: number; // per-weapon flinch dwell = base flinch + weapon stagger (default MOTION.hitFlinch)
   occA?: number; // POLISH v2 · PKG4 — eased occlusion alpha (1 visible → 0 hidden behind a building)
   hpBar?: Phaser.GameObjects.Graphics; // COMBAT READABILITY — the small over-unit health bar (lazy)
   // RTS-32 procedural rig (thug-role units only): the live-posed articulated figure + its gait clock.
@@ -1526,8 +1532,9 @@ export class IsoScene extends Phaser.Scene {
         else { kick = dir * 6 * env; lift = -3 * env; } // melee lunge in + up
       }
       if (v.hitUntil && now < v.hitUntil) {
-        const t = (v.hitUntil - now) / MOTION.hitFlinch; // 1→0
-        kick += (v.faction === 'player' ? -1 : 1) * 3 * t; // a recoiling knock-back
+        const dwell = v.hitDwellMs ?? MOTION.hitFlinch; // per-weapon stagger (heavier weapon lingers)
+        const t = (v.hitUntil - now) / dwell; // 1→0
+        kick += (v.faction === 'player' ? -1 : 1) * (v.hitKnockbackPx ?? 3) * t; // weapon-scaled knock-back
       }
       // RTS-35b INTIMIDATE LEAN: a thug squared up at a front (engage/shakedown) leans FORWARD into the
       // storefront — a slow surging menace (computeIntimidateLean) plus periodic shoves on a cadence.
@@ -2636,10 +2643,16 @@ export class IsoScene extends Phaser.Scene {
     view.attackFaceRight = targetWx >= s.x;
   }
 
-  /** RTS-30e — a unit's HIT-REACT flinch (struck / robbed). */
-  private triggerHitReact(unitId: string): void {
+  /** RTS-30e — a unit's HIT-REACT flinch (struck / robbed). With `react`, the flinch dwell + knock-back
+   * scale by WEAPON (a shotgun staggers harder + longer than a pistol tap); without it, the legacy
+   * base flinch (used by the ambush/raid beats) is unchanged. */
+  private triggerHitReact(unitId: string, react?: HitReactParams): void {
     const v = this.units.find((u) => u.unit.id === unitId);
-    if (v) v.hitUntil = this.time.now + MOTION.hitFlinch;
+    if (!v) return;
+    const dwell = MOTION.hitFlinch * (react?.flinchScale ?? 1) + (react?.staggerMs ?? 0);
+    v.hitUntil = this.time.now + dwell;
+    v.hitDwellMs = dwell;
+    v.hitKnockbackPx = react?.knockbackPx ?? 3;
   }
 
   /** RTS-35a — render a unit-vs-unit combat beat from the pure sim (resolveProximityCombat): the
@@ -2653,19 +2666,51 @@ export class IsoScene extends Phaser.Scene {
     // throttled inside the log so swings don't spam). Both carry the event tile.
     const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
     this.recordInfoEvent(combatEventKind(ev.kind), ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`, ev.gx, ev.gy);
+    // ⭐ ONE synced attack-commit event drives the three render channels (muzzle flash / hit-react / hit-SFX),
+    // frame-aligned with the already-merged weaponAttackPose BODY lane — all off the SAME resolved-attack signal.
+    const commit = attackCommitFromCombat(ev, { x: c.x, y: c.y });
+    const fb = weaponFeedback(commit.weaponType);
+    // NO-FOG-X-RAY: the WORLD FLASH + the SOUND fire only when the struck tile is BOTH fog-revealed AND
+    // on-screen, so a brawl never leaks a hidden/off-screen rival's position through a flash or a report.
+    const visible = shouldEmitFeedback(isRevealed(this.fog, ev.gx, ev.gy), this.onScreen(c.x, c.y));
+
+    // channel 0 — BODY: the attacker swings/fires (the merged weaponAttackPose lane), driven off this signal.
     const attacker = this.units.find((v) => v.unit.id === ev.attackerId);
-    if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x); // melee swing / ranged recoil by weapon
-    if (ev.kind === 'hit') {
-      this.triggerHitReact(ev.unitId);         // COMBAT READABILITY (3) — the stagger/flinch (RTS-30e motion)
-      this.hitPip(c.x, c.y);                   // COMBAT READABILITY (2) — a restrained damage-flash pip (no numbers)
+    if (attacker) this.triggerAttackMotion(attacker, ev.weapon, c.x);
+    // channel 2 — HIT-REACT: the struck body flinches/staggers/knocks back BY WEAPON (tommy burst vs pistol tap).
+    this.triggerHitReact(ev.unitId, fb.hitReact);
+    // channel 1 — MUZZLE FLASH (per weapon) + channel 3 — HIT-SFX KEY (per weapon). Both gated NO-FOG-X-RAY.
+    if (visible) {
+      this.weaponMuzzleFlash(c.x, c.y, fb.muzzle);   // distinct procedural flash per weaponType (motion-only danger)
+      this.audio?.play(hitSfxKey(commit.weaponType)); // sfx_hit_<weapon> — placeholder until the WAV lands
+    }
+
+    if (commit.hitResult === 'hit') {
+      if (visible) this.hitPip(c.x, c.y);      // COMBAT READABILITY (2) — a restrained damage-flash pip (no numbers)
       this.cameraBeat('normalHit');            // POLISH v2 · PKG3 — a small punch on every trade
-      if (ev.weapon) { this.combatContact(c.x, c.y, 'muzzle'); this.audio?.combat('attack'); } // ranged report (melee has no committed punch SFX yet)
     } else {
       this.cameraBeat('kill');                 // POLISH v2 · PKG3 — a heavier hit-stop on a down
-      this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool)
+      this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool; onScreen-gated)
       this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
-      this.audio?.combat('assassinate');       // a decisive report punctuates the down
       this.setStatus(faction === 'player' ? 'one of your thugs went DOWN — pull back or reinforce' : 'a rival thug went DOWN in the brawl');
+    }
+  }
+
+  /** ATTACK-COMMIT channel 1 — the per-weapon MUZZLE FLASH. A transient danger glow + spark streaks, sized
+   * and coloured by the weapon's MuzzleFlashParams (a bigger/hotter weapon throws a larger flash + more
+   * sparks; fists, flashScale 0, lands contact sparks with NO gun-glow). MOTION-ONLY danger — it flashes and
+   * fades, never a static mark. World-layer; the caller has already gated NO-FOG-X-RAY + viewport. */
+  private weaponMuzzleFlash(wx: number, wy: number, m: MuzzleFlashParams): void {
+    if (m.flashScale > 0) {
+      const flash = this.add.image(wx, wy - 16, TEX.glow).setTint(hexNum(dangerColor(m.hot))).setScale(m.flashScale * 0.5).setDepth(100001);
+      this.worldFx(flash);
+      this.tweens.add({ targets: flash, scale: m.flashScale * 2.4, alpha: 0, duration: m.flashMs, ease: 'Quad.Out', onComplete: () => flash.destroy() });
+    }
+    const sp = m.sparkSpreadPx;
+    for (let i = 0; i < m.sparkCount; i++) {
+      const spark = this.add.rectangle(wx, wy - 16, 3, 1.5, hexNum(dangerColor(true)), 1).setAngle(Phaser.Math.Between(0, 360)).setDepth(100001);
+      this.worldFx(spark);
+      this.tweens.add({ targets: spark, x: wx + Phaser.Math.Between(-sp, sp), y: wy - 16 + Phaser.Math.Between(-Math.round(sp * 0.7), Math.round(sp * 0.4)), alpha: 0, duration: 200 + i * 18, onComplete: () => spark.destroy() });
     }
   }
 
