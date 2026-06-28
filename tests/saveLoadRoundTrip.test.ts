@@ -8,7 +8,7 @@ import { tick } from '../src/sim/tick';
 import { update } from '../src/sim/realtime';
 import { spawnUnit, spawnEnforcer, type MovableUnit } from '../src/sim/movement';
 import {
-  serializeGame, serializeToString, deserializeGame, cloneState, migrateSave,
+  serializeGame, serializeToString, deserializeGame, cloneState, migrateSave, isResumableStatus,
   SAVE_SCHEMA_VERSION, type SaveFile,
 } from '../src/sim/saveLoad';
 import type { GameState } from '../src/sim/types';
@@ -49,6 +49,20 @@ describe('cloneState — a faithful deep clone of the pure state tree', () => {
       expect(back.state.downedBodies).toEqual(s.downedBodies);
       expect(back.state.rngState).toBe(123456);
     }
+  });
+});
+
+describe('B1 — the save header carries status; resumability classifies terminal end-states', () => {
+  it('stamps the run status into the lightweight header', () => {
+    expect(serializeGame(createInitialState(1)).status).toBe('playing');
+    const won = createInitialState(1); won.status = 'won';
+    expect(serializeGame(won).status).toBe('won');
+  });
+  it('isResumableStatus — only an in-progress run resumes (legacy/undefined treated as resumable)', () => {
+    expect(isResumableStatus('playing')).toBe(true);
+    expect(isResumableStatus('won')).toBe(false);
+    expect(isResumableStatus('lost')).toBe(false);
+    expect(isResumableStatus(undefined)).toBe(true); // older saves keep loading
   });
 });
 

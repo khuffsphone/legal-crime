@@ -4,8 +4,8 @@
 // the pure core. localStorage is guarded (typeof !== 'undefined') exactly like the audio-settings persistence,
 // so headless/test contexts degrade gracefully instead of throwing.
 
-import { serializeToString, deserializeGame, type LoadResult, type SaveView } from '../sim/saveLoad';
-import type { GameState } from '../sim';
+import { serializeToString, deserializeGame, isResumableStatus, type LoadResult, type SaveView } from '../sim/saveLoad';
+import type { GameState, GameStatus } from '../sim';
 
 const PREFIX = 'lcr_save_';        // named slots → localStorage key = PREFIX + slot
 const QUICK_SLOT = 'quick';        // the [F5]/[F9] quick-save slot
@@ -23,6 +23,9 @@ export interface SlotInfo {
   label: string;
   savedAt: number;
   version: number;
+  /** The run's status when saved (B1) — used to keep TERMINAL end-states out of CONTINUE. Undefined on
+   * older saves (treated as resumable). */
+  status?: GameStatus;
 }
 
 function ls(): Storage | null {
@@ -40,8 +43,8 @@ export function listSaveSlots(): SlotInfo[] {
     const raw = store.getItem(key);
     if (!raw) continue;
     try {
-      const f = JSON.parse(raw) as { version?: number; label?: string; savedAt?: number };
-      out.push({ slot: key.slice(PREFIX.length), label: f.label ?? '', savedAt: f.savedAt ?? 0, version: f.version ?? 0 });
+      const f = JSON.parse(raw) as { version?: number; label?: string; savedAt?: number; status?: GameStatus };
+      out.push({ slot: key.slice(PREFIX.length), label: f.label ?? '', savedAt: f.savedAt ?? 0, version: f.version ?? 0, status: f.status });
     } catch { /* skip a corrupt slot in the list */ }
   }
   return out.sort((a, b) => b.savedAt - a.savedAt);
@@ -92,12 +95,24 @@ export function hasAnySave(): boolean {
   return listSaveSlots().length > 0;
 }
 
+/** The RESUMABLE saves (in-progress runs), newest first — terminal win/lose end-states are filtered out (B1). */
+export function listResumableSlots(): SlotInfo[] {
+  return listSaveSlots().filter((s) => isResumableStatus(s.status));
+}
+
+/** Whether a RESUMABLE save exists — drives whether CONTINUE is offered or greyed (B1 — a finished game is
+ * NOT something CONTINUE should resume). */
+export function hasResumableSave(): boolean {
+  return listResumableSlots().length > 0;
+}
+
 /**
- * The CONTINUE entry: load the most recent save across all slots (autosave / quick / manual), newest first.
- * The single clean call a title-screen "Continue" can use. Returns a LoadResult (ok:false if there is none).
+ * The CONTINUE entry: load the most recent IN-PROGRESS save across all slots (autosave / quick / manual),
+ * newest first — a terminal win/lose end-state is skipped so CONTINUE never drops the player into a finished
+ * game (B1). Returns a LoadResult (ok:false if there is no resumable save).
  */
 export function loadContinue(): LoadResult {
-  const newest = listSaveSlots()[0]; // listSaveSlots already sorts newest-first
+  const newest = listResumableSlots()[0]; // resumable-only, already newest-first
   if (!newest) return { ok: false, reason: 'no save to continue' };
   return readSaveSlot(newest.slot);
 }
