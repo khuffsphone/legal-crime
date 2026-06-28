@@ -144,6 +144,138 @@ export function drawThugRig(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigS
   g.fillTriangle(shoulderCx - 5, shoulderCy + 6, shoulderCx - 2, shoulderCy + 6, shoulderCx - 3.5, shoulderCy + 9);
 }
 
+// ── RTS-37 (BRASSMERE procedural-fidelity pass) — drawThugRig2: the HIGH-FIDELITY thug drawer ─────────
+// Same RigPose in; a heavier DRAWN read out. The current drawThugRig strokes thin limbs (a touch
+// stick-figurey); this builds SOLID FILLED MASSES with a bold period silhouette — fedora (bold ink brim +
+// creased crown), a hem-flared OVERCOAT, a planted stance, and a BAT slung over the shoulder — plus a
+// 3-tone cel-shade (NW lit / SE shadow / brim+coat occlusion), a unifying dark INK OUTLINE, and a FEW
+// accent lines (hatband, lapel, placket, belt). Faction stays on the scene's base-plate ring; the only
+// figure accent is the small hatband (brass player / dim blood rival) — the body is NEVER recolored to
+// rival-red. Reads from the pose only, so the existing idle/walk/attack/hit animation carries unchanged.
+
+const COAT_LIT = 0x2e2a25;          // NW-lit coat plane (one value step over base)
+const COAT_BASE = PAL.suitCharcoal; // base coat
+const COAT_SHADE = PAL.sootDeep;    // SE shadow half
+const OCCLUDE = PAL.ink;            // deepest: under-brim, coat interior, the unifying outline
+const RIM = 0xb8c7d9;               // moon-rim edge light — TINY amounts only
+const BAT_WOOD = 0x6b5236;          // muted ash-wood (a prop tone, not a semantic colour)
+const BAT_WOOD_DK = 0x4a3826;
+
+/** An ink-underlaid limb: a fat ink stroke then a thinner colour stroke = a filled, OUTLINED limb (vs the
+ * current thin single stroke). Rounds the joint since this Graphics API has no line-cap control. */
+function inkLimb(g: Phaser.GameObjects.Graphics, a: Pt, j: Pt, b: Pt, color: number, w: number): void {
+  g.lineStyle(w + 2, OCCLUDE, 1);
+  g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(j.x, j.y); g.lineTo(b.x, b.y); g.strokePath();
+  g.lineStyle(w, color, 1);
+  g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(j.x, j.y); g.lineTo(b.x, b.y); g.strokePath();
+  g.fillStyle(color, 1); g.fillCircle(j.x, j.y, w / 2);
+}
+
+export function drawThugRig2(g: Phaser.GameObjects.Graphics, p: RigPose, st: RigStyle, atk?: WeaponAttackPoseSample): void {
+  const pelvisCx = p.bodyX + p.hipTwist;
+  const pelvisCy = -HIP_H + p.bodyY;
+  const shoulderCx = p.bodyX + p.lean + (atk?.leanPx ?? 0) + p.shoulderTwist + (atk?.shoulderTwistPx ?? 0);
+  const shoulderCy = pelvisCy - TORSO_H;
+
+  const hipL: Pt = { x: pelvisCx - HIP_HW, y: pelvisCy };
+  const hipR: Pt = { x: pelvisCx + HIP_HW, y: pelvisCy };
+  const shL: Pt = { x: shoulderCx - SHOULDER_HW, y: shoulderCy };
+  const shR: Pt = { x: shoulderCx + SHOULDER_HW, y: shoulderCy };
+
+  const footL: Pt = { x: p.legL.footDX, y: -p.legL.footLift };
+  const footR: Pt = { x: p.legR.footDX, y: -p.legR.footLift };
+  const kneeL = solveTwoBoneLegIK(hipL.x, hipL.y, footL.x, footL.y);
+  const kneeR = solveTwoBoneLegIK(hipR.x, hipR.y, footR.x, footR.y);
+
+  const armL = atk && atk.phase !== 'done' ? atk.armL : p.armL;
+  const armR = atk && atk.phase !== 'done' ? atk.armR : p.armR;
+  const handL: Pt = { x: shL.x + armL.handDX, y: shoulderCy + ARM_DROP - armL.handLift };
+  const handR: Pt = { x: shR.x + armR.handDX, y: shoulderCy + ARM_DROP - armR.handLift };
+  const elbowL = joint(shL, handL, ELBOW_FWD, 0);
+  const elbowR = joint(shR, handR, ELBOW_FWD, 0);
+
+  const legBackFirst = footL.x <= footR.x;
+  const armBackFirst = handL.x <= handR.x;
+
+  const drawLeg = (hip: Pt, knee: Pt, foot: Pt, lit: boolean) => {
+    inkLimb(g, hip, knee, foot, lit ? COAT_BASE : COAT_SHADE, 6);
+    g.fillStyle(OCCLUDE, 1); g.fillEllipse(foot.x + 1.5, foot.y, 11, 4);                 // period wingtip sole
+    g.fillStyle(lit ? 0x2a2622 : COAT_SHADE, 1); g.fillEllipse(foot.x + 1, foot.y - 0.9, 8, 2.4);
+  };
+  const drawArm = (sh: Pt, elbow: Pt, hand: Pt, lit: boolean) => {
+    inkLimb(g, sh, elbow, hand, lit ? COAT_BASE : COAT_SHADE, 5);
+    g.fillStyle(PAL.fleshDark, 1); g.fillCircle(hand.x, hand.y, 2.4);                    // fist
+  };
+
+  // ── the slung BAT (drawn first so the coat + body overlap its mid → reads "over the shoulder/back") ──
+  const batLowX = pelvisCx - 6, batLowY = pelvisCy + 2;       // grip at the back hip
+  const batTopX = shoulderCx + 7, batTopY = shoulderCy - 12;  // barrel above the far shoulder
+  g.lineStyle(5, OCCLUDE, 1); g.beginPath(); g.moveTo(batLowX, batLowY); g.lineTo(batTopX, batTopY); g.strokePath();
+  g.lineStyle(3.2, BAT_WOOD, 1); g.beginPath(); g.moveTo(batLowX, batLowY); g.lineTo(batTopX, batTopY); g.strokePath();
+  g.fillStyle(BAT_WOOD, 1); g.fillCircle(batTopX, batTopY, 3); g.lineStyle(1, OCCLUDE, 1); g.strokeCircle(batTopX, batTopY, 3); // barrel
+  g.fillStyle(BAT_WOOD_DK, 1); g.fillCircle(batLowX, batLowY, 1.8);                       // grip knob
+
+  // ── back arm + back leg (shadow tone, drawn first for depth) ──
+  if (armBackFirst) drawArm(shL, elbowL, handL, false); else drawArm(shR, elbowR, handR, false);
+  if (legBackFirst) drawLeg(hipL, kneeL, footL, false); else drawLeg(hipR, kneeR, footR, false);
+
+  // ── the OVERCOAT: a hem-flared trapezoid mass with a waist pinch (the silhouette win vs thin limbs) ──
+  const coatTopY = shoulderCy + 1, waistY = pelvisCy - 1, hemY = pelvisCy + 8;
+  const shHW = 8.5, waistHW = 6.5, hemHW = 8.0;
+  const coat: Pt[] = [
+    { x: shoulderCx - shHW, y: coatTopY }, { x: shoulderCx + shHW, y: coatTopY },
+    { x: pelvisCx + waistHW, y: waistY }, { x: pelvisCx + hemHW, y: hemY },
+    { x: pelvisCx - hemHW, y: hemY }, { x: pelvisCx - waistHW, y: waistY },
+  ];
+  g.fillStyle(COAT_BASE, 1); g.fillPoints(coat, true);
+  // cel step 2 — SE shadow half
+  g.fillStyle(COAT_SHADE, 0.85);
+  g.fillPoints([{ x: shoulderCx, y: coatTopY }, { x: shoulderCx + shHW, y: coatTopY }, { x: pelvisCx + waistHW, y: waistY }, { x: pelvisCx + hemHW, y: hemY }, { x: pelvisCx, y: hemY }], true);
+  // cel step 3 — NW lit lapel/shoulder strip
+  g.fillStyle(COAT_LIT, 0.9);
+  g.fillPoints([{ x: shoulderCx - shHW, y: coatTopY }, { x: shoulderCx - 1.5, y: coatTopY }, { x: pelvisCx - 2, y: waistY }, { x: pelvisCx - waistHW, y: waistY }], true);
+  // padded shoulders (lit NW / base SE)
+  g.fillStyle(COAT_LIT, 1); g.fillEllipse(shoulderCx - 3.6, coatTopY, 8, 4.2);
+  g.fillStyle(COAT_BASE, 1); g.fillEllipse(shoulderCx + 3.6, coatTopY, 8, 4.2);
+  // shirt V + the dark placket gap (coat interior occlusion)
+  g.fillStyle(PAL.shirt, 1); g.fillTriangle(shoulderCx, coatTopY + 1.5, shoulderCx - 3, coatTopY + 3, shoulderCx, coatTopY + 8);
+  g.fillStyle(OCCLUDE, 1); g.fillRect(shoulderCx - 0.7, coatTopY + 2.5, 1.4, 7);
+
+  // ── front leg (lit) ──
+  if (legBackFirst) drawLeg(hipR, kneeR, footR, true); else drawLeg(hipL, kneeL, footL, true);
+
+  // ── neck + head + heavy jaw, with the fedora BRIM OCCLUSION shadowing the eyes ──
+  const headX = shoulderCx + p.headDX, headY = shoulderCy - HEAD_H + p.headDY;
+  g.fillStyle(PAL.fleshDark, 1); g.fillRect(headX - 1.6, headY + 3, 3.2, 3);             // neck
+  g.fillStyle(PAL.fleshLit, 1); g.fillCircle(headX - 0.6, headY + 0.4, 4.6);             // head (NW lit)
+  g.fillStyle(PAL.fleshDark, 1); g.fillCircle(headX + 1.5, headY + 1.2, 3.6);            // SE jaw shadow
+  g.fillStyle(PAL.fleshDark, 1); g.fillEllipse(headX, headY + 3.4, 8, 3.4);              // heavy jaw
+  g.fillStyle(OCCLUDE, 0.85); g.fillRect(headX - 4.4, headY - 1.6, 9, 2.6);              // under-brim eye shadow
+
+  // ── front arm (lit) ──
+  if (armBackFirst) drawArm(shR, elbowR, handR, true); else drawArm(shL, elbowL, handL, true);
+
+  // ── fedora: bold ink brim + creased crown + the faction HATBAND accent ──
+  const hatY = headY - 4.6;
+  g.fillStyle(OCCLUDE, 1); g.fillEllipse(headX + 0.3, hatY + 3.4, 19, 5);                // brim (ink — bold silhouette)
+  g.fillStyle(PAL.charcoal, 1); g.fillEllipse(headX, hatY + 3.0, 17, 3.8);               // brim top plane
+  g.fillStyle(PAL.slate, 1); g.fillRoundedRect(headX - 5.2, hatY - 3, 10.4, 6.4, 2);     // crown
+  g.fillStyle(OCCLUDE, 1); g.fillRect(headX - 0.8, hatY - 3, 1.6, 5);                     // crown pinch crease
+  g.fillStyle(st.accent, 1); g.fillRect(headX - 5.2, hatY + 2.0, 10.4, 1.8);             // HATBAND — the one faction accent
+  g.fillStyle(st.accentDim, 1); g.fillRect(headX - 5.2, hatY + 3.6, 10.4, 0.6);
+
+  // ── the unifying INK OUTLINE + the few accent lines ──
+  g.lineStyle(1.2, OCCLUDE, 0.95); g.strokePoints(coat, true, true);                     // coat silhouette
+  g.lineStyle(1, OCCLUDE, 0.6);
+  g.beginPath(); g.moveTo(shoulderCx - 3.2, coatTopY + 2.5); g.lineTo(shoulderCx, coatTopY + 8); g.lineTo(shoulderCx + 3.2, coatTopY + 2.5); g.strokePath(); // lapel V
+  g.beginPath(); g.moveTo(shoulderCx, coatTopY + 8); g.lineTo(pelvisCx, hemY - 1); g.strokePath(); // center placket
+  g.lineStyle(2, OCCLUDE, 0.8); g.beginPath(); g.moveTo(pelvisCx - waistHW, waistY + 1); g.lineTo(pelvisCx + waistHW, waistY + 1); g.strokePath(); // belt
+  g.fillStyle(st.accentDim, 1); g.fillRect(pelvisCx - 1.2, waistY, 2.4, 2);              // buckle (dim faction metal)
+
+  // ── tiny rim light (moon edge) — NW hat brim, very sparing ──
+  g.lineStyle(1, RIM, 0.4); g.beginPath(); g.moveTo(headX - 8.5, hatY + 3); g.lineTo(headX - 5, hatY + 2); g.strokePath();
+}
+
 // ── ?debugRig=1 overlay — joint + plant dots, gaitPhase + state. Debug colors only; off in play. ──
 const DBG_JOINT = 0x00e5ff, DBG_PLANT = 0xff2bd0, DBG_AIR = 0xffe600;
 export function drawRigDebug(g: Phaser.GameObjects.Graphics, p: RigPose): void {

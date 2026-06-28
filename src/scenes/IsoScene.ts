@@ -300,7 +300,8 @@ import {
 import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
 } from './gait';
-import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
+import { drawThugRig, drawThugRig2, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
+import { parseFig2Flag, parseFigScalePx, figScaleFactor } from './figFlags';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -672,6 +673,11 @@ export class IsoScene extends Phaser.Scene {
   // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
   // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
   private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
+  // RTS-37 (BRASSMERE procedural-fidelity) — ?fig2 swaps in the high-fidelity thug drawer (A/B vs current,
+  // which stays DEFAULT); ?figscale=<px> renders the figure at a target height so K can find the sweet spot.
+  // Both default to the identity (fig2 off, factor 1.0) → the current renderer is unchanged unless flagged.
+  private fig2On = typeof window !== 'undefined' && parseFig2Flag(window.location?.search ?? '');
+  private figScale = figScaleFactor(parseFigScalePx(typeof window !== 'undefined' ? (window.location?.search ?? '') : ''));
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
@@ -1865,11 +1871,14 @@ export class IsoScene extends Phaser.Scene {
         } else {
           v.sprite.setVisible(false);
           const pose: RigPose = poseFor(v.gaitPhase, v.loco, now + seed * 7);
-          const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? 1 : -1, 1);
+          // ?figscale uniformly scales the rig about its GROUND point (origin) so feet stay planted and the
+          // figure grows UP; default factor 1.0 = the current 56px figure. ?fig2 picks the high-fidelity drawer.
+          const sc = this.figScale;
+          const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? sc : -sc, sc);
           g.clear();
-          drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG, attackSample);
+          (this.fig2On ? drawThugRig2 : drawThugRig)(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG, attackSample);
           if (v.rigDebug && v.rigText) {
-            const dg = v.rigDebug.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth + 1).setScale(faceRight ? 1 : -1, 1);
+            const dg = v.rigDebug.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth + 1).setScale(faceRight ? sc : -sc, sc);
             dg.clear(); drawRigDebug(dg, pose);
             const state = v.loco < 0.5 ? 'IDLE' : v.loco < 1.5 ? 'WALK' : 'RUN';
             v.rigText.setVisible(true).setPosition(s.x, s.y - 58).setDepth(depth + 2).setText(`φ${v.gaitPhase.toFixed(2)} ${state}`);
