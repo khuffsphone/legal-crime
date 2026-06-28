@@ -13,6 +13,11 @@ import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, GAME_TITLE } from './theme';
 import { PAL } from './cityArt';
 import { listResumableSlots, loadContinue, hasResumableSave, deleteSaveSlot, AUTOSAVE_SLOT, LOADED_STATE_KEY } from './saveStore';
 import { SettingsPanel } from './settingsPanel';
+import { hasDevFlags } from './devDebug';
+
+/** Registry flag: the dev menu-bypass has already fired this page load (so a RETURN to the menu — e.g.
+ *  Esc from the endgame — shows the real front door instead of auto-starting again into a loop). */
+const DEV_BYPASS_KEY = 'lcr_dev_menu_bypassed';
 
 interface MenuButton {
   rect: Phaser.GameObjects.Rectangle;
@@ -32,6 +37,12 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Task 1 (DEV-ONLY menu bypass) — a cold dev deep-link (?debug=win/lose, ?arm…, ?scenario…, ?skipmenu)
+    // must reach the GAME, not dead-end at this front door. On the FIRST menu visit of the page load only,
+    // auto-start a fresh game so the flag is honoured; the registry guard means a later RETURN here (Quit /
+    // Esc-from-endgame) shows the real menu (no bypass loop). Wholly inert in production (hasDevFlags=false).
+    if (this.maybeDevBypass()) return;
+
     const W = this.scale.width, H = this.scale.height;
     this.cameras.main.setBackgroundColor('#0d0b0a');
 
@@ -83,6 +94,19 @@ export class MainMenuScene extends Phaser.Scene {
       rect.on('pointerdown', () => { if (!this.settings?.isOpen()) btn.onClick(); });
     }
     this.buttons.push(btn);
+  }
+
+  /**
+   * Task 1 — the DEV-ONLY menu bypass. Returns true (and starts a fresh game) iff this is a dev build with
+   * a dev/QA deep-link present AND the bypass hasn't already fired this page load. The once-per-load guard
+   * (a registry flag) is what keeps Quit / Esc-from-endgame from bouncing straight back into the game.
+   */
+  private maybeDevBypass(): boolean {
+    const search = typeof window !== 'undefined' ? (window.location?.search ?? '') : '';
+    if (this.registry.get(DEV_BYPASS_KEY) || !hasDevFlags(search)) return false;
+    this.registry.set(DEV_BYPASS_KEY, true);
+    this.startGame(true); // a fresh game; IsoScene.applyDebugScenario then honours the deep-link
+    return true;
   }
 
   private startGame(fresh: boolean): void {
