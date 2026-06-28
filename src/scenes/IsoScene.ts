@@ -306,6 +306,8 @@ import {
 } from './gait';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
 import { hottestChannel, type GreasePressure } from './greaseTargets';
+import { drawThugFig2 } from './figureDraw2';
+import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -692,6 +694,11 @@ export class IsoScene extends Phaser.Scene {
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
   private grain?: Phaser.GameObjects.TileSprite;
+  // FIGURE-STYLE v2 (?fig2 A/B proof — THUG): swap the default thug rig for the upgraded iconic noir
+  // silhouette (figureDraw2). OFF by default — nothing changes unless flagged. ?figscale=N (dev knob, ~56/
+  // 72/80) uniformly scales the figure for K's eyeball read; faction stays on the plate, NO-X-RAY unchanged.
+  private fig2 = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fig2');
+  private figScale = parseFigScale(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private vignette?: Phaser.GameObjects.Graphics;
   private shownCash = 0; private shownNet = 0; private cashInit = false; // RTS-34 top-bar count-up state
   private focusBizId?: string;      // a left-clicked building (RTS-28 building selection)
@@ -1884,9 +1891,20 @@ export class IsoScene extends Phaser.Scene {
         } else {
           v.sprite.setVisible(false);
           const pose: RigPose = poseFor(v.gaitPhase, v.loco, now + seed * 7);
-          const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? 1 : -1, 1);
-          g.clear();
-          drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG, attackSample);
+          if (this.fig2) {
+            // ?fig2 proof — the upgraded thug. ?figscale uniformly scales the figure (plate/shadow stay
+            // unscaled, drawn separately). Same pose ⇒ idle/walk/attack animation carries over. The fog/
+            // occlusion alpha gate below (v.rig.setAlpha) still enforces NO-X-RAY — only the BODY swaps.
+            const sc = this.figScale / FIG2_REFERENCE_PX;
+            const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? sc : -sc, sc);
+            g.clear();
+            const plan = figurePlan({ archetype: 'thug', faction: v.faction === 'player' ? 'player' : 'rival', revealed: true, downed: !!v.unit.downed });
+            if (plan.draw) drawThugFig2(g, pose, plan, attackSample);
+          } else {
+            const g = v.rig.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(faceRight ? 1 : -1, 1);
+            g.clear();
+            drawThugRig(g, pose, v.faction === 'player' ? PLAYER_RIG : RIVAL_RIG, attackSample);
+          }
           if (v.rigDebug && v.rigText) {
             const dg = v.rigDebug.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth + 1).setScale(faceRight ? 1 : -1, 1);
             dg.clear(); drawRigDebug(dg, pose);
