@@ -1,0 +1,13 @@
+thug_idle.png — SPRITE SPIKE placeholder (NOT final art).
+
+This 226x258 PNG is a PROGRAMMATICALLY-GENERATED PLACEHOLDER silhouette, committed so the
+flag-gated sprite path (?sprites) loads + renders with zero errors and the scale knob
+(?spritescale) can be probed in-engine.
+
+TODO: replace this file in place with the real cut-out thug sprite — a transparent, tightly
+trimmed PNG, foot anchor bottom-center (≈113,256), same key/path. No code change needed;
+the loader + scale + base-plate wiring already handle it. Once the real art is dropped, run
+with ?sprites to get the visual A/B read vs the procedural figure.
+
+(The drawn reference was provided in chat but could not be ingested as bytes by the build
+environment, so the actual cut-out must be committed here manually.)

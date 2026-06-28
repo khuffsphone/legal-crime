@@ -301,6 +301,11 @@ import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
 } from './gait';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
+// SPRITE SPIKE (thug) — reversible, flag-gated drawn-sprite probe for the thug unit (default OFF).
+import {
+  parseSpriteFlags, thugRenderMode, spriteDisplayHeight, spriteScaleFactor, spritePlateColor,
+  THUG_SPRITE_KEY, THUG_SPRITE_URL, THUG_SPRITE_NATIVE_H,
+} from './spriteFlags';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -672,6 +677,10 @@ export class IsoScene extends Phaser.Scene {
   // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
   // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
   private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
+  // SPRITE SPIKE (thug): ?sprites toggles the drawn sprite for the thug (default OFF); ?spritescale=N tunes its
+  // size. thugTexReady is set in create() once the texture has actually loaded (else → procedural fallback).
+  private spriteFlags = parseSpriteFlags(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
+  private thugTexReady = false;
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
@@ -770,10 +779,15 @@ export class IsoScene extends Phaser.Scene {
   preload(): void {
     // RTS-27: register the audio library for loading (missing clips 404 → graceful no-op).
     AudioManager.preload(this);
+    // SPRITE SPIKE (thug): load the one drawn idle sprite via the normal pipeline. A missing/failed file
+    // 404s gracefully (the shared loaderror handler) and thugTexReady stays false → procedural fallback.
+    this.load.image(THUG_SPRITE_KEY, THUG_SPRITE_URL);
   }
 
   create(): void {
     buildCityTextures(this);
+    // SPRITE SPIKE (thug): did the drawn sprite actually load? (false → procedural fallback, always safe.)
+    this.thugTexReady = this.textures.exists(THUG_SPRITE_KEY);
     const cam = this.cameras.main;
     cam.setBackgroundColor(PAL.soot);
 
@@ -1851,6 +1865,18 @@ export class IsoScene extends Phaser.Scene {
 
       // RTS-32 — the ARTICULATED RIG (thug-role units): a DISTANCE-driven gait so the foot never skates.
       if (v.rig) {
+        if (thugRenderMode(this.spriteFlags, this.thugTexReady) === 'sprite') {
+          // SPRITE SPIKE (thug) — draw the single STATIC sprite instead of the procedural rig (flag-gated,
+          // default OFF). Reuses v.sprite, so the SAME depth + occlusion alpha + fog gating apply below
+          // (NO-X-RAY preserved). The monochrome sprite is never recolored; the factionRing plate carries
+          // the friend/foe colour. Foot anchor (origin 0.5,1) sits the feet on the tile; scale is matched to
+          // the ~56px figure × the ?spritescale knob.
+          v.rig.setVisible(false); v.rigDebug?.setVisible(false); v.rigText?.setVisible(false);
+          const faceRight = facesRight(unitFacing(v.unit));
+          const sc = spriteScaleFactor(THUG_SPRITE_NATIVE_H, spriteDisplayHeight(this.spriteFlags.scale));
+          v.sprite.setVisible(true).setTexture(THUG_SPRITE_KEY).setOrigin(0.5, 1)
+            .setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(sc).setFlipX(!faceRight);
+        } else {
         const lsx = v.lastSX ?? s.x, lsy = v.lastSY ?? s.y;
         const dist = Math.hypot(s.x - lsx, s.y - lsy); // world-screen travel since last frame (camera-independent)
         v.lastSX = s.x; v.lastSY = s.y;
@@ -1875,6 +1901,7 @@ export class IsoScene extends Phaser.Scene {
             v.rigText.setVisible(true).setPosition(s.x, s.y - 58).setDepth(depth + 2).setText(`φ${v.gaitPhase.toFixed(2)} ${state}`);
           }
         }
+        } // end procedural-rig branch (sprite-spike else)
       } else {
         v.sprite.setPosition(s.x + sway + kick, s.y - bob + lift).setDepth(depth).setScale(1, breath).setFlipX(!facesRight(unitFacing(v.unit)));
       }
@@ -1906,7 +1933,13 @@ export class IsoScene extends Phaser.Scene {
         if (display === 'xray') {
           v.factionRing.setVisible(true).setStrokeStyle(2.5, hexNum(xRayRim(v.faction, !!v.unit.downed)), 0.95).setDepth(99000);
         } else {
-          v.factionRing.setStrokeStyle(2, v.faction === 'player' ? PAL.brass : PAL.blood, 0.9).setDepth(depth - 1).setAlpha(a);
+          // SPRITE SPIKE: when the thug renders as a sprite, the plate carries the friend/foe colour and
+          // DESATURATES when downed (never rival-red, per canon). Procedural units keep the existing tint.
+          const spriteMode = !!v.rig && thugRenderMode(this.spriteFlags, this.thugTexReady) === 'sprite';
+          const ringCol = spriteMode
+            ? spritePlateColor(v.faction, !!v.unit.downed)
+            : (v.faction === 'player' ? PAL.brass : PAL.blood);
+          v.factionRing.setStrokeStyle(2, ringCol, 0.9).setDepth(depth - 1).setAlpha(a);
         }
       }
 
