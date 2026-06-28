@@ -240,6 +240,10 @@ import {
   ATTACK_MOVE_ACQUIRE_RADIUS,
 } from './combatOrders';
 import { applyDevDebug, isDevBuild } from './devDebug';
+import {
+  parseSpritesFlag, usesThugSprite,
+  SPRITE_THUG_KEY, SPRITE_THUG_PATH, SPRITE_THUG_SCALE, SPRITE_THUG_ORIGIN_Y,
+} from './spriteSkin';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
@@ -672,6 +676,9 @@ export class IsoScene extends Phaser.Scene {
   // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
   // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
   private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
+  // SPRITE SPIKE (BRASSMERE) — ?sprites toggles ONE drawn sprite as the THUG visual (static, reversible),
+  // with the procedural rig kept as the fallback. OFF by default → production visuals unchanged.
+  private thugSpriteOn = typeof window !== 'undefined' && parseSpritesFlag(window.location?.search ?? '');
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
@@ -770,6 +777,12 @@ export class IsoScene extends Phaser.Scene {
   preload(): void {
     // RTS-27: register the audio library for loading (missing clips 404 → graceful no-op).
     AudioManager.preload(this);
+    // SPRITE SPIKE — load the one thug PNG ONLY when ?sprites is on. A missing file 404s into 'loaderror'
+    // (handled, no throw); the renderer guards on textures.exists so it falls back to the procedural figure.
+    if (this.thugSpriteOn) {
+      this.load.once('loaderror', () => {/* expected if the asset is absent — procedural fallback covers it */});
+      this.load.image(SPRITE_THUG_KEY, SPRITE_THUG_PATH);
+    }
   }
 
   create(): void {
@@ -1326,12 +1339,15 @@ export class IsoScene extends Phaser.Scene {
     const selRing = this.add.ellipse(0, 0, 38, 20).setStrokeStyle(3, PAL.brass, 1).setVisible(false);
     // RTS-30c-2a: a weapon-tier enforcer renders its distinct silhouette (player brass; red discipline).
     const figKey = faction === 'player' && unit.weapon ? enforcerTexKey(unit.weapon) : figureKeyFor(unit.role, faction, 1);
-    const sprite = this.add.image(0, 0, figKey).setOrigin(0.5, 0.93);
+    // SPRITE SPIKE — a plain thug uses the drawn sprite when ?sprites is on AND the texture loaded; else the
+    // procedural figure (rig) is the fallback. The base-plate (factionRing) below carries the faction colour.
+    const skinned = usesThugSprite(this.thugSpriteOn, isRiggedUnit(unit), this.textures.exists(SPRITE_THUG_KEY));
+    const sprite = this.add.image(0, 0, skinned ? SPRITE_THUG_KEY : figKey).setOrigin(0.5, skinned ? SPRITE_THUG_ORIGIN_Y : 0.93);
     const view: UnitView = { unit, faction, sprite, shadow, factionRing, selRing, idleSeed: hashSeed(unit.id) };
     // RTS-32: a plain button-man gets the live procedural rig (a reused Graphics, posed each frame). Its
     // gait clock starts desynced so a crew doesn't march in lock-step. Weapon/collector roles keep the
-    // baked sprite this slice.
-    if (isRiggedUnit(unit)) {
+    // baked sprite this slice. ⭐ A SPRITE-SKINNED thug skips the rig — the static sprite IS its visual.
+    if (isRiggedUnit(unit) && !skinned) {
       view.rig = this.add.graphics();
       view.gaitPhase = (hashSeed(unit.id) % 1000) / 1000;
       view.loco = 0;
@@ -1849,8 +1865,15 @@ export class IsoScene extends Phaser.Scene {
         }
       }
 
-      // RTS-32 — the ARTICULATED RIG (thug-role units): a DISTANCE-driven gait so the foot never skates.
-      if (v.rig) {
+      // SPRITE SPIKE — a sprite-skinned thug renders the STATIC drawn sprite (foot-anchored, fixed scale,
+      // facing via flipX). No rig. The base-plate (factionRing/shadow below) carries the faction colour, and
+      // the occlusion/fog pass further down eases this same sprite's alpha → NO-X-RAY gating is identical to
+      // the procedural figure (a fog-hidden rival is hidden here too).
+      if (v.sprite.texture.key === SPRITE_THUG_KEY && isRiggedUnit(v.unit)) {
+        const faceRight = facesRight(unitFacing(v.unit));
+        v.sprite.setVisible(true).setPosition(s.x + sway + kick, s.y - bob + lift).setDepth(depth)
+          .setScale(SPRITE_THUG_SCALE, SPRITE_THUG_SCALE * breath).setFlipX(!faceRight);
+      } else if (v.rig) {
         const lsx = v.lastSX ?? s.x, lsy = v.lastSY ?? s.y;
         const dist = Math.hypot(s.x - lsx, s.y - lsy); // world-screen travel since last frame (camera-independent)
         v.lastSX = s.x; v.lastSY = s.y;
@@ -3391,7 +3414,9 @@ export class IsoScene extends Phaser.Scene {
   private refreshArmedView(id: string): void {
     const v = this.units.find((u) => u.unit.id === id);
     if (!v) return;
-    if (v.unit.weapon) v.sprite.setTexture(enforcerTexKey(v.unit.weapon)).setVisible(true);
+    // setOrigin reset: a sprite-skinned thug used the sprite's foot anchor; an enforcer silhouette uses the
+    // baked 0.93 anchor — restore it so a just-armed (dev ?arm) skinned thug doesn't sit off its tile.
+    if (v.unit.weapon) v.sprite.setTexture(enforcerTexKey(v.unit.weapon)).setOrigin(0.5, 0.93).setVisible(true);
     if (v.rig) { v.rig.destroy(); v.rig = undefined; }
     if (v.rigDebug) { v.rigDebug.destroy(); v.rigDebug = undefined; }
     if (v.rigText) { v.rigText.destroy(); v.rigText = undefined; }
