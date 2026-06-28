@@ -98,6 +98,8 @@ import {
   FEDERAL_LADDER,
   bribeBracket,
   BRIBE_PIPS,
+  raidChance,
+  federalExposure,
   verbChipState,
   alertCategory,
   incidentNeedsYou,
@@ -301,6 +303,7 @@ import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
 } from './gait';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
+import { hottestChannel, type GreasePressure } from './greaseTargets';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -541,6 +544,9 @@ export class IsoScene extends Phaser.Scene {
   private ctxCardTitle?: Phaser.GameObjects.Text;
   private ctxCardBody?: Phaser.GameObjects.Text;
   private hudRegions: { x: number; y: number; w: number; h: number; explain: string }[] = [];
+  // BALANCE — click-to-grease targets: each FOUR-CHANNELS row is a clickable region that greases THAT channel
+  // (rebuilt each frame in drawChannels). Lets the player choose who to grease instead of the old blind cycle.
+  private channelHitRegions: { ch: BribeChannel; x: number; y: number; w: number; h: number }[] = [];
   private lastHeat = 0;
   private lastPhase = '';
   private wireFlashUntil = 0;
@@ -551,7 +557,6 @@ export class IsoScene extends Phaser.Scene {
   private lastRecall?: RecallTap;            // last group recall (for the double-tap-centres gesture)
   private pressX = 0;
   private pressY = 0;
-  private greaseIndex = 0;
   private lastTrailAt = 0;
   private robbedCollectors = new Set<string>();
 
@@ -2218,6 +2223,8 @@ export class IsoScene extends Phaser.Scene {
       if (row) { this.flyToDistrict(row.districtId); return; }
       // INFO-FEEDBACK — a click on the minimap / a log row / an edge arrow jumps the camera (consume it).
       if (this.handleInfoClick(p.x, p.y)) return;
+      // BALANCE — a left-click on a FOUR-CHANNELS row greases THAT channel (targetable grease).
+      if (p.leftButtonReleased() && this.handleChannelClick(p.x, p.y)) return;
       const shift = !!(p.event as MouseEvent | undefined)?.shiftKey;
       // An open menu consumes the next click: a row runs its action, anywhere else dismisses it.
       if (this.ctxMenu) {
@@ -2808,11 +2815,27 @@ export class IsoScene extends Phaser.Scene {
     this.setStatus(`opened a ${kind} racket in ${d.name}`);
   }
 
-  /** [G] — grease: bump the next of the four bribe channels by $10/wk (cycles through them). */
-  private commandGrease(): void {
-    const channels: BribeChannel[] = ['police', 'judges', 'politicians', 'feds'];
-    const ch = channels[this.greaseIndex % channels.length];
-    this.greaseIndex += 1;
+  /** The live grease pressure on each channel, read from the EXISTING pure sim helpers (no new heat model).
+   * Lets [G] target the hottest channel and powers the targeting that fixes the "forced to pay all four"
+   * degeneracy from Playtest #1. */
+  private greasePressure(): GreasePressure {
+    const p = this.state.player;
+    return {
+      raidRisk: raidChance(p.heat, p.bribes.police),  // POLICE buys this down
+      federalExposure: federalExposure(p),            // FEDS buys this down
+      heat: p.heat,                                    // POLITICIANS cool it (decay)
+      bustArmed: !!p.bustArmed,                        // JUDGES survive it
+    };
+  }
+
+  /**
+   * GREASE — now TARGETABLE (Playtest #1 fix). [G] greases the HOTTEST channel (so a lean player pays only
+   * what's hot); clicking a channel row greases THAT specific channel. Each channel maps to a distinct heat
+   * source in the sim (police→raids, politicians→heat decay, judges→bust, feds→federal exposure), so paying
+   * the relevant one reduces the relevant pressure — no longer forced to spread $10 across all four.
+   */
+  private commandGrease(channel?: BribeChannel): void {
+    const ch = channel ?? hottestChannel(this.greasePressure());
     const cur = this.state.player.bribes[ch];
     applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: ch, amount: cur + 10 });
     this.state = harvestIncidents(this.state);
@@ -2821,7 +2844,8 @@ export class IsoScene extends Phaser.Scene {
       recordBribePaid(ensureRunStats(this.state), ch, this.state.player.bribes[ch] - cur); // Lane L — greased $ by channel
       this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); // RTS-27 distinct cue per channel
     }
-    const greaseMsg = paid ? `greased ${bribeChannelLabel(ch)} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`;
+    const how = channel ? '' : ' (hottest)';
+    const greaseMsg = paid ? `greased ${bribeChannelLabel(ch)}${how} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`;
     this.setStatus(greaseMsg);
     // LANE K — surface the bribe outcome on THE WIRE so the player can read that a channel landed (or that
     // they came up short). Non-positional (an abstract channel action) — logs only, no arrow/ping.
@@ -4041,7 +4065,7 @@ export class IsoScene extends Phaser.Scene {
     this.phaseChip = this.mkText(0, 0, '', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(100001);
 
     // FOUR CHANNELS — labeled dials (level + what it buys + bump cost). [G] cycles a bump.
-    this.channelTitle = this.mkText(0, 0, 'THE FOUR CHANNELS  [G] grease', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
+    this.channelTitle = this.mkText(0, 0, 'THE FOUR CHANNELS  · click to grease · [G] hottest', { fontFamily: NOIR_DISPLAY, fontSize: '14px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setScrollFactor(0).setDepth(100000);
     for (let i = 0; i < 4; i++) this.channelRows.push(this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2 }).setScrollFactor(0).setDepth(100000));
 
     // ROUTE pill — prominent collection-route status (stops · banking $X · rob-risk).
@@ -4943,6 +4967,7 @@ export class IsoScene extends Phaser.Scene {
     const r = this.channelPanelRect; r.y = 64; r.w = 300; r.h = 122;
     this.decoFrame(g, r.x, r.y, r.w, r.h);
     this.channelTitle?.setPosition(r.x + 8, r.y + 6);
+    this.channelHitRegions = []; // BALANCE — rebuilt below: each row clicks to grease THAT channel
     const FEDERAL_GREEN = 0x5b7d6a; // §2: The Bureau reads federal-green (canon-checked accent)
     const defs: { ch: BribeChannel; name: string; buys: string }[] = [
       { ch: 'police', name: 'THE BEAT', buys: 'fewer raids' },
@@ -4964,7 +4989,9 @@ export class IsoScene extends Phaser.Scene {
       const col = d.ch === 'feds' && lvl > 0 ? '#7da890' : lvl > 0 ? NOIR_PALETTE.bone : NOIR_PALETTE.fog;
       this.setTC(row, `${d.name} · ${bracket.name} $${lvl}/wk · ${d.buys}${next}`, col).setPosition(dotsX + 42, y);
       const fedExtra = d.ch === 'feds' ? ' Greasing The Bureau lowers your federal EXPOSURE directly.' : '';
-      this.hudRegions.push({ x: r.x, y: y - 2, w: r.w, h: 21, explain: `${d.name} — ${bracket.name} ($${lvl}/wk): buys ${d.buys}. [G] greases the next channel +$10/wk.${fedExtra}` });
+      this.hudRegions.push({ x: r.x, y: y - 2, w: r.w, h: 21, explain: `${d.name} — ${bracket.name} ($${lvl}/wk): buys ${d.buys}. CLICK to grease this channel +$10/wk ([G] greases the hottest).${fedExtra}` });
+      // BALANCE — the row is a click target: grease THIS channel (the player chooses who to pay).
+      this.channelHitRegions.push({ ch: d.ch, x: r.x, y: y - 2, w: r.w, h: 21 });
     });
   }
 
@@ -5802,6 +5829,15 @@ export class IsoScene extends Phaser.Scene {
     return false;
   }
 
+  /** BALANCE — a click on a FOUR-CHANNELS row greases THAT specific channel (targetable grease). Returns true
+   * if the click landed on a channel row (consumed). */
+  private handleChannelClick(sx: number, sy: number): boolean {
+    for (const h of this.channelHitRegions) {
+      if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) { this.commandGrease(h.ch); return true; }
+    }
+    return false;
+  }
+
   // ── RTS-28 fast-forward / skip-week ─────────────────────────────────────────────────────────
 
   /** The on-screen button — cycle the real-time speed 1× → 2× → 4×. */
@@ -5956,7 +5992,7 @@ export class IsoScene extends Phaser.Scene {
       '  • Shake down the NEIGHBOURHOOD — every cheap front you can (low heat, steady money).',
       '  • [T] set an automated COLLECTION ROUTE so the take banks itself — but GUARD it,',
       '    a rival enforcer who catches the collector still robs you.',
-      '  • [6] recruit more thugs · [5] expand to the next block · [G] grease The Beat.',
+      '  • [6] recruit more thugs · [5] expand to the next block · [G] grease the hottest channel (or click one).',
       '  • War comes later: [1] raid · [2] sabotage · [3] assassinate · [4] lockout · [V] demolish.',
       '  • Select a thug → its ACTION ICONS show; [Q] set PATROL (hold a block, adds muscle presence).',
       '',
