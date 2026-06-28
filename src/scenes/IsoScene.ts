@@ -267,6 +267,7 @@ import {
 // keep the lane file-isolated) + the one read-only HUD panel. NO-X-RAY: aged/learned data only, no live position.
 import { createDossier, advanceIntel, type IntelDossier, type IntelObservation } from '../sim/intel';
 import { DossierPanel } from './ui/dossierPanel';
+import { GAME_TITLE, GAME_SUBTITLE } from './branding'; // BRASSMERE — display wordmark for the legend header
 // Lane — STATUS DASHBOARD: the at-a-glance threat/economy summary (pure view-model; rendered on the fixed HUD).
 import { buildStatusDashboard, type DashboardTone } from './ui/statusDashboard';
 import { districtStatus } from '../sim';
@@ -5938,7 +5939,7 @@ export class IsoScene extends Phaser.Scene {
     const w = 600, h = 396;
     const cx = this.scale.width / 2, cy = this.scale.height / 2;
     const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
-    const title = this.mkText(0, -h / 2 + 16, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
+    const title = this.mkText(0, -h / 2 + 16, `${GAME_TITLE.toUpperCase()} — ${GAME_SUBTITLE.toUpperCase()}`, { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
     const body = this.mkText(0, -h / 2 + 50, [
       'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
       '',

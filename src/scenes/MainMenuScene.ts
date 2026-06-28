@@ -11,6 +11,7 @@
 import Phaser from 'phaser';
 import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY } from './theme';
 import { PAL } from './cityArt';
+import { GAME_TITLE, GAME_SUBTITLE } from './branding';
 import { listSaveSlots, loadContinue, hasAnySave, LOADED_STATE_KEY } from './saveStore';
 import { SettingsPanel } from './settingsPanel';
 
@@ -42,8 +43,8 @@ export class MainMenuScene extends Phaser.Scene {
     g.lineStyle(2, PAL.brass, 0.5).strokeRect(28, 28, W - 56, H - 56);
 
     const cx = W / 2;
-    this.add.text(cx, H * 0.22, 'LEGAL CRIME', { fontFamily: NOIR_DISPLAY, fontSize: '64px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5);
-    this.add.text(cx, H * 0.22 + 56, 'FEDORA NOIR', { fontFamily: NOIR_DISPLAY, fontSize: '24px', color: NOIR_PALETTE.bone }).setOrigin(0.5);
+    this.add.text(cx, H * 0.22, GAME_TITLE.toUpperCase(), { fontFamily: NOIR_DISPLAY, fontSize: '64px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5);
+    this.add.text(cx, H * 0.22 + 56, GAME_SUBTITLE.toUpperCase(), { fontFamily: NOIR_DISPLAY, fontSize: '24px', color: NOIR_PALETTE.bone }).setOrigin(0.5);
     this.add.text(cx, H * 0.22 + 88, 'Prohibition Chicago — build a protection empire, quietly first, by war later.', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5);
 
     // ── the saved-game probe (Lane F) ──
