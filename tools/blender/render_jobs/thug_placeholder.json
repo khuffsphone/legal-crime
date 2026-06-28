@@ -1,0 +1,33 @@
+{
+  "unitName": "thug",
+  "source": "blockout",
+  "outputDir": "public/assets/sprites/units",
+  "camera": {
+    "tileW": 128,
+    "tileH": 64,
+    "cameraMode": "dimetric2to1",
+    "cameraZDeg": 45,
+    "directions": 8,
+    "dirStartDeg": 0,
+    "dirStepDeg": 45,
+    "modelForwardDeg": 0,
+    "_note": "2:1 tiles -> dimetric2to1 (60deg from top-down) is the EXACT match; trueIso(54.7356) gives 1.73:1 and does NOT match. 90-atan(64/128)=63.435 is a coarse check only."
+  },
+  "actions": [
+    { "name": "idle",   "sourceFrameStart": 1, "sourceFrameEnd": 12, "outputFrameCount": 6,  "playbackFps": 6,  "loop": true,  "includeTerminalFrame": false },
+    { "name": "walk",   "sourceFrameStart": 1, "sourceFrameEnd": 21, "outputFrameCount": 10, "playbackFps": 10, "loop": true,  "includeTerminalFrame": false },
+    { "name": "attack", "sourceFrameStart": 1, "sourceFrameEnd": 16, "outputFrameCount": 8,  "playbackFps": 12, "loop": false, "includeTerminalFrame": true }
+  ],
+  "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
+  "shader": {
+    "toonBandCount": 3,
+    "toonThresholds01": [0.28, 0.62, 0.88],
+    "desaturateAmount01": 0.28,
+    "sepiaAmount01": 0.12,
+    "outlineEnabled": true,
+    "outlineThicknessPx": 1.75,
+    "outlineColorHex": "#1E1713"
+  },
+  "light": { "keyEnergy": 1200, "fillEnergy": 500, "rimEnergy": 220, "ambientStrength": 0.08 },
+  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "emitManifestJson": true }
+}
