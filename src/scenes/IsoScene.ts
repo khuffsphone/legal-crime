@@ -267,6 +267,9 @@ import {
 // keep the lane file-isolated) + the one read-only HUD panel. NO-X-RAY: aged/learned data only, no live position.
 import { createDossier, advanceIntel, type IntelDossier, type IntelObservation } from '../sim/intel';
 import { DossierPanel } from './ui/dossierPanel';
+// Lane — STATUS DASHBOARD: the at-a-glance threat/economy summary (pure view-model; rendered on the fixed HUD).
+import { buildStatusDashboard, type DashboardTone } from './ui/statusDashboard';
+import { districtStatus } from '../sim';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
 import { metaFor, combatEventKind, extortionEventKind, captureEventKind, bribeEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
@@ -643,6 +646,9 @@ export class IsoScene extends Phaser.Scene {
   private advisorG?: Phaser.GameObjects.Container;
   private advisorTop?: Suggestion | null;
   private advisorNextMs = 0;
+  // Lane — STATUS DASHBOARD: the at-a-glance threat/economy strip (one fixed-HUD mount, throttled redraw).
+  private statusDashG?: Phaser.GameObjects.Container;
+  private statusDashNextMs = 0;
   private edgeAlertG?: Phaser.GameObjects.Graphics;
   private edgeAlertHits: { x: number; y: number; r: number; gx: number; gy: number; id: number }[] = [];
   private minimapG?: Phaser.GameObjects.Graphics;
@@ -1964,6 +1970,7 @@ export class IsoScene extends Phaser.Scene {
     this.drawEdgeAlerts(now);
     if (!this.hudCollapsed) this.drawWireLog(); // HUD PHASE 1 — full log lives in the [L] Wire drawer when collapsed
     this.updateAdvisor(now); // Lane — CONSIGLIERE: the distilled "what to do next" nudge, read from THE WIRE
+    this.updateStatusDashboard(now); // Lane — STATUS DASHBOARD: the at-a-glance threat/economy summary
     this.drawOpPreview(); // OPERATION-OUTCOME PREVIEWS — the hover GLANCE/DETAIL card (read-only)
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
@@ -5686,6 +5693,63 @@ export class IsoScene extends Phaser.Scene {
     const label = this.mkText(x, y, '⚜ CONSIGLIERE', { fontFamily: NOIR_DISPLAY, fontSize: '11px', color: NOIR_PALETTE.brass, fontStyle: 'bold', backgroundColor: '#0a0807cc' }).setOrigin(0, 0).setPadding(5, 3, 5, 3);
     const body = this.mkText(x, y + 18, `“${s.text}”`, { fontFamily: NOIR_FONT, fontSize: '11px', color: col, backgroundColor: '#0a080799', wordWrap: { width: 300 } }).setOrigin(0, 0).setPadding(4, 2, 4, 2);
     this.advisorG.add([label, body]);
+  }
+
+  // ── Lane — STATUS DASHBOARD: the at-a-glance threat + economy summary (one fixed-HUD mount) ───────────
+  /** Build the PLAYER-KNOWABLE dashboard inputs (the same selectors the ledger/advisor read). NO rival
+   * positions: rival pressure is the player's OWN contested turf + recent rival-pressure WIRE events seen. */
+  private buildStatusInput() {
+    const hud = realtimeHudView(this.state, SCENE_WEEK_SECONDS).player;
+    const p = this.state.player;
+    let contested = 0;
+    for (const d of this.state.districts) {
+      if (districtStatus(d).status === 'contested' && (d.control[p.id] ?? 0) >= 10) contested++;
+    }
+    const now = this.time.now;
+    const recent = this.wireLog.entries.filter(
+      (e) => now - e.t <= 30000 && /rival|hq\.attack|telegraph|robbed|fallen|lost|invad/i.test(e.kind),
+    ).length;
+    return {
+      federalExposure: hud.federalExposure,
+      netPerWeek: playerWeeklyNet(this.state),
+      cleanCash: hud.cleanCash,
+      districtsHeld: districtsHeld(this.state, p.id).length,
+      districtsTotal: this.state.districts.length,
+      districtsContested: contested,
+      rivalPressureEvents: recent,
+    };
+  }
+
+  /** Recompute (throttled) + paint the dashboard so it never flickers frame-to-frame. */
+  private updateStatusDashboard(now: number): void {
+    if (now < this.statusDashNextMs) return;
+    this.statusDashNextMs = now + 600;
+    this.drawStatusDashboard();
+  }
+
+  /** Paint the four banded reads (federal / turf / cash / rivals) top-right, above THE CITY panel, on the
+   * sacred fixed-HUD camera. Tone → palette; danger stays AMBER (red is MOTION-only); the rival read uses the
+   * STATIC rival-red #9E1B1B (SPEC.rival). Read-only. */
+  private drawStatusDashboard(): void {
+    if (!this.statusDashG) { this.statusDashG = this.add.container(0, 0).setScrollFactor(0).setDepth(100044); this.hudFx(this.statusDashG); }
+    this.statusDashG.removeAll(true);
+    const view = buildStatusDashboard(this.buildStatusInput());
+    const W = 214, rowH = 19, padX = 9;
+    const x = this.scale.width - W - 8, y = 64;
+    const h = 8 + view.cells.length * rowH + 2;
+    const bg = this.add.rectangle(x, y, W, h, PAL.ink, 0.82).setOrigin(0, 0).setStrokeStyle(1, hexNum(NOIR_PALETTE.brass), 0.5);
+    this.statusDashG.add(bg);
+    const tone = (key: string, t: DashboardTone): string =>
+      key === 'rival' ? SPEC.rival // STATIC rival identity, never a danger-red
+        : t === 'danger' || t === 'watch' ? WAR_AMBER_HEX : t === 'good' ? NOIR_PALETTE.brass : NOIR_PALETTE.fog;
+    view.cells.forEach((c, i) => {
+      const ry = y + 6 + i * rowH;
+      this.statusDashG!.add([
+        this.mkText(x + padX, ry, c.label, { fontFamily: NOIR_DISPLAY, fontSize: '10px', color: NOIR_PALETTE.fog, fontStyle: 'bold' }).setOrigin(0, 0),
+        this.mkText(x + padX + 46, ry, c.value, { fontFamily: NOIR_FONT, fontSize: '11px', color: tone(c.key, c.tone), fontStyle: 'bold' }).setOrigin(0, 0),
+        this.mkText(x + W - padX, ry + 1, c.detail, { fontFamily: NOIR_FONT, fontSize: '9px', color: NOIR_PALETTE.fog }).setOrigin(1, 0),
+      ]);
+    });
   }
 
   /** OPERATION-OUTCOME PREVIEWS — draw the hover card. The pure formatter resolves tone→colour (the colour
