@@ -21,6 +21,7 @@ import {
   NOIR_PALETTE,
   NOIR_FONT,
 } from './adapter';
+import { GAME_TITLE } from './theme';
 import {
   ASSET_MANIFEST,
   assetUrl,
@@ -136,7 +137,7 @@ export class BootScene extends Phaser.Scene {
 
     // Top HUD bar.
     this.panel(8, 8, 944, 92, NOIR_PALETTE.charcoal);
-    this.label(20, 14, 'LEGAL CRIME', NOIR_PALETTE.brass, '26px');
+    this.label(20, 14, GAME_TITLE, NOIR_PALETTE.brass, '26px');
     this.label(250, 20, narrate(this.state), NOIR_PALETTE.bone);
     this.label(250, 44, moneyLine(p.cleanCash, p.dirtyCash), NOIR_PALETTE.brass);
     this.label(250, 66, `Debt $${p.debt}   ${heatLabel(p.heat)} (${p.heat})   Crew ${p.gangsterCount}   Held ${p.districtsHeld}/${status.districtsNeededToWin}   Uncollected $${p.uncollected}`, NOIR_PALETTE.fog, '13px');
