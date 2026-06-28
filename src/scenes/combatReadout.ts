@@ -33,3 +33,14 @@ export function shouldShowHealthBar(u: MovableUnit, inCombat: boolean): boolean 
 export function isCritical(u: MovableUnit): boolean {
   return healthFraction(u) <= 1 / 3;
 }
+
+/**
+ * TARGET RETICLE — whether to mark a selected unit's current target. ⭐ NO-X-RAY: only mark a LIVING target
+ * the player can ALREADY see (`visible` = revealed in fog AND on-screen). A fog-hidden or off-screen target
+ * is NEVER marked, so the reticle can never betray a unit the player hasn't discovered. Pure: the caller
+ * supplies the visibility decision (fog/on-screen lives in the renderer); this owns the gate so it's tested
+ * without pixels.
+ */
+export function showTargetReticle(target: { downed?: boolean } | null | undefined, visible: boolean): boolean {
+  return !!target && !target.downed && visible;
+}

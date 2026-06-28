@@ -244,7 +244,7 @@ import {
 import { applyDevDebug, isDevBuild } from './devDebug';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
-import { healthFraction, shouldShowHealthBar, isCritical } from './combatReadout';
+import { healthFraction, shouldShowHealthBar, isCritical, showTargetReticle } from './combatReadout';
 import { initPause, togglePause as togglePauseState, setPaused as setPausedState, type PauseState } from './pauseGate';
 import {
   listSaveSlots, writeSaveSlot, readSaveSlot, deleteSaveSlot, quickSave, quickLoad,
@@ -655,6 +655,11 @@ export class IsoScene extends Phaser.Scene {
   // Lane — STATUS DASHBOARD: the at-a-glance threat/economy strip (one fixed-HUD mount, throttled redraw).
   private statusDashG?: Phaser.GameObjects.Container;
   private statusDashNextMs = 0;
+  // Floor polish — TARGET RETICLE/NAME: a subtle marker on the unit a selected fighter is engaging. One
+  // shared ring-graphics + a small pooled set of name labels, on the fixed HUD camera. NO-X-RAY: only ever
+  // drawn over a target already visible (revealed + on-screen).
+  private reticleG?: Phaser.GameObjects.Graphics;
+  private reticleNames: Phaser.GameObjects.Text[] = [];
   private edgeAlertG?: Phaser.GameObjects.Graphics;
   private edgeAlertHits: { x: number; y: number; r: number; gx: number; gy: number; id: number }[] = [];
   private minimapG?: Phaser.GameObjects.Graphics;
@@ -1977,6 +1982,7 @@ export class IsoScene extends Phaser.Scene {
     if (!this.hudCollapsed) this.drawWireLog(); // HUD PHASE 1 — full log lives in the [L] Wire drawer when collapsed
     this.updateAdvisor(now); // Lane — CONSIGLIERE: the distilled "what to do next" nudge, read from THE WIRE
     this.updateStatusDashboard(now); // Lane — STATUS DASHBOARD: the at-a-glance threat/economy summary
+    this.drawTargetReticles(now); // Floor polish — mark a selected unit's (visible) target
     this.drawOpPreview(); // OPERATION-OUTCOME PREVIEWS — the hover GLANCE/DETAIL card (read-only)
 
     // RTS-29 badges: a spinning brass coin over fronts — DIM [%] (extortable invitation) vs FULL [$]
@@ -5784,6 +5790,61 @@ export class IsoScene extends Phaser.Scene {
         this.mkText(x + W - padX, ry + 1, c.detail, { fontFamily: NOIR_FONT, fontSize: '9px', color: NOIR_PALETTE.fog }).setOrigin(1, 0),
       ]);
     });
+  }
+
+  /**
+   * Floor polish — TARGET RETICLE/NAME. For every SELECTED player fighter engaging an enemy in range, mark
+   * that enemy with a subtle reticle ring + its family name. ⭐ NO-X-RAY: a target is marked ONLY when it is
+   * already VISIBLE — revealed in the fog AND on-screen (and not occluded away) — so the reticle can never
+   * betray a unit the player hasn't discovered (the pure `showTargetReticle` gate enforces it). Red stays
+   * motion-only: the ring is bone/brass with a gentle PULSE, never a static danger-red fill. It builds on the
+   * combat-readability layer (like the health bar, it's a world-space marker that tracks the unit through
+   * zoom/pan, so it is immune to the UI-scale on the fixed HUD camera). Reads sim only; mutates nothing.
+   */
+  private drawTargetReticles(now: number): void {
+    if (!this.reticleG) { this.reticleG = this.add.graphics().setDepth(99500); this.worldFx(this.reticleG); }
+    const g = this.reticleG;
+    g.clear();
+    for (const t of this.reticleNames) t.setVisible(false);
+
+    // the enemies our SELECTED, living fighters are currently engaging (in range).
+    const targetIds = new Set<string>();
+    if (this.selection.ids.length > 0) {
+      for (const v of this.units) {
+        if (v.faction !== 'player' || v.unit.downed || !isSelected(this.selection, v.unit.id)) continue;
+        const tgt = enemyInRange(v.unit, this.state.units);
+        if (tgt && !tgt.downed) targetIds.add(tgt.id);
+      }
+    }
+    if (targetIds.size === 0) return;
+
+    const view = this.cameras.main.worldView;
+    const pulse = 0.5 + 0.35 * Math.abs(Math.sin(now / 180)); // motion read (never a static red)
+    let nameIdx = 0;
+    for (const v of this.units) {
+      if (!targetIds.has(v.unit.id)) continue;
+      const tile = unitTile(v.unit);
+      const revealed = this.debugRevealAll || isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
+      const onScreen = view.contains(v.sprite.x, v.sprite.y);
+      // ⭐ NO-X-RAY gate (pure): only mark a living target the player can already see.
+      if (!showTargetReticle(v.unit, revealed && onScreen && (v.occA ?? 1) > 0.15)) continue;
+      const cx = v.sprite.x, cy = v.sprite.y - 14, r = 15, tk = 5;
+      g.lineStyle(1.5, hexNum(SPEC.bone), pulse).strokeCircle(cx, cy, r); // subtle bone ring
+      g.lineStyle(1.5, PAL.brass, pulse); // four brass corner ticks (an action mark, not a faction fill)
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+        const px = cx + dx * r, py = cy + dy * r;
+        g.beginPath(); g.moveTo(px, py - dy * tk); g.lineTo(px, py); g.lineTo(px - dx * tk, py); g.strokePath();
+      }
+      const name = inspectUnit(this.state, v.unit.id)?.ownerName ?? 'rival';
+      let label = this.reticleNames[nameIdx];
+      if (!label) {
+        label = this.mkText(0, 0, '', { fontFamily: NOIR_FONT, fontSize: '10px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807bb' }).setDepth(99501).setPadding(3, 1, 3, 1);
+        this.worldFx(label);
+        this.reticleNames.push(label);
+      }
+      label.setText(name).setOrigin(0.5, 1).setPosition(cx, cy - r - 2).setVisible(true);
+      nameIdx++;
+    }
   }
 
   /** OPERATION-OUTCOME PREVIEWS — draw the hover card. The pure formatter resolves tone→colour (the colour

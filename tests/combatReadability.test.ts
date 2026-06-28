@@ -6,7 +6,7 @@ import { createInitialState } from '../src/sim/state';
 import { spawnUnit, spawnEnforcer, type MovableUnit } from '../src/sim/movement';
 import { update } from '../src/sim/realtime';
 import { THUG_MAX_HEALTH } from '../src/sim/constants';
-import { healthFraction, isDamaged, shouldShowHealthBar, isCritical } from '../src/scenes/combatReadout';
+import { healthFraction, isDamaged, shouldShowHealthBar, isCritical, showTargetReticle } from '../src/scenes/combatReadout';
 import {
   recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
 } from '../src/sim/downedBodies';
@@ -91,5 +91,24 @@ describe('⭐ end-to-end: a downed unit PERSISTS as a body before cleanup (not i
     // keep time running past the persist window → the body is cleaned up.
     for (let i = 0; i < Math.ceil(DOWNED_BODY_PERSIST_SECONDS / 0.1) + 2; i++) update(s, 0.1, 1e9);
     expect(s.downedBodies?.some((b) => b.id === 'r') ?? false).toBe(false);
+  });
+});
+
+describe('⭐ target reticle — NO-X-RAY (only a visible target is ever marked)', () => {
+  const living = { downed: false };
+  const dead = { downed: true };
+
+  it('marks a living target ONLY when it is visible (revealed + on-screen)', () => {
+    expect(showTargetReticle(living, true)).toBe(true);
+    expect(showTargetReticle(living, false)).toBe(false); // fog-hidden / off-screen → NEVER marked (NO-X-RAY)
+  });
+
+  it('never marks a downed target, even if visible', () => {
+    expect(showTargetReticle(dead, true)).toBe(false);
+  });
+
+  it('never marks a non-existent target', () => {
+    expect(showTargetReticle(null, true)).toBe(false);
+    expect(showTargetReticle(undefined, true)).toBe(false);
   });
 });
