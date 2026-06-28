@@ -4,8 +4,11 @@ import {
   saveSettings,
   updateSettings,
   sanitizeSettings,
+  clampUiScale,
   DEFAULT_SETTINGS,
   SETTINGS_KEY,
+  UI_SCALE_MIN,
+  UI_SCALE_MAX,
 } from '../src/scenes/settings';
 
 // A minimal in-memory localStorage so the persistence path runs in the node/vitest context.
@@ -79,5 +82,34 @@ describe('settings — round-trip persistence (the spec requirement)', () => {
     delete (globalThis as unknown as { localStorage?: unknown }).localStorage;
     expect(() => saveSettings(DEFAULT_SETTINGS)).not.toThrow();
     expect(loadSettings()).toEqual(DEFAULT_SETTINGS);
+  });
+});
+
+describe('settings — UI scale (floor polish)', () => {
+  it('defaults to native 1.0', () => {
+    expect(DEFAULT_SETTINGS.uiScale).toBe(1);
+    expect(loadSettings().uiScale).toBe(1);
+  });
+
+  it('clampUiScale clamps to [MIN,MAX], quantises to clean rungs, and rejects garbage', () => {
+    expect(clampUiScale(0.5)).toBe(UI_SCALE_MIN);   // below floor → 0.8
+    expect(clampUiScale(9)).toBe(UI_SCALE_MAX);     // above ceiling → 1.0 (native is the max)
+    expect(clampUiScale(1)).toBe(1);
+    expect(clampUiScale(0.9)).toBe(0.9);
+    expect(clampUiScale(0.84)).toBe(0.8);           // snaps to the nearest 0.1 rung
+    expect(clampUiScale('big' as unknown)).toBe(1); // non-number → default
+    expect(clampUiScale(NaN)).toBe(1);
+  });
+
+  it('sanitizeSettings coerces an out-of-range stored uiScale', () => {
+    expect(sanitizeSettings({ uiScale: 5 }).uiScale).toBe(UI_SCALE_MAX);
+    expect(sanitizeSettings({ uiScale: 0 }).uiScale).toBe(UI_SCALE_MIN);
+    expect(sanitizeSettings({}).uiScale).toBe(1);
+  });
+
+  it('persists + reapplies a custom UI scale across save/load (the spec requirement)', () => {
+    const next = updateSettings(loadSettings(), { uiScale: 0.9 });
+    expect(next.uiScale).toBe(0.9);
+    expect(loadSettings().uiScale).toBe(0.9); // reapplied from storage
   });
 });

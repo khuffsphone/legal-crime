@@ -13,7 +13,8 @@ import Phaser from 'phaser';
 import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY } from './theme';
 import { PAL } from './cityArt';
 import {
-  loadSettings, saveSettings, type Settings, type LightingQuality,
+  loadSettings, saveSettings, clampUiScale, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_STEP,
+  type Settings, type LightingQuality,
 } from './settings';
 import {
   KEY_ACTIONS, KEY_ACTION_LABELS, DEFAULT_KEYBINDS, resolveKeybinds, applyRemap, resetKeybind,
@@ -34,6 +35,9 @@ export interface SettingsPanelHost {
   onKeybindsChange?(map: Record<KeyAction, string>): void;
   /** The host applies the screen-shake / lighting toggles live. */
   onSettingsChange?(s: Settings): void;
+  /** The host's current UI-scale (the fixed-HUD-camera zoom). The panel renders on that camera, so it lays
+   * out + hit-tests in LOGICAL coords (screen ÷ uiScale). Absent / the menu ⇒ 1 (no scaling). */
+  uiScale?(): number;
   /** Base depth for the modal (above the host's other HUD). */
   depth?: number;
 }
@@ -122,32 +126,43 @@ export class SettingsPanel {
   capturesPointer(px: number, py: number): boolean {
     if (!this.open) return false;
     const r = this.cardRect();
-    return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+    const lx = this.hudX(px), ly = this.hudY(py);
+    return lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h;
   }
+
+  /** The fixed-HUD-camera zoom this panel renders under (1 in the menu / when unscaled). */
+  private uiZoom(): number { return this.host.uiScale?.() ?? 1; }
+  /** Screen pointer → LOGICAL panel coords (the camera zooms from the top-left, origin 0,0). */
+  private hudX(px: number): number { return px / this.uiZoom(); }
+  private hudY(py: number): number { return py / this.uiZoom(); }
 
   private onPointerDown(p: Phaser.Input.Pointer): void {
     if (!this.open) return;
+    const lx = this.hudX(p.x), ly = this.hudY(p.y);
     for (const z of this.zones) {
-      if (p.x >= z.x && p.x <= z.x + z.w && p.y >= z.y && p.y <= z.y + z.h) { z.onDown(p.x); return; }
+      if (lx >= z.x && lx <= z.x + z.w && ly >= z.y && ly <= z.y + z.h) { z.onDown(lx); return; }
     }
   }
 
   private onPointerMove(p: Phaser.Input.Pointer): void {
     if (!this.open || !this.dragging || !p.isDown) return;
-    this.setVolumeFromX(this.dragging, p.x);
+    this.setVolumeFromX(this.dragging, this.hudX(p.x));
   }
 
   private onPointerUp(): void { this.dragging = null; }
 
   // ── geometry ──────────────────────────────────────────────────────────────────────────────
   private rowCount(): number {
-    // title + audio header + 3 vols + display header + 2 toggles + controls header + 8 binds + notice + footer
-    return 1 + 1 + 3 + 1 + 2 + 1 + KEY_ACTIONS.length + 1 + 1;
+    // title + audio header + 3 vols + display header + 3 rows (shake/lighting/ui-scale) + controls header
+    // + 8 binds + notice + footer
+    return 1 + 1 + 3 + 1 + 3 + 1 + KEY_ACTIONS.length + 1 + 1;
   }
   private cardRect(): { x: number; y: number; w: number; h: number } {
     const h = PAD * 2 + this.rowCount() * ROW + 18;
-    const x = Math.round(this.scene.scale.width / 2 - W / 2);
-    const y = Math.round(this.scene.scale.height / 2 - h / 2);
+    // centre on the LOGICAL screen (real ÷ uiScale) so the modal sits centred once the HUD camera zooms it.
+    const z = this.uiZoom();
+    const x = Math.round(this.scene.scale.width / z / 2 - W / 2);
+    const y = Math.round(this.scene.scale.height / z / 2 - h / 2);
     return { x, y, w: W, h };
   }
 
@@ -172,6 +187,15 @@ export class SettingsPanel {
   private cycleLighting(): void {
     const next: LightingQuality = this.settings.lighting === 'high' ? 'low' : 'high';
     this.settings = { ...this.settings, lighting: next };
+    saveSettings(this.settings);
+    this.host.onSettingsChange?.(this.settings);
+    this.render();
+  }
+  /** Step the UI scale up one rung, wrapping MAX→MIN (single-button stepper). Persists + applies live. */
+  private cycleUiScale(): void {
+    let next = clampUiScale(this.settings.uiScale + UI_SCALE_STEP);
+    if (next <= this.settings.uiScale) next = UI_SCALE_MIN; // at the top → wrap to the smallest
+    this.settings = { ...this.settings, uiScale: next };
     saveSettings(this.settings);
     this.host.onSettingsChange?.(this.settings);
     this.render();
@@ -261,8 +285,10 @@ export class SettingsPanel {
     const r = this.cardRect();
     const g = this.g;
     g.clear();
-    // backdrop dims the whole screen; the card is a brass-framed ink slab
-    g.fillStyle(PAL.soot, 0.72).fillRect(0, 0, this.scene.scale.width, this.scene.scale.height);
+    // backdrop dims the whole screen; the card is a brass-framed ink slab. (Logical size = real ÷ uiScale,
+    // so the dim still covers the full screen once the fixed-HUD camera zooms it.)
+    const z = this.uiZoom();
+    g.fillStyle(PAL.soot, 0.72).fillRect(0, 0, this.scene.scale.width / z, this.scene.scale.height / z);
     g.fillStyle(PAL.ink, 0.97).fillRect(r.x, r.y, r.w, r.h);
     this.decoFrame(g, r.x, r.y, r.w, r.h, PAL.brass, 0.92);
 
@@ -285,6 +311,7 @@ export class SettingsPanel {
     this.section(left, right, y, 'DISPLAY'); y += ROW;
     y = this.toggleRow(left, right, y, 'Screen shake', this.settings.screenShake ? 'ON' : 'OFF', this.settings.screenShake, () => this.toggleShake());
     y = this.toggleRow(left, right, y, 'Lighting quality', this.settings.lighting === 'high' ? 'HIGH' : 'LOW', this.settings.lighting === 'high', () => this.cycleLighting());
+    y = this.toggleRow(left, right, y, `UI scale (${Math.round(UI_SCALE_MIN * 100)}–${Math.round(UI_SCALE_MAX * 100)}%)`, `${Math.round(this.settings.uiScale * 100)}%`, this.settings.uiScale !== 1, () => this.cycleUiScale());
 
     // ── controls ──
     this.section(left, right, y, 'CONTROLS');

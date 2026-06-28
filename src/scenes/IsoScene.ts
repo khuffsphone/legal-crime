@@ -251,7 +251,7 @@ import {
   exportSaveFile, importSaveFile, autoSave, LOADED_STATE_KEY, type SlotInfo, type SaveView,
 } from './saveStore';
 // Lane G — the menu/settings shell.
-import { loadSettings, type Settings } from './settings';
+import { loadSettings, clampUiScale, type Settings } from './settings';
 import { resolveKeybinds, normalizeKey, type KeyAction } from './keybinds';
 import { SettingsPanel } from './settingsPanel';
 import { fitOverlayPanel } from './overlayLayout';
@@ -483,7 +483,11 @@ export class IsoScene extends Phaser.Scene {
   private layout!: MapLayout;
   private world!: WorldLayout; // RTS-30a the sparse generated world (extends MapLayout)
   private groundGfx?: Phaser.GameObjects.Graphics; // culled per-frame ground/streets/parks + fog
-  private uiCam?: Phaser.Cameras.Scene2D.Camera; // RTS-30a fixed HUD camera (never zooms)
+  private uiCam?: Phaser.Cameras.Scene2D.Camera; // RTS-30a fixed HUD camera (zooms ONLY by the user UI-scale)
+  // Floor polish — USER UI-SCALE. The HUD renders on uiCam at this zoom (top-left anchored, origin 0,0); the
+  // HUD lays out + hit-tests in LOGICAL coords (real screen ÷ uiScaleFactor) so it always fills the screen and
+  // stays clickable. 1 = native. The world/main camera + sim are never touched.
+  private uiScaleFactor = 1;
   private scoutCue?: { card: Phaser.GameObjects.Text; outline: Phaser.GameObjects.Graphics }; // RTS-30a.1 fly-to cue
   // RTS-30b-ground: static set-dressing props (baked-once Images). `dressingDark` is the monotonically
   // shrinking list still under fog; `dressingFar` tracks the FAR-LOD bulk-hide threshold.
@@ -784,6 +788,9 @@ export class IsoScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Floor polish — adopt the persisted UI-scale BEFORE any HUD is built, so every create-time hudW()/hudH()
+    // lays out in the correct logical space (setupUiCamera then applies the matching uiCam zoom).
+    this.uiScaleFactor = clampUiScale(this.shellSettings.uiScale);
     buildCityTextures(this);
     const cam = this.cameras.main;
     cam.setBackgroundColor(PAL.soot);
@@ -882,14 +889,14 @@ export class IsoScene extends Phaser.Scene {
     // A blood ring over the prowling enforcer when the route is hot (RTS-13 timing telegraph).
     this.routeWarn = this.add.ellipse(0, 0, 44, 24).setStrokeStyle(3, PAL.blood, 1).setVisible(false);
     // A persistent top-centre objective banner.
-    this.objTitle = this.mkText(this.scale.width / 2, 12, '', { fontFamily: NOIR_DISPLAY, fontSize: '18px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
-    this.objDetail = this.mkText(this.scale.width / 2, 34, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, align: 'center', wordWrap: { width: 560 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
+    this.objTitle = this.mkText(this.hudW() / 2, 12, '', { fontFamily: NOIR_DISPLAY, fontSize: '18px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
+    this.objDetail = this.mkText(this.hudW() / 2, 34, '', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.bone, align: 'center', wordWrap: { width: 560 } }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100000);
   }
 
   private refreshObjective(): void {
     if (!this.objTitle || !this.objDetail || !this.highlight || !this.routeWarn) return;
     const o = firstObjective(this.state);
-    const cx = this.scale.width / 2;
+    const cx = this.hudW() / 2;
     const pulse = 1 + 0.12 * Math.sin(this.time.now / 180);
     let detail = o.detail;
     this.highlight.setVisible(false);
@@ -993,8 +1000,8 @@ export class IsoScene extends Phaser.Scene {
     const bodyH = bodyT.height;
     const actH = actionT.height;
     const h = pad + 16 + 24 + bodyH + 8 + actH + pad;
-    const x = Math.round(this.scale.width / 2 - w / 2);
-    const y = Math.round(this.scale.height - h - TUTORIAL_CARD_BOTTOM);
+    const x = Math.round(this.hudW() / 2 - w / 2);
+    const y = Math.round(this.hudH() - h - TUTORIAL_CARD_BOTTOM);
 
     frame.clear();
     frame.fillStyle(PAL.ink, 0.92).fillRect(x, y, w, h);
@@ -2214,8 +2221,9 @@ export class IsoScene extends Phaser.Scene {
       // Lane B — a click on the FTUE coach card's SKIP hint dismisses the tutorial (for mouse users who
       // don't reach for [Esc]). Hit-test the fixed-HUD label in screen space before any world click.
       if (this.tutorialShowing && this.tutorialSkipHint?.visible) {
-        const b = this.tutorialSkipHint.getBounds();
-        if (p.x >= b.x - 6 && p.x <= b.x + b.width + 6 && p.y >= b.y - 4 && p.y <= b.y + b.height + 6) { this.skipTutorial(); return; }
+        const b = this.tutorialSkipHint.getBounds(); // logical HUD bounds — compare the logical pointer
+        const lx = this.hudX(p.x), ly = this.hudY(p.y);
+        if (lx >= b.x - 6 && lx <= b.x + b.width + 6 && ly >= b.y - 4 && ly <= b.y + b.height + 6) { this.skipTutorial(); return; }
       }
       // HUD PHASE 1 — the dossier strip + the open drawer OVERLAY the world: a click on a chip toggles its
       // panel; a click anywhere inside the open drawer is swallowed (so it never box-selects the city beneath).
@@ -2226,7 +2234,8 @@ export class IsoScene extends Phaser.Scene {
       // A real drag panned the camera — not a click.
       if (Math.hypot(p.x - this.pressX, p.y - this.pressY) > CLICK_SLOP) return;
       // RTS-30a: a click on a CITY-roster row flies the camera to that district.
-      const row = this.cityRowHits.find((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+      const rx = this.hudX(p.x), ry = this.hudY(p.y); // logical HUD space for the roster-row zones
+      const row = this.cityRowHits.find((r) => rx >= r.x && rx <= r.x + r.w && ry >= r.y && ry <= r.y + r.h);
       if (row) { this.flyToDistrict(row.districtId); return; }
       // INFO-FEEDBACK — a click on the minimap / a log row / an edge arrow jumps the camera (consume it).
       if (this.handleInfoClick(p.x, p.y)) return;
@@ -2283,12 +2292,14 @@ export class IsoScene extends Phaser.Scene {
   /** The action for the menu row under screen (sx, sy), or null if the click missed the rows. */
   private menuRowAt(sx: number, sy: number): (() => void) | null {
     if (!this.ctxRect) return null;
+    sx = this.hudX(sx); sy = this.hudY(sy); // screen → logical HUD space (UI-scale)
     for (const r of this.ctxRows) if (sx >= this.ctxRect.x && sx <= this.ctxRect.x + this.ctxRect.w && sy >= r.y0 && sy <= r.y1) return r.act;
     return null;
   }
 
   /** Open the EXTORT / ATTACK menu for a business at screen (sx, sy). */
   private openBizMenu(businessId: string, sx: number, sy: number): void {
+    sx = this.hudX(sx); sy = this.hudY(sy); // open at the logical HUD position (UI-scale)
     this.closeBizMenu();
     const acts = businessActions(this.state, businessId, 'player');
     if (!acts) return;
@@ -2312,7 +2323,7 @@ export class IsoScene extends Phaser.Scene {
     ];
 
     const W = 196, rowH = 28, headH = 30, H = headH + rows.length * rowH + 6;
-    const x = Math.min(sx, this.scale.width - W - 6), y = Math.min(sy, this.scale.height - H - 6);
+    const x = Math.min(sx, this.hudW() - W - 6), y = Math.min(sy, this.hudH() - H - 6);
     const bg = this.add.rectangle(0, 0, W, H, PAL.ink, 0.97).setOrigin(0, 0).setStrokeStyle(2, PAL.brass, 0.9);
     const head = this.mkText(8, 6, `${title} · ${sub}`, { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0);
     const objs: Phaser.GameObjects.GameObject[] = [bg, head];
@@ -2951,7 +2962,8 @@ export class IsoScene extends Phaser.Scene {
       });
     }
     const W = 264, rowH = 30, headH = 26, H = headH + rows.length * rowH + 6;
-    const x = Math.min(p.x, this.scale.width - W - 6), y = Math.min(Math.max(8, p.y - H), this.scale.height - H - 6);
+    const px = this.hudX(p.x), py = this.hudY(p.y); // logical HUD position (UI-scale)
+    const x = Math.min(px, this.hudW() - W - 6), y = Math.min(Math.max(8, py - H), this.hudH() - H - 6);
     const bg = this.add.rectangle(0, 0, W, H, PAL.ink, 0.97).setOrigin(0, 0).setStrokeStyle(2, PAL.brass, 0.9);
     const head = this.mkText(8, 5, 'RECRUIT — crew + specialists', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0, 0);
     const objs: Phaser.GameObjects.GameObject[] = [bg, head];
@@ -3280,7 +3292,7 @@ export class IsoScene extends Phaser.Scene {
    * amber at NOTICE/WATCH, danger-red at RAID — motion-only (it flashes and fades, never a static fill). */
   private flashFederalCross(tier: number): void {
     const color = federalBarColor(tier);
-    const w = this.scale.width, h = this.scale.height;
+    const w = this.hudW(), h = this.hudH();
     const g = this.add.graphics().setScrollFactor(0).setDepth(100052);
     this.hudFx(g);
     for (let i = 0; i < 4; i++) { g.lineStyle(26 - i * 5, hexNum(color), 0.5 - i * 0.1); g.strokeRect(i * 3, i * 3, w - i * 6, h - i * 6); }
@@ -3442,7 +3454,7 @@ export class IsoScene extends Phaser.Scene {
     this.audio?.play(won ? 'sting_win' : 'sting_lose');
     this.audio?.vo([won ? 'vo_win' : 'vo_lose']);
     this.audio?.setPhase(won ? 'TITLE' : 'GAMEOVER');
-    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
+    const w = this.hudW(), h = this.hudH(), cx = w / 2, cy = h / 2;
     // Lane E — the victory newspaper is built from the pure report: the named win/loss, the four
     // telegraphed conditions ranked into a FINAL STANDING, and the deterministic "by the numbers".
     const report: VictoryReport = victoryReport(this.state);
@@ -3533,7 +3545,7 @@ export class IsoScene extends Phaser.Scene {
    * with — so the cursor always answers "what would committing here do?". Pure selectors do the work; this
    * only picks which one and passes the fog predicate (NO-X-RAY). */
   private resolveOpPreview(p: Phaser.Input.Pointer): void {
-    this.opCursor = { x: p.x, y: p.y };
+    this.opCursor = { x: this.hudX(p.x), y: this.hudY(p.y) }; // the preview card is fixed-HUD → logical coords
     // a HUD region owns this pixel (the tooltip explains it) — don't also pop a world preview over it.
     if (this.hudRegionExplain(p.x, p.y) !== null) { this.opPreview = undefined; return; }
     const isVis = (pos: { gx: number; gy: number }) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
@@ -3566,6 +3578,7 @@ export class IsoScene extends Phaser.Scene {
   /** RTS-23: the plain-English explanation for a HUD region under the cursor (the anti-Gangsters
    * fix — every number is inspectable). */
   private hudRegionExplain(sx: number, sy: number): string | null {
+    sx = this.hudX(sx); sy = this.hudY(sy); // screen → logical HUD space (UI-scale)
     for (const r of this.hudRegions) if (sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h) return r.explain;
     return null;
   }
@@ -3577,9 +3590,9 @@ export class IsoScene extends Phaser.Scene {
     this.tooltipText.setText(text).setVisible(true);
     const w = this.tooltipText.width + 16;
     const h = this.tooltipText.height + 12;
-    let x = p.x + 16, y = p.y + 16;
-    x = Math.min(x, this.scale.width - w - 6);
-    y = Math.min(y, this.scale.height - h - 6);
+    let x = this.hudX(p.x) + 16, y = this.hudY(p.y) + 16; // place in logical HUD space (UI-scale)
+    x = Math.min(x, this.hudW() - w - 6);
+    y = Math.min(y, this.hudH() - h - 6);
     this.tooltipBg.clear().setVisible(true);
     this.tooltipBg.fillStyle(PAL.ink, 0.92).fillRect(x, y, w, h);
     this.tooltipBg.lineStyle(1, PAL.brass, 0.8).strokeRect(x, y, w, h);
@@ -3680,7 +3693,7 @@ export class IsoScene extends Phaser.Scene {
    * Partitioned by the scene's long-standing convention (HUD = scrollFactor 0). */
   private setupUiCamera(): void {
     const main = this.cameras.main;
-    const ui = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+    const ui = this.cameras.add(0, 0, this.scale.width, this.scale.height); // viewport = full real screen
     ui.setName('ui');
     this.uiCam = ui;
     const hud: Phaser.GameObjects.GameObject[] = [];
@@ -3691,7 +3704,8 @@ export class IsoScene extends Phaser.Scene {
     }
     main.ignore(hud); // the HUD never zooms/pans with the world
     ui.ignore(world); // the world never renders on the fixed panel
-    this.scale.on('resize', () => ui.setSize(this.scale.width, this.scale.height));
+    this.scale.on('resize', () => { ui.setSize(this.scale.width, this.scale.height); this.applyUiScale(this.shellSettings.uiScale); });
+    this.applyUiScale(this.shellSettings.uiScale); // honour the persisted UI scale on boot (origin + zoom)
   }
 
   /** RTS-34 — the noir MOOD overlay: a soft dark VIGNETTE + a faint film-GRAIN, both on the fixed UI
@@ -3700,7 +3714,7 @@ export class IsoScene extends Phaser.Scene {
    * sprite jittered a few px/frame. ?fx=off (or toggleFx) removes it entirely. Soot/ink — never red. */
   private buildFxOverlay(): void {
     if (!this.fxEnabled) return;
-    const w = this.scale.width, h = this.scale.height;
+    const w = this.hudW(), h = this.hudH();
     const vig = this.add.graphics().setScrollFactor(0).setDepth(90000);
     this.drawVignette(vig, w, h);
     this.vignette = vig;
@@ -3708,7 +3722,7 @@ export class IsoScene extends Phaser.Scene {
     const grain = this.add.tileSprite(0, 0, w, h, 'lcr_grain').setOrigin(0, 0).setScrollFactor(0).setDepth(90001).setAlpha(0.05);
     this.grain = grain;
     this.hudFx(vig, grain); // UI-camera only (the create-time snapshot already passed)
-    this.scale.on('resize', () => { this.drawVignette(vig, this.scale.width, this.scale.height); grain.setSize(this.scale.width, this.scale.height); });
+    this.scale.on('resize', () => { this.drawVignette(vig, this.hudW(), this.hudH()); grain.setSize(this.hudW(), this.hudH()); });
   }
 
   /** A rectangular soft vignette: dark ink rings strongest at the edge, fading to nothing toward centre
@@ -3774,7 +3788,7 @@ export class IsoScene extends Phaser.Scene {
    * clickable CONFIRM / CANCEL buttons (keyboard [Y]/[Esc] do the same). Fixed-HUD camera, top depth. */
   private showRestartPrompt(): void {
     if (this.restartPrompt) return;
-    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
+    const w = this.hudW(), h = this.hudH(), cx = w / 2, cy = h / 2;
     const pw = 460, ph = 150;
     const backdrop = this.add.rectangle(0, 0, w, h, PAL.soot, 0.72).setOrigin(0, 0);
     const panel = this.add.rectangle(cx, cy, pw, ph, PAL.ink, 0.98).setStrokeStyle(2, PAL.brass, 0.95);
@@ -3845,7 +3859,7 @@ export class IsoScene extends Phaser.Scene {
     this.tweens.add({ targets: outline, alpha: 0, delay: 1700, duration: 1200, onComplete: () => outline.destroy() });
     // (B) fixed HUD cartouche — reads WHICH district + the scouting state, at any zoom.
     const txt = scouted ? `▣ ${d.name.toUpperCase()}` : `▣ ${d.name.toUpperCase()}\n— not yet scouted —`;
-    const card = this.mkText(this.scale.width / 2, 122, txt, {
+    const card = this.mkText(this.hudW() / 2, 122, txt, {
       fontFamily: NOIR_DISPLAY, fontSize: '16px', color: scouted ? NOIR_PALETTE.brass : NOIR_PALETTE.bone,
       fontStyle: 'bold', align: 'center', backgroundColor: '#14110fdd', padding: { x: 12, y: 6 },
     }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(100050);
@@ -4104,7 +4118,7 @@ export class IsoScene extends Phaser.Scene {
       this.crewRows.push(this.mkText(14, 0, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(100000));
     }
     // Mutiny telegraph banner (top-centre, under the objective) — legible, earned, with a countdown.
-    this.mutinyBanner = this.mkText(this.scale.width / 2, 60, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+    this.mutinyBanner = this.mkText(this.hudW() / 2, 60, '', { fontFamily: NOIR_FONT, fontSize: '15px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
     // RTS-24 THE MARKET tab (right dock, toggled with [M]) — rows of goods that narrate themselves.
     this.marketTitle = this.mkText(0, 0, 'THE MARKET  [M]', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
@@ -4117,7 +4131,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-16 turf-war standings (right side, under THE WIRE) + rival-pressure telegraph banner.
     this.strategyTitle = this.mkText(0, 196, 'THE CITY', { fontFamily: NOIR_DISPLAY, fontSize: '15px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
     this.strategyPanel = this.mkText(0, 216, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 2, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(100000);
-    this.pressureBanner = this.mkText(this.scale.width / 2, 84, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
+    this.pressureBanner = this.mkText(this.hudW() / 2, 84, '', { fontFamily: NOIR_FONT, fontSize: '14px', color: SPEC.danger, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100001).setVisible(false);
 
     // RTS-30b-ui — the clickable hotkey TOOLBAR replaces the text ACTION BOARD (actionTitle/actionBody
     // are intentionally NOT created now; refreshActionBoard early-returns). Every verb is a mouse button.
@@ -4133,7 +4147,7 @@ export class IsoScene extends Phaser.Scene {
     this.skipButton.on('pointerdown', () => this.skipWeek());
 
     // RTS-25 perf overlay ([P]) — top-centre, off by default. Real FPS + frame ms + rasterisations/s.
-    this.perfText = this.mkText(this.scale.width / 2, 6, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: '#7CFC8A', backgroundColor: '#000000cc' })
+    this.perfText = this.mkText(this.hudW() / 2, 6, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: '#7CFC8A', backgroundColor: '#000000cc' })
       .setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002).setPadding(6, 3, 6, 3).setVisible(false);
     this.refreshFastForward(); // initial label + placement
 
@@ -4164,7 +4178,7 @@ export class IsoScene extends Phaser.Scene {
    * open drawer's body. Reads sim/HUD state only; never resizes the world camera. */
   private refreshPanels(): void {
     if (!this.panels || !this.dossierG) return;
-    const W = this.scale.width, H = this.scale.height;
+    const W = this.hudW(), H = this.hudH();
     const hud = realtimeHudView(this.state, SCENE_WEEK_SECONDS);
     const pid = this.state.player.id;
     const earnDistricts = new Set<string>();
@@ -4233,6 +4247,7 @@ export class IsoScene extends Phaser.Scene {
 
   /** Resolve a click on the dossier strip → toggle that drawer. Returns true if it consumed the click. */
   private handleDossierClick(sx: number, sy: number): boolean {
+    sx = this.hudX(sx); sy = this.hudY(sy); // screen → logical HUD space (UI-scale)
     for (const h of this.dossierHits) {
       if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) { this.panels?.toggle(h.id); return true; }
     }
@@ -4259,7 +4274,7 @@ export class IsoScene extends Phaser.Scene {
       { id: 'recruit', group: 'build', icon: '＋', name: 'RECRUIT', hotkey: '6', run: () => this.commandRecruit(), tip: 'Hire muscle — defense, collection, and (at strength) hits.' },
     ];
     for (const d of defs) {
-      const label = this.mkText(0, this.scale.height - 44, `${d.icon} ${d.name} [${d.hotkey}]`, {
+      const label = this.mkText(0, this.hudH() - 44, `${d.icon} ${d.name} [${d.hotkey}]`, {
         fontFamily: NOIR_DISPLAY, fontSize: '12px', color: NOIR_PALETTE.bone, fontStyle: 'bold', backgroundColor: '#0a0807ee',
       }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(100002).setPadding(7, 5, 7, 5).setInteractive({ useHandCursor: true });
       const btn: ToolbarButton = { ...d, label };
@@ -4317,15 +4332,15 @@ export class IsoScene extends Phaser.Scene {
     // centre the visible row along the bottom (positions only — no raster)
     const gap = 6;
     let total = 0; for (const b of visible) total += b.label.width + gap; total = Math.max(0, total - gap);
-    let x = this.scale.width / 2 - total / 2;
-    const y = this.scale.height - 44;
+    let x = this.hudW() / 2 - total / 2;
+    const y = this.hudH() - 44;
     for (const b of visible) { b.label.setPosition(x + b.label.width / 2, y); x += b.label.width + gap; }
   }
 
   private showToolbarTip(b: ToolbarButton): void {
     if (!this.toolbarTip) return;
     this.setT(this.toolbarTip, `${b.name} [${b.hotkey}] — ${b.tip}`);
-    const tx = Phaser.Math.Clamp(b.label.x, 170, this.scale.width - 170);
+    const tx = Phaser.Math.Clamp(b.label.x, 170, this.hudW() - 170);
     this.toolbarTip.setPosition(tx, b.label.y - b.label.height - 8).setVisible(true);
     // POLISH v2 · PKG5 — the inspector tip SNAPS open (panelReveal eases scale 0.92→1 + alpha 0→1).
     const from = panelReveal(0), to = panelReveal(1);
@@ -4344,7 +4359,7 @@ export class IsoScene extends Phaser.Scene {
       const hit = this.add.rectangle(0, 0, 44, 44, 0x000000, 0.001).setOrigin(0, 0).setScrollFactor(0).setDepth(100043).setVisible(false).setInteractive({ useHandCursor: true });
       const slot: ActionChipSlot = { icon, tab, hit, enabled: false, reason: '' };
       hit.on('pointerdown', () => { this.toolbarClick = true; if (slot.verb && slot.enabled) this.runVerb(slot.verb); else if (slot.verb) { const insp = buildActionInspector(this.state, slot.verb, this.inspectorCtx()); this.setStatus(`${insp.title} — ${insp.nextStep ?? slot.reason}`); } });
-      hit.on('pointerover', () => { if (slot.verb && this.actionTip) this.setT(this.actionTip, this.inspectorTipText(slot.verb)).setPosition(Phaser.Math.Clamp(icon.x + 22, 170, this.scale.width - 170), icon.y - 8).setVisible(true); });
+      hit.on('pointerover', () => { if (slot.verb && this.actionTip) this.setT(this.actionTip, this.inspectorTipText(slot.verb)).setPosition(Phaser.Math.Clamp(icon.x + 22, 170, this.hudW() - 170), icon.y - 8).setVisible(true); });
       hit.on('pointerout', () => this.actionTip?.setVisible(false));
       this.actionChips.push(slot);
     }
@@ -4444,6 +4459,8 @@ export class IsoScene extends Phaser.Scene {
       this.marqueeGfx = this.add.graphics().setScrollFactor(0).setDepth(100220);
       this.hudFx(this.marqueeGfx);
     }
+    // the box renders on the fixed HUD camera → draw it in logical coords so it tracks the cursor under UI-scale.
+    x0 = this.hudX(x0); x1 = this.hudX(x1); y0 = this.hudY(y0); y1 = this.hudY(y1);
     const x = Math.min(x0, x1), y = Math.min(y0, y1), w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
     const brass = hexNum(SPEC.brass);
     this.marqueeGfx.clear().setVisible(true)
@@ -4485,7 +4502,7 @@ export class IsoScene extends Phaser.Scene {
         .setOrigin(0, 1).setScrollFactor(0).setDepth(100052);
       this.hudFx(this.selCountText);
     }
-    this.selCountText.setPosition(12, this.scale.height - 162)
+    this.selCountText.setPosition(12, this.hudH() - 162)
       .setText(n > 1 ? `${n} SELECTED` : '').setVisible(n > 1);
   }
 
@@ -4500,8 +4517,9 @@ export class IsoScene extends Phaser.Scene {
     this.collectorInfoId = u.id;
     const sp = unitScreenPos(u);
     const wv = this.cameras.main.worldView, z = this.cameras.main.zoom;
-    const sx = (sp.x - wv.x) * z, sy = (sp.y - wv.y) * z;
-    this.collectorInfo.setPosition(Phaser.Math.Clamp(sx, 120, this.scale.width - 120), Phaser.Math.Clamp(sy - 22, 60, this.scale.height - 12))
+    // world→real-screen via the main camera, then →logical HUD (÷ uiScale) since this label is on the uiCam.
+    const sx = (sp.x - wv.x) * z / this.uiScaleFactor, sy = (sp.y - wv.y) * z / this.uiScaleFactor;
+    this.collectorInfo.setPosition(Phaser.Math.Clamp(sx, 120, this.hudW() - 120), Phaser.Math.Clamp(sy - 22, 60, this.hudH() - 12))
       .setText(this.collectorInfoText(u)).setVisible(true);
   }
 
@@ -4527,7 +4545,8 @@ export class IsoScene extends Phaser.Scene {
     if (!u) { this.hideCollectorInfo(); return; }
     const sp = unitScreenPos(u);
     const wv = this.cameras.main.worldView, z = this.cameras.main.zoom;
-    this.collectorInfo.setPosition(Phaser.Math.Clamp((sp.x - wv.x) * z, 120, this.scale.width - 120), Phaser.Math.Clamp((sp.y - wv.y) * z - 22, 60, this.scale.height - 12))
+    const lx = (sp.x - wv.x) * z / this.uiScaleFactor, ly = (sp.y - wv.y) * z / this.uiScaleFactor; // →logical HUD
+    this.collectorInfo.setPosition(Phaser.Math.Clamp(lx, 120, this.hudW() - 120), Phaser.Math.Clamp(ly - 22, 60, this.hudH() - 12))
       .setText(this.collectorInfoText(u));
   }
 
@@ -4548,7 +4567,7 @@ export class IsoScene extends Phaser.Scene {
       ? multiSelectChips(this.state, ctxs, ctxs[0])
       : unitActionChips(this.state, ctxs[0]);
     const patrolling = selViews.every((v) => !!v.unit.patrol); // ACTIVE stance = the WHOLE selection is on patrol
-    const size = 44, gap = 6, x0 = 12, y = this.scale.height - 150;
+    const size = 44, gap = 6, x0 = 12, y = this.hudH() - 150;
     chips.forEach((ch, i) => {
       const s = this.actionChips[i];
       const cx = x0 + i * (size + gap);
@@ -4617,7 +4636,7 @@ export class IsoScene extends Phaser.Scene {
       const ms = (deltaMs).toFixed(1);
       const life = this.ambient ? ` · life ${this.ambient.pedCount}p/${this.ambient.carCount}c` : '';
       this.setT(this.perfText, `FPS ${fps} · frame ${ms}ms · text-raster ${this.rasterPerSec}/s${life} · DPR ${this.textRes}`)
-        .setPosition(this.scale.width / 2, 6);
+        .setPosition(this.hudW() / 2, 6);
     }
   }
 
@@ -4625,7 +4644,7 @@ export class IsoScene extends Phaser.Scene {
    * the district nameplates by who holds them (brass = you, rival-red = a rival, fog = neutral). */
   private refreshStrategy(): void {
     if (!this.strategyPanel || !this.strategyTitle || !this.pressureBanner) return;
-    const right = this.scale.width - 18;
+    const right = this.hudW() - 18;
     const standing = cityStanding(this.state);
     // RTS-34 — the COMPASS hero line: one read of where you're heading + the top threat.
     if (this.compassText) {
@@ -4694,7 +4713,7 @@ export class IsoScene extends Phaser.Scene {
     const onPlayer = telegraphedPushes(this.state).find((t) => t.onPlayer);
     if (onPlayer) {
       this.setT(this.pressureBanner, `⚔ ${onPlayer.familyName.toUpperCase()} IS PUSHING INTO ${onPlayer.districtName.toUpperCase()} — DEFEND OR GREASE CITY HALL`)
-        .setPosition(this.scale.width / 2, 106).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(this.time.now / 300)));
+        .setPosition(this.hudW() / 2, 106).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(this.time.now / 300)));
     } else {
       this.pressureBanner.setVisible(false);
     }
@@ -4721,8 +4740,8 @@ export class IsoScene extends Phaser.Scene {
       lines.push(`${mark} [${o.hotkey}] ${o.label.padEnd(9)} $${o.cost}${heat}  ${st}${tail}`);
     }
     const margin = 18;
-    const bottom = this.scale.height - 12;
-    const x = this.scale.width - margin;
+    const bottom = this.hudH() - 12;
+    const x = this.hudW() - margin;
     this.setT(this.actionBody, lines.join('\n')).setPosition(x, bottom);
     const titleY = bottom - this.actionBody.height - 2;
     this.actionTitle.setPosition(x, titleY).setVisible(!this.marketOpen);
@@ -4772,7 +4791,7 @@ export class IsoScene extends Phaser.Scene {
     if (primed && primed !== this.lastMutinyName) this.audio?.mutiny();
     this.lastMutinyName = primed;
     const now = this.time.now;
-    const baseY = this.scale.height - 30 - rows.length * 18;
+    const baseY = this.hudH() - 30 - rows.length * 18;
     this.crewTitle.setPosition(12, baseY - 18).setVisible(this.crewVisible);
 
     let mostUrgent: { name: string } | null = null;
@@ -4811,7 +4830,7 @@ export class IsoScene extends Phaser.Scene {
       if (mostUrgent && this.crewVisible) {
         const countdown = realtimeHudView(this.state, SCENE_WEEK_SECONDS).weekCountdownLabel;
         this.setT(this.mutinyBanner, `⚠ ${mostUrgent.name.toUpperCase()} READY TO BETRAY — ACT NOW  (settles in ${countdown})`)
-          .setPosition(this.scale.width / 2, 130).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 300)));
+          .setPosition(this.hudW() / 2, 130).setVisible(true).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 300)));
       } else {
         this.mutinyBanner.setVisible(false);
       }
@@ -4825,7 +4844,7 @@ export class IsoScene extends Phaser.Scene {
     const p = hud.player;
     const danger = anyCollectorInDanger(this.state);
     const net = playerWeeklyNet(this.state);
-    const W = this.scale.width, now = this.time.now;
+    const W = this.hudW(), now = this.time.now;
     g.clear();
     this.hudRegions = [];
 
@@ -4913,7 +4932,7 @@ export class IsoScene extends Phaser.Scene {
     const warn = p.federalTier > 0 ? this.fedLine(p.federalTier) : danger ? 'A COLLECTOR IS UNDER THREAT — get it to HQ' : null;
     if (this.warningBanner) {
       this.warningBanner.setVisible(!!warn);
-      if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.scale.height - 26 - 30).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280))); // HUD PHASE 1 — above the dossier strip
+      if (warn) this.setT(this.warningBanner, `⚠ ${warn}`).setPosition(12, this.hudH() - 26 - 30).setAlpha(0.7 + 0.3 * Math.abs(Math.sin(now / 280))); // HUD PHASE 1 — above the dossier strip
     }
     this.detectHudBeats(p, phase.phase);
     this.lastHeat = p.federalExposure; // for the next frame's heat-direction arrow
@@ -5055,7 +5074,7 @@ export class IsoScene extends Phaser.Scene {
     const w = 268, x = 12;
     // Prefer a business under the cursor (only over the world, not the HUD panels).
     const ptr = this.input.activePointer;
-    const overWorld = ptr.y > 60 && ptr.x < this.scale.width - 320 && ptr.y < this.scale.height - 96;
+    const overWorld = this.hudY(ptr.y) > 60 && this.hudX(ptr.x) < this.hudW() - 320 && this.hudY(ptr.y) < this.hudH() - 96;
     // RTS-28: hovered building takes priority; otherwise the STICKY left-clicked building (focusBizId).
     const hovered = overWorld ? this.businessAtScreen(ptr.worldX, ptr.worldY) : undefined;
     const bizId = hovered ?? (this.focusBizId && allBusinesses(this.state).some((bb) => bb.id === this.focusBizId) ? this.focusBizId : undefined);
@@ -5069,7 +5088,7 @@ export class IsoScene extends Phaser.Scene {
         // cost · yield-Δ · heat-Δ · READY/CONDITIONAL/LOCKED (with the plain locked reason).
         const ladder = viceLadder(this.state, bizId);
         const viceLine = this.viceLadderLine(ladder);
-        const h = viceLine ? 98 : 84, y = this.scale.height - h - 12;
+        const h = viceLine ? 98 : 84, y = this.hudH() - h - 12;
         this.decoFrame(g, x, y, w, h);
         const shut = isShutDown(raw);
         const state = shut ? 'SHUT DOWN' : b.payingProtection ? 'YOURS — paying' : b.earnerName ? `${b.earnerName}'s` : 'un-shaken';
@@ -5094,7 +5113,7 @@ export class IsoScene extends Phaser.Scene {
     const view = id ? this.units.find((u) => u.unit.id === id) : undefined;
     const insp = id ? inspectUnit(this.state, id) : null;
     if (!view || !insp) { this.ctxCardTitle.setVisible(false); this.ctxCardBody.setVisible(false); return; }
-    const h = 76, y = this.scale.height - h - 12;
+    const h = 76, y = this.hudH() - h - 12;
     this.decoFrame(g, x, y, w, h);
     const member = crewReadout(this.state.player).find((m) => m.id === id);
     const role = view.unit.role === 'collector' ? 'collector' : view.faction === 'player' ? 'button man' : 'rival';
@@ -5124,7 +5143,7 @@ export class IsoScene extends Phaser.Scene {
    * supply↔demand read · held), the selected good marked, and a live BUY/SELL preview with spread. */
   private drawMarket(g: Phaser.GameObjects.Graphics): void {
     if (!this.marketTitle || !this.marketBody || !this.marketOpen) return;
-    const right = this.scale.width - 18;
+    const right = this.hudW() - 18;
     const rows = marketRows(this.state);
     if (this.marketSel >= rows.length) this.marketSel = 0;
     // RTS-28: THE MARKET cleanly REPLACES the right dock (The Wire + The City + Actions are hidden
@@ -5239,7 +5258,7 @@ export class IsoScene extends Phaser.Scene {
   private static readonly AUDIO_BUSES: (keyof import('./audio').AudioSettings)[] = ['master', 'music', 'sfx', 'vo', 'ambience'];
 
   private buildAudioPanel(): void {
-    this.audioPanel = this.mkText(12, this.scale.height - 140, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807dd', lineSpacing: 3 })
+    this.audioPanel = this.mkText(12, this.hudH() - 140, '', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, backgroundColor: '#0a0807dd', lineSpacing: 3 })
       .setOrigin(0, 1).setScrollFactor(0).setDepth(200002).setPadding(8, 6, 8, 6).setVisible(false);
     this.refreshAudioPanel();
   }
@@ -5295,7 +5314,8 @@ export class IsoScene extends Phaser.Scene {
       audio: this.audio,
       register: (o) => this.hudFx(o),
       onKeybindsChange: (m) => { this.keybinds = m; },          // the dispatcher reads this live
-      onSettingsChange: (s) => this.applyDisplaySettings(s),    // shake/lighting live
+      onSettingsChange: (s) => this.applyDisplaySettings(s),    // shake/lighting/ui-scale live
+      uiScale: () => this.uiScaleFactor,                        // the panel lays out/hit-tests in logical coords
       depth: 150000,
     });
     this.pauseMenu = new PauseOverlay({
@@ -5340,6 +5360,29 @@ export class IsoScene extends Phaser.Scene {
     this.shellSettings = s;
     this.shakeScale = s.screenShake ? 1 : 0;
     this.lightingHigh = s.lighting === 'high';
+    this.applyUiScale(s.uiScale);
+  }
+
+  // ── Floor polish — USER UI-SCALE (HUD/UI only; world + sim untouched) ───────────────────────────
+  /** Logical HUD width/height = real screen ÷ uiScale. ALL HUD layout + hit-testing uses these, and the
+   * fixed HUD camera (uiCam) zooms by uiScale from the top-left, so the panel always fills the screen and
+   * clicks line up with the visuals at any scale. */
+  private hudW(): number { return this.scale.width / this.uiScaleFactor; }
+  private hudH(): number { return this.scale.height / this.uiScaleFactor; }
+  /** Screen pointer → LOGICAL HUD coords (uiCam zooms from origin 0,0, so it's a plain divide). */
+  private hudX(px: number): number { return px / this.uiScaleFactor; }
+  private hudY(py: number): number { return py / this.uiScaleFactor; }
+
+  /** Apply the user UI-scale to the fixed HUD camera ONLY (origin top-left so the HUD anchors at (0,0) and
+   * the logical layout fills the screen). The world/main camera + sim are never touched. Re-applied on boot,
+   * settings change, and resize; redraws the FX vignette to the new logical size. */
+  private applyUiScale(scale: number): void {
+    this.uiScaleFactor = Math.max(0.5, Math.min(2, scale || 1));
+    if (!this.uiCam) return;
+    this.uiCam.setZoom(this.uiScaleFactor);
+    this.uiCam.setOrigin(0, 0);
+    if (this.vignette) this.drawVignette(this.vignette, this.hudW(), this.hudH());
+    this.panels?.layout(); // re-anchor the dossier drawer to the new logical viewport
   }
 
   /** Camera shake routed through the screen-shake setting: scales AMPLITUDE only (0 disables the shake).
@@ -5378,7 +5421,7 @@ export class IsoScene extends Phaser.Scene {
   private refreshPausedBanner(): void {
     if (this.pause.paused && !this.pauseMenu?.isOpen()) {
       if (this.pausedBanner) return;
-      const cx = this.scale.width / 2, y = 110;
+      const cx = this.hudW() / 2, y = 110;
       const strip = this.add.rectangle(cx, y, 320, 46, PAL.ink, 0.86).setStrokeStyle(2, PAL.brass, 0.9);
       const label = this.mkText(cx, y, '⏸  PAUSED', { fontFamily: NOIR_DISPLAY, fontSize: '22px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0.5);
       const hint = this.mkText(cx, y + 24, '[Space] resume', { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone }).setOrigin(0.5, 0.5);
@@ -5447,7 +5490,7 @@ export class IsoScene extends Phaser.Scene {
    * and file export/import. Rebuilt fresh each open so the slot list is current. */
   private buildSaveMenu(): void {
     this.closeSaveMenu();
-    const w = this.scale.width, h = this.scale.height, cx = w / 2, cy = h / 2;
+    const w = this.hudW(), h = this.hudH(), cx = w / 2, cy = h / 2;
     const pw = 460, ph = 380, px = cx - pw / 2, py = cy - ph / 2;
     const objs: Phaser.GameObjects.GameObject[] = [];
     const backdrop = this.add.rectangle(0, 0, w, h, PAL.soot, 0.7).setOrigin(0, 0).setInteractive();
@@ -5579,8 +5622,8 @@ export class IsoScene extends Phaser.Scene {
   private drawMinimap(now: number): void {
     if (!this.minimapG) { this.minimapG = this.add.graphics().setScrollFactor(0).setDepth(100040); this.hudFx(this.minimapG); }
     const r = this.minimapRect;
-    r.x = this.scale.width - r.w - 12;
-    r.y = this.scale.height - r.h - 12;
+    r.x = this.hudW() - r.w - 12;
+    r.y = this.hudH() - r.h - 12;
     const g = this.minimapG;
     g.clear();
     g.fillStyle(hexNum(SPEC.soot), 0.82).fillRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
@@ -5632,7 +5675,7 @@ export class IsoScene extends Phaser.Scene {
     const g = this.edgeAlertG;
     g.clear();
     this.edgeAlertHits = [];
-    const W = this.scale.width, H = this.scale.height;
+    const W = this.hudW(), H = this.hudH();
     for (const a of this.alerts) {
       const c = gridToScreen(a.gx, a.gy);
       const sp = this.worldToScreenPx(c.x, c.y);
@@ -5863,8 +5906,8 @@ export class IsoScene extends Phaser.Scene {
     const cardH = padY * 2 + lines.length * rowH;
     // place to the lower-right of the cursor, clamped on-screen.
     let x = this.opCursor.x + 18, y = this.opCursor.y + 14;
-    x = Math.min(x, this.scale.width - cardW - 8);
-    y = Math.min(y, this.scale.height - cardH - 8);
+    x = Math.min(x, this.hudW() - cardW - 8);
+    y = Math.min(y, this.hudH() - cardH - 8);
 
     const bg = this.add.graphics().setScrollFactor(0);
     bg.fillStyle(PAL.ink, 0.92).fillRect(x, y, cardW, cardH);
@@ -5881,6 +5924,7 @@ export class IsoScene extends Phaser.Scene {
 
   /** Resolve a HUD click on the minimap / a log row / an edge arrow. Returns true if it consumed the click. */
   private handleInfoClick(sx: number, sy: number): boolean {
+    sx = this.hudX(sx); sy = this.hudY(sy); // screen → logical HUD space (UI-scale)
     for (const h of this.edgeAlertHits) {
       if (Math.hypot(sx - h.x, sy - h.y) <= h.r) { this.jumpToTile(h.gx, h.gy); this.wireLog = markRead(this.wireLog, h.id); this.alerts = this.alerts.filter((a) => a.id !== h.id); return true; }
     }
@@ -5924,7 +5968,7 @@ export class IsoScene extends Phaser.Scene {
   /** Position + label the FF/skip controls (bottom-centre, always visible). */
   private refreshFastForward(): void {
     if (!this.ffButton || !this.skipButton) return;
-    const cy = this.scale.height - 12 - 30, cx = this.scale.width / 2; // HUD PHASE 1 — clear the 28px dossier strip
+    const cy = this.hudH() - 12 - 30, cx = this.hudW() / 2; // HUD PHASE 1 — clear the 28px dossier strip
     const glyph = this.timeScale === 1 ? '▶' : this.timeScale === 2 ? '▶▶' : '▶▶▶';
     this.setT(this.ffButton, `${glyph} ${this.timeScale}× SPEED`).setColor(this.timeScale > 1 ? SPEC.cashGreen : NOIR_PALETTE.brass)
       .setPosition(cx - this.ffButton.width / 2 - 6, cy);
@@ -5945,7 +5989,7 @@ export class IsoScene extends Phaser.Scene {
     const meta = labels[phase] ?? { title: phase, sub: '' };
     const danger = phase === 'DECAPITATE';
     const accent = danger ? hexNum(SPEC.danger) : PAL.brass;
-    const cx = this.scale.width / 2, cy = 134, cardW = 440, cardH = 78;
+    const cx = this.hudW() / 2, cy = 134, cardW = 440, cardH = 78;
     const card = this.add.graphics().setScrollFactor(0).setDepth(100001).setAlpha(0);
     card.fillStyle(PAL.ink, 0.9).fillRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH);
     this.decoFrame(card, cx - cardW / 2, cy - cardH / 2, cardW, cardH, accent, 0.9);
@@ -5964,7 +6008,7 @@ export class IsoScene extends Phaser.Scene {
     if (!this.klaxon) return;
     this.klaxon.clear();
     if (!on) return;
-    const w = this.scale.width, h = this.scale.height;
+    const w = this.hudW(), h = this.hudH();
     const a = 0.2 + 0.35 * Math.abs(Math.sin(this.time.now / 250));
     for (let i = 0; i < 5; i++) {
       this.klaxon.lineStyle(30 - i * 5, hexNum(SPEC.danger), a * (0.1 + i * 0.05));
@@ -5998,8 +6042,8 @@ export class IsoScene extends Phaser.Scene {
 
   private refreshFeed(): void {
     if (!this.feedVisible || this.feedLines.length === 0) return;
-    const right = this.scale.width - 18;
-    const dotX = this.scale.width - 300; // category-dot column at the panel's left edge (§4)
+    const right = this.hudW() - 18;
+    const dotX = this.hudW() - 300; // category-dot column at the panel's left edge (§4)
     const flashing = this.time.now < this.wireFlashUntil;
     // §4: unread "NEEDS YOU" count — danger/warning incidents past what the player last focused.
     const unread = this.state.incidents.filter((r) => r.seq > this.lastSeenWireSeq && incidentNeedsYou(r.severity)).length;
@@ -6041,8 +6085,9 @@ export class IsoScene extends Phaser.Scene {
   private buildLegend(): void {
     // B2 — size the panel to its CONTENT so text never overflows the border. We measure the title/body/hint
     // blocks (body wrapped to the viewport so long lines never exceed it), fit a panel around them, then — if
-    // the fitted panel is taller than the screen — scale the whole overlay down so it always fits.
-    const VW = this.scale.width, VH = this.scale.height;
+    // the fitted panel is taller than the screen — scale the whole overlay down so it always fits. Uses the
+    // LOGICAL HUD dims (hudW/hudH) so it's correct under the UI-scale option (#37).
+    const VW = this.hudW(), VH = this.hudH();
     const cx = VW / 2, cy = VH / 2;
     const padX = 30, padY = 22, gap = 10;
     const wrapW = Math.min(760, VW - 64) - padX * 2; // body wraps within the viewport (no horizontal overflow)
@@ -6089,6 +6134,6 @@ export class IsoScene extends Phaser.Scene {
   private toggleLegend(): void {
     if (this.legend?.visible) this.hideLegend(); else this.showLegend();
   }
-  private showLegend(): void { this.legend?.setPosition(this.scale.width / 2, this.scale.height / 2).setVisible(true); }
+  private showLegend(): void { this.legend?.setPosition(this.hudW() / 2, this.hudH() / 2).setVisible(true); }
   private hideLegend(): void { this.legend?.setVisible(false); }
 }

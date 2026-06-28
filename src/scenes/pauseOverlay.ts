@@ -57,24 +57,31 @@ export class PauseOverlay {
     this.root.destroy(true);
   }
 
+  /** The fixed-HUD-camera zoom (user UI-scale). The overlay renders on it, so it lays out + hit-tests in
+   * LOGICAL coords (real ÷ uiScale). 1 when there is no UI camera (e.g. the menu / tests). */
+  private uiZoom(): number { const c = this.scene.cameras.getCamera('ui'); return c ? c.zoom : 1; }
+
   /** True when a fixed-HUD point is inside the open card (host swallows world clicks under it). */
   capturesPointer(px: number, py: number): boolean {
     if (!this.open) return false;
     const r = this.cardRect();
-    return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+    const z = this.uiZoom(), lx = px / z, ly = py / z;
+    return lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h;
   }
 
   private onPointerDown(p: Phaser.Input.Pointer): void {
     if (!this.open) return;
-    for (const z of this.zones) {
-      if (p.x >= z.x && p.x <= z.x + z.w && p.y >= z.y && p.y <= z.y + z.h) { z.onDown(); return; }
+    const z = this.uiZoom(), lx = p.x / z, ly = p.y / z; // screen → logical HUD space (UI-scale)
+    for (const zone of this.zones) {
+      if (lx >= zone.x && lx <= zone.x + zone.w && ly >= zone.y && ly <= zone.y + zone.h) { zone.onDown(); return; }
     }
   }
 
   private cardRect(): { x: number; y: number; w: number; h: number } {
     const rows = this.confirmQuit ? 4 : 4; // title + 3 buttons (or title + warn + 2)
     const h = 40 + rows * 52 + 24;
-    return { x: Math.round(this.scene.scale.width / 2 - CARD_W / 2), y: Math.round(this.scene.scale.height / 2 - h / 2), w: CARD_W, h };
+    const z = this.uiZoom(); // centre on the LOGICAL screen so the card sits centred once the HUD camera zooms it
+    return { x: Math.round(this.scene.scale.width / z / 2 - CARD_W / 2), y: Math.round(this.scene.scale.height / z / 2 - h / 2), w: CARD_W, h };
   }
 
   private clearTexts(): void { for (const t of this.texts) t.destroy(); this.texts = []; }
@@ -104,7 +111,8 @@ export class PauseOverlay {
     this.clearTexts();
     this.zones = [];
     this.g.clear();
-    const W = this.scene.scale.width, H = this.scene.scale.height;
+    const z = this.uiZoom(); // logical backdrop (real ÷ uiScale) still covers the full screen once zoomed
+    const W = this.scene.scale.width / z, H = this.scene.scale.height / z;
     this.g.fillStyle(PAL.soot, 0.6).fillRect(0, 0, W, H);
     const r = this.cardRect();
     this.g.fillStyle(PAL.ink, 0.97).fillRect(r.x, r.y, r.w, r.h);
