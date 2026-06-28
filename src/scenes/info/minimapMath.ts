@@ -30,6 +30,30 @@ export function isInMinimap(px: number, py: number, rect: MiniRect): boolean {
   return px >= rect.x && px <= rect.x + rect.w && py >= rect.y && py <= rect.y + rect.h;
 }
 
+/**
+ * The camera's visible-world QUAD → an axis-aligned minimap rectangle (B5 — the POV box). The camera viewport
+ * is an axis-aligned rectangle in iso SCREEN space, which projects to a DIAMOND in grid space — so its four
+ * corners (passed in as grid tiles) must ALL be bounded. Using just two opposite corners collapses the box to
+ * a near-degenerate LINE (the playtest bug). Returns the bounding rect in minimap pixels. Pure.
+ */
+export function cameraViewportRect(
+  corners: readonly { gx: number; gy: number }[],
+  rect: MiniRect,
+  worldSize: number,
+): MiniRect {
+  if (corners.length === 0) return { x: rect.x, y: rect.y, w: 0, h: 0 };
+  let minGx = Infinity, minGy = Infinity, maxGx = -Infinity, maxGy = -Infinity;
+  for (const c of corners) {
+    if (c.gx < minGx) minGx = c.gx;
+    if (c.gx > maxGx) maxGx = c.gx;
+    if (c.gy < minGy) minGy = c.gy;
+    if (c.gy > maxGy) maxGy = c.gy;
+  }
+  const a = worldToMinimap(minGx, minGy, rect, worldSize);
+  const b = worldToMinimap(maxGx, maxGy, rect, worldSize);
+  return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+}
+
 export type ControlStatus = 'player' | 'rival' | 'neutral' | 'contested';
 
 /** District-control fill colour, REUSING the SPEC palette: player brass, rival STATIC #9E1B1B, neutral
