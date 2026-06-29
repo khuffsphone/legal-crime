@@ -273,6 +273,7 @@ import { DossierPanel } from './ui/dossierPanel';
 // Lane — STATUS DASHBOARD: the at-a-glance threat/economy summary (pure view-model; rendered on the fixed HUD).
 import { buildStatusDashboard, type DashboardTone } from './ui/statusDashboard';
 import { districtStatus } from '../sim';
+import { tipRegion } from './ui/tooltips'; // Lane — contextual HUD tooltips (feeds the existing one renderer)
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
 import { metaFor, combatEventKind, extortionEventKind, captureEventKind, bribeEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
@@ -3999,6 +4000,7 @@ export class IsoScene extends Phaser.Scene {
     this.refreshObjective();
     if (!this.hudCollapsed) { this.refreshFeed(); this.refreshCrew(); } // HUD PHASE 1 — legacy side panels retired
     this.refreshPanels(); // HUD PHASE 1 — the dossier strip + the open drawer's body
+    this.registerHudTooltips(); // Lane — contextual tooltips: hover explanations for the dossier chips + advisor
     this.refreshStrategy();
     this.refreshToolbar(); // RTS-30b-ui: clickable hotkey toolbar (states + progressive disclosure)
     this.refreshActionCard(); // RTS-30c-2b: the selected-unit action-icon chips
@@ -4220,6 +4222,26 @@ export class IsoScene extends Phaser.Scene {
       this.dossierHits.push({ x: x - 6, y, w, h: stripH, id: chip.id });
       x += w + 6;
     }
+  }
+
+  /**
+   * Lane — CONTEXTUAL TOOLTIPS. Additively register hover zones for the HUD elements the existing ledger-bar
+   * tooltips don't already explain — the CONSIGLIERE advisor toast and the bottom dossier-strip chips —
+   * feeding the SAME one renderer (hudRegions → hudRegionExplain → the shared tooltipBg/tooltipText). Called
+   * from update() AFTER refreshHud() (which resets hudRegions) and refreshPanels() (which rebuilds dossierHits),
+   * so the zones survive the frame and use this frame's chip rects. Registration only — no layout changes.
+   */
+  private registerHudTooltips(): void {
+    const add = (x: number, y: number, w: number, h: number, key: string): void => {
+      const r = tipRegion(x, y, w, h, key);
+      if (r) this.hudRegions.push(r);
+    };
+    // CONSIGLIERE advisor toast — only when a suggestion is showing (mirrors drawAdvisor's mount at 12,240).
+    if (this.advisorTop) add(10, 236, 312, 64, 'consigliere');
+    // the bottom dossier-strip chips — one tip per drawer toggle, from their live click rects.
+    for (const hit of this.dossierHits) add(hit.x, hit.y, hit.w, hit.h, `dossier.${hit.id}`);
+    // the legacy inline WIRE header, only when the expanded HUD actually shows it.
+    if (!this.hudCollapsed) add(12, 60, 200, 22, 'wire');
   }
 
   /** The (scaffold) body lines for an open drawer. Wire shows trivial real log data; the rest are labelled
