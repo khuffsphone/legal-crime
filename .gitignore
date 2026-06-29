@@ -2,3 +2,9 @@ node_modules/
 dist/
 *.log
 .DS_Store
+# Blender render scratch (per-frame cells before they're packed into the sheets)
+public/assets/sprites/units/_tmp_frames/
+tools/blender/*.blend
+tools/blender/*.blend1
+__pycache__/
+*.pyc

@@ -302,12 +302,17 @@ import {
   conductorIntensity, conductWithHysteresis, initConductor, isIntensityBed, type ConductorState,
 } from './audio/conductorIntensity';
 import {
-  advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, type RigPose,
+  advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, FIGURE_PX, type RigPose,
 } from './gait';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
 import { hottestChannel, type GreasePressure } from './greaseTargets';
 import { drawThugFig2 } from './figureDraw2';
 import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
+// ?sprites — the OPT-IN 3D-rendered iso sprite-sheet view for the thug (procedural figure stays the
+// authoritative fallback). Pure flag/state/facing math + Phaser loader/animator/view.
+import { spritesRequested, spriteScaleParam, spriteDisplayScale } from './render/unitSpriteState';
+import { preloadUnitSprites, registerUnitAnims, THUG_SPRITE_CONFIG } from './render/unitSpriteLoader';
+import { ensureUnitSprite, driveUnitSprite } from './render/unitSpriteView';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -449,6 +454,7 @@ interface UnitView {
   hpBar?: Phaser.GameObjects.Graphics; // COMBAT READABILITY — the small over-unit health bar (lazy)
   // RTS-32 procedural rig (thug-role units only): the live-posed articulated figure + its gait clock.
   rig?: Phaser.GameObjects.Graphics;       // the posed silhouette (CLOSE/MID); undefined for un-rigged roles
+  spriteSheet?: Phaser.GameObjects.Sprite; // ?sprites — the 3D-rendered iso atlas view (opt-in; thug only)
   rigDebug?: Phaser.GameObjects.Graphics;  // ?debugRig=1 joint/plant overlay
   rigText?: Phaser.GameObjects.Text;       // ?debugRig=1 phase + state readout
   gaitPhase?: number; // 0..1 — DISTANCE-driven gait clock (the anti-skate keystone)
@@ -693,6 +699,11 @@ export class IsoScene extends Phaser.Scene {
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
+  // ?sprites — opt-in 3D iso atlas swap (default OFF). spriteSheetReady gates it on the sheets loading.
+  private spritesEnabled = spritesRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
+  private spriteScaleMul = spriteScaleParam(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
+  private spriteSheetReady = false;
+  private spriteScale = 0.25; // display scale (manifest figurePxH → FIGURE_PX), recomputed in create()
   private grain?: Phaser.GameObjects.TileSprite;
   // FIGURE-STYLE v2 (?fig2 A/B proof — THUG): swap the default thug rig for the upgraded iconic noir
   // silhouette (figureDraw2). OFF by default — nothing changes unless flagged. ?figscale=N (dev knob, ~56/
@@ -793,6 +804,8 @@ export class IsoScene extends Phaser.Scene {
   preload(): void {
     // RTS-27: register the audio library for loading (missing clips 404 → graceful no-op).
     AudioManager.preload(this);
+    // ?sprites — queue the thug iso sheets + manifest (missing → graceful no-op, procedural stays up).
+    if (this.spritesEnabled) preloadUnitSprites(this, THUG_SPRITE_CONFIG);
   }
 
   create(): void {
@@ -802,6 +815,16 @@ export class IsoScene extends Phaser.Scene {
     buildCityTextures(this);
     const cam = this.cameras.main;
     cam.setBackgroundColor(PAL.soot);
+
+    // ?sprites — register the 3D iso atlas anims now the sheets have loaded. If the manifest/sheets are
+    // missing (404), spriteSheetReady stays false and the procedural figure remains authoritative.
+    if (this.spritesEnabled) {
+      const manifest = registerUnitAnims(this, THUG_SPRITE_CONFIG);
+      if (manifest) {
+        this.spriteSheetReady = true;
+        this.spriteScale = spriteDisplayScale(manifest.figurePxH, FIGURE_PX, this.spriteScaleMul);
+      }
+    }
 
     // RTS-11: start with a small loyal crew so the opening is fair (muscle + defense).
     // RTS-12/16: a fair opening (loyal crew + one protected run) on the BIG contested city —
@@ -1884,7 +1907,22 @@ export class IsoScene extends Phaser.Scene {
         v.gaitPhase = advanceGaitPhase(v.gaitPhase ?? 0, moving ? dist : 0, stride); // ⭐ cadence ∝ ground speed
         v.loco = easeLoco(v.loco ?? 0, locoTarget(v.unit.speed, moving, RUN_BOB_SPEED), dt * 1000, 150); // ~150ms cross-fade / stop-settle
         const faceRight = facesRight(unitFacing(v.unit));
-        if (rigLOD(this.targetZoom) === 'far') {
+        if (this.spritesEnabled && this.spriteSheetReady) {
+          // ?sprites — the 3D-rendered iso ATLAS view (opt-in). Hides the rig + baked silhouette and drives
+          // an 8-direction animated Sprite at the SAME anchor/depth. Faction stays on the base-plate ring
+          // (never the body). NO-X-RAY: a rival only draws when its tile is revealed (hidden = nothing).
+          v.rig.setVisible(false); v.rigDebug?.setVisible(false); v.rigText?.setVisible(false);
+          v.sprite.setVisible(false);
+          if (!v.spriteSheet) { v.spriteSheet = ensureUnitSprite(this, THUG_SPRITE_CONFIG.unitName); this.worldFx(v.spriteSheet); }
+          const revealed = v.faction === 'player' || isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
+          driveUnitSprite(v.spriteSheet, {
+            unitName: THUG_SPRITE_CONFIG.unitName,
+            facing: unitFacing(v.unit),
+            attacking: !!v.attackUntil && now < v.attackUntil,
+            moving, loco: v.loco ?? 0,
+            x: s.x + kick, y: s.y + lift, depth, alpha: v.occA ?? 1, visible: revealed, scale: this.spriteScale,
+          });
+        } else if (rigLOD(this.targetZoom) === 'far') {
           // FAR LOD — bypass the per-frame rig; the cheap baked silhouette stands in (perf).
           v.rig.setVisible(false); v.rigDebug?.setVisible(false); v.rigText?.setVisible(false);
           v.sprite.setVisible(true).setPosition(s.x + kick, s.y + lift).setDepth(depth).setScale(1, 1).setFlipX(!faceRight);
@@ -1938,7 +1976,7 @@ export class IsoScene extends Phaser.Scene {
         const target = occlusionTargetAlpha(display);
         v.occA = v.occA === undefined ? target : v.occA + (target - v.occA) * 0.25; // ease dim→hide
         const a = v.occA;
-        v.sprite.setAlpha(a); v.rig?.setAlpha(a); v.shadow.setAlpha(0.5 * a);
+        v.sprite.setAlpha(a); v.rig?.setAlpha(a); v.spriteSheet?.setAlpha(a); v.shadow.setAlpha(0.5 * a);
         // the x-ray rim: a bright faction silhouette ring lifted ABOVE the buildings so it reads through them.
         if (display === 'xray') {
           v.factionRing.setVisible(true).setStrokeStyle(2.5, hexNum(xRayRim(v.faction, !!v.unit.downed)), 0.95).setDepth(99000);
