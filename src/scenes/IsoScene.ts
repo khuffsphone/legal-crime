@@ -206,7 +206,7 @@ import {
   type ShockKind,
   type BribeChannel,
 } from '../sim';
-import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, heatLabel, shockFlavor, bribeChannelLabel } from './theme';
+import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, heatLabel, shockFlavor, bribeChannelLabel, GAME_TITLE, NEWSPAPER_MASTHEAD } from './theme';
 import {
   buildCityTextures,
   figureKeyFor,
@@ -3431,7 +3431,7 @@ export class IsoScene extends Phaser.Scene {
     objs.push(g);
 
     const ink = '#16130f', inkSoft = '#3a322a';
-    objs.push(this.mkText(cx, py + 22, 'THE CHICAGO LEDGER', { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+    objs.push(this.mkText(cx, py + 22, NEWSPAPER_MASTHEAD, { fontFamily: NOIR_DISPLAY, fontSize: '20px', color: ink, fontStyle: 'bold' }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
     objs.push(this.mkText(cx, py + 46, `EXTRA  ·  WEEK ${report.week}  ·  ${kicker}`, { fontFamily: NOIR_FONT, fontSize: '11px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
     // masthead rule — brass for a win, plain ink for a loss
     g.lineStyle(2, won ? PAL.brass : PAL.ink, won ? 0.95 : 0.5); g.beginPath(); g.moveTo(px + 24, py + 66); g.lineTo(px + paperW - 24, py + 66); g.strokePath();
@@ -5938,9 +5938,9 @@ export class IsoScene extends Phaser.Scene {
     const w = 600, h = 396;
     const cx = this.scale.width / 2, cy = this.scale.height / 2;
     const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
-    const title = this.mkText(0, -h / 2 + 16, 'LEGAL CRIME — FEDORA NOIR', { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
+    const title = this.mkText(0, -h / 2 + 16, GAME_TITLE, { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
     const body = this.mkText(0, -h / 2 + 50, [
-      'Prohibition Chicago. Build a protection empire — quietly first, by war later.',
+      'Prohibition-era Brassmere. Build a protection empire — quietly first, by war later.',
       '',
       'CAMERA — move around and read the city',
       '  ARROW keys / screen-edge pan · left-drag box-select · middle-drag pan · wheel zoom · [F] follow · [Z] frame city · [D] center on selection',

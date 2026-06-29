@@ -23,6 +23,16 @@ export const NOIR_FONT = '"JetBrains Mono", "Courier New", monospace';
  * glance" type). Oswald reads sharp and bold at small sizes; Barlow/Arial Narrow as fallbacks. */
 export const NOIR_DISPLAY = '"Oswald", "Barlow Semi Condensed", "Arial Narrow", sans-serif';
 
+// ── USER-FACING NAME (display strings only — the repo slug, package name, code identifiers and file paths
+// are deliberately left as-is). The working title is BRASSMERE and the fictional city is Brassmere; the win
+// newspaper mastheads from the city. Centralised so every surface reads the same and a test can pin them. ──
+/** The product title shown to players (uppercased for the deco display face). */
+export const GAME_TITLE = 'BRASSMERE';
+/** The fictional city the game is set in (replaces the old "Chicago"). */
+export const CITY_NAME = 'Brassmere';
+/** The win-screen newspaper masthead — the city's paper of record. */
+export const NEWSPAPER_MASTHEAD = `THE ${CITY_NAME.toUpperCase()} LEDGER`;
+
 /** Noir display name for a bribery channel. */
 export function bribeChannelLabel(channel: BribeChannel): string {
   switch (channel) {
