@@ -11,7 +11,7 @@
 import Phaser from 'phaser';
 import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, GAME_TITLE } from './theme';
 import { PAL } from './cityArt';
-import { listSaveSlots, loadContinue, hasAnySave, LOADED_STATE_KEY } from './saveStore';
+import { listResumableSlots, loadContinue, hasResumableSave, deleteSaveSlot, AUTOSAVE_SLOT, LOADED_STATE_KEY } from './saveStore';
 import { SettingsPanel } from './settingsPanel';
 
 interface MenuButton {
@@ -46,14 +46,14 @@ export class MainMenuScene extends Phaser.Scene {
     this.add.text(cx, H * 0.22 + 56, 'FEDORA NOIR', { fontFamily: NOIR_DISPLAY, fontSize: '24px', color: NOIR_PALETTE.bone }).setOrigin(0.5);
     this.add.text(cx, H * 0.22 + 88, 'Prohibition-era Brassmere — build a protection empire, quietly first, by war later.', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5);
 
-    // ── the saved-game probe (Lane F) ──
-    const slots = listSaveSlots();
-    const newest = slots[0];
+    // ── the saved-game probe (Lane F) — CONTINUE resumes only an IN-PROGRESS run (B1): a terminal win/lose
+    // end-state is never offered, so we probe the RESUMABLE slots, not every slot. ──
+    const newest = listResumableSlots()[0];
 
     let y = H * 0.5;
     const gap = 56;
     this.mkButton(cx, y, 'NEW GAME', 'a fresh outfit', true, () => this.startGame(true)); y += gap;
-    this.mkButton(cx, y, 'CONTINUE', newest ? `resume ${newest.label || 'your last game'}` : 'no save found', hasAnySave(), () => this.continueGame()); y += gap;
+    this.mkButton(cx, y, 'CONTINUE', newest ? `resume ${newest.label || 'your last game'}` : 'no save found', hasResumableSave(), () => this.continueGame()); y += gap;
     this.mkButton(cx, y, 'SETTINGS', 'audio · controls · display', true, () => this.openSettings()); y += gap;
     this.mkButton(cx, y, 'QUIT', 'leave the city', true, () => this.quit());
 
@@ -86,7 +86,12 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   private startGame(fresh: boolean): void {
-    if (fresh) this.registry.remove(LOADED_STATE_KEY); // ensure IsoScene.create falls through to a new game
+    if (fresh) {
+      this.registry.remove(LOADED_STATE_KEY); // ensure IsoScene.create falls through to a new game
+      // B1 — a NEW GAME replaces the autosave: clear the rolling autosave so a PRIOR run's ending can never be
+      // what CONTINUE resumes (the fresh run rewrites it week-by-week anyway). Manual/quick slots are kept.
+      deleteSaveSlot(AUTOSAVE_SLOT);
+    }
     this.scene.start('IsoScene');
   }
 

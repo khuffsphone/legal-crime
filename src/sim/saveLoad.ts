@@ -7,7 +7,7 @@
 // VERSION-STAMPED: every save carries a schema version; a load refuses a version it can't read (rather than
 // silently corrupting old saves). A migration hook is left for future schema bumps.
 
-import type { GameState } from './types';
+import type { GameState, GameStatus } from './types';
 
 /** Bump when the GameState shape changes in a way old saves can't satisfy. v1 = the first real save format. */
 export const SAVE_SCHEMA_VERSION = 1;
@@ -32,6 +32,10 @@ export interface SaveFile {
   savedAt: number;
   /** A human label for the slot/menu. */
   label: string;
+  /** The run's status at save time, surfaced in the lightweight header so a menu can tell a RESUMABLE
+   * (in-progress) save from a TERMINAL win/lose end-state WITHOUT deserializing the whole tree (B1 — CONTINUE
+   * must never resume a finished game). Absent on older saves → treated as resumable (legacy compatible). */
+  status?: GameStatus;
   /** The COMPLETE deterministic game state (rngState included). */
   state: GameState;
   /** Optional view-layer state (fog) that must restore exactly as saved. Absent on older saves. */
@@ -50,6 +54,7 @@ export function serializeGame(state: GameState, meta?: { label?: string; savedAt
     version: SAVE_SCHEMA_VERSION,
     savedAt: meta?.savedAt ?? 0,
     label: meta?.label ?? '',
+    status: state.status,
     state: cloneState(state),
   };
   // Carry the view layer (fog) only when supplied — keeps older callers + saves byte-identical.
@@ -60,6 +65,15 @@ export function serializeGame(state: GameState, meta?: { label?: string; savedAt
 /** The on-disk/localStorage string form of a save. */
 export function serializeToString(state: GameState, meta?: { label?: string; savedAt?: number }, view?: SaveView): string {
   return JSON.stringify(serializeGame(state, meta, view));
+}
+
+/**
+ * Whether a save is RESUMABLE — i.e. an in-progress run, not a terminal win/lose end-state (B1). A finished
+ * game must never be what CONTINUE resumes. A save with no recorded status (an older save) is treated as
+ * resumable so legacy saves keep working. Pure.
+ */
+export function isResumableStatus(status: GameStatus | undefined): boolean {
+  return status !== 'won' && status !== 'lost';
 }
 
 export type LoadResult =
