@@ -39,9 +39,14 @@ export class PanelManager {
     this.layout();
   }
 
-  /** Re-derive the drawer rect from the current viewport (call on resize). The drawer is OVERLAY only. */
+  /** The fixed-HUD-camera zoom (user UI-scale); the drawer renders on it, so it lays out + hit-tests in
+   * LOGICAL coords (real ÷ uiScale). 1 when there is no UI camera (e.g. tests). */
+  private uiZoom(): number { const c = this.scene.cameras.getCamera('ui'); return c ? c.zoom : 1; }
+
+  /** Re-derive the drawer rect from the current LOGICAL viewport (call on resize / UI-scale change). */
   layout(): void {
-    const W = this.scene.scale.width, H = this.scene.scale.height;
+    const z = this.uiZoom();
+    const W = this.scene.scale.width / z, H = this.scene.scale.height / z;
     this.rect = { x: W - PANEL_W - 8, y: TOP, w: PANEL_W, h: Math.max(120, H - TOP - BOTTOM_GAP) };
     this.frame.clear();
     this.drawFrame();
@@ -81,8 +86,10 @@ export class PanelManager {
   /** Whether a fixed-HUD point is inside the OPEN drawer (so the scene skips world clicks under it). */
   capturesPointer(sx: number, sy: number): boolean {
     if (!anyPanelOpen(this.state)) return false;
+    const z = this.uiZoom();
+    const lx = sx / z, ly = sy / z; // screen → logical HUD space (UI-scale)
     const { x, y, w, h } = this.rect;
-    return sx >= x && sx <= x + w && sy >= y && sy <= y + h;
+    return lx >= x && lx <= x + w && ly >= y && ly <= y + h;
   }
 
   private apply(next: PanelState): void {
