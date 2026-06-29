@@ -9,7 +9,7 @@ import {
 } from '../src/scenes/info/logStore';
 import { edgeAlertMarker } from '../src/scenes/info/edgeAlerts';
 import {
-  worldToMinimap, minimapToWorld, isInMinimap, districtControlColor, minimapRivalBlips, minimapPlayerBlips,
+  worldToMinimap, minimapToWorld, isInMinimap, cameraViewportRect, districtControlColor, minimapRivalBlips, minimapPlayerBlips,
   type MiniUnit, type MiniRect,
 } from '../src/scenes/info/minimapMath';
 import { SPEC } from '../src/scenes/visualSpec';
@@ -155,5 +155,41 @@ describe('minimap — projection, control colours, click target, ⚠ fog exclusi
     expect(rivals).toHaveLength(1);                 // the hidden rival is excluded
     expect(rivals[0]).toMatchObject({ gx: 9, gy: 9 });
     expect(rivals.some((r) => r.gx === 80)).toBe(false); // ⚠ no x-ray of the fog-hidden rival
+  });
+});
+
+describe('minimap — B5: the camera POV box is a RECTANGLE (not a degenerate line) and tracks pan/zoom', () => {
+  const rect: MiniRect = { x: 10, y: 10, w: 192, h: 192 };
+  const SIZE = 96;
+  // the iso screen-rect projects to a DIAMOND in grid space; these are its four corners (gx,gy).
+  const diamond = [{ gx: 40, gy: 20 }, { gx: 60, gy: 40 }, { gx: 40, gy: 60 }, { gx: 20, gy: 40 }];
+
+  it('bounds ALL FOUR corners → a real box with positive width AND height', () => {
+    const box = cameraViewportRect(diamond, rect, SIZE);
+    expect(box.w).toBeGreaterThan(0);
+    expect(box.h).toBeGreaterThan(0);
+    // matches the min/max corner projection (gx 20..60, gy 20..60)
+    const a = worldToMinimap(20, 20, rect, SIZE), b = worldToMinimap(60, 60, rect, SIZE);
+    expect(box).toMatchObject({ x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y });
+  });
+
+  it('the OLD two-corner method collapsed to a near-line — the new box does not', () => {
+    // two opposite diamond corners share a near-equal projected span on one axis → ~0 height (the bug).
+    const twoCorner = cameraViewportRect([{ gx: 40, gy: 20 }, { gx: 40, gy: 60 }], rect, SIZE);
+    expect(twoCorner.w).toBe(0); // degenerate — exactly the line we fixed
+    const full = cameraViewportRect(diamond, rect, SIZE);
+    expect(full.w).toBeGreaterThan(0);
+    expect(full.h).toBeGreaterThan(0);
+  });
+
+  it('updates on PAN (translate) and ZOOM (scale) of the visible quad', () => {
+    const base = cameraViewportRect(diamond, rect, SIZE);
+    const panned = cameraViewportRect(diamond.map((c) => ({ gx: c.gx + 10, gy: c.gy + 5 })), rect, SIZE);
+    expect(panned.x).toBeGreaterThan(base.x); // box moved with the camera
+    expect(panned.y).toBeGreaterThan(base.y);
+    expect(panned.w).toBeCloseTo(base.w, 6);  // same size, just shifted
+    const zoomedOut = cameraViewportRect([{ gx: 30, gy: 10 }, { gx: 70, gy: 40 }, { gx: 30, gy: 70 }, { gx: 10, gy: 40 }], rect, SIZE);
+    expect(zoomedOut.w).toBeGreaterThan(base.w); // a wider view → a bigger box
+    expect(zoomedOut.h).toBeGreaterThan(base.h);
   });
 });

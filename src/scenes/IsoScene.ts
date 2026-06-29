@@ -254,6 +254,7 @@ import {
 import { loadSettings, type Settings } from './settings';
 import { resolveKeybinds, normalizeKey, type KeyAction } from './keybinds';
 import { SettingsPanel } from './settingsPanel';
+import { fitOverlayPanel } from './overlayLayout';
 import { PauseOverlay } from './pauseOverlay';
 import type { LoadResult } from '../sim';
 // COMBAT DEPTH · PART 2 + FINALIZE — the rival offensive planner (conservative; ⚠ needs a human balance
@@ -277,7 +278,7 @@ import { metaFor, combatEventKind, extortionEventKind, captureEventKind, bribeEv
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
 import { edgeAlertMarker } from './info/edgeAlerts';
 import {
-  worldToMinimap, minimapToWorld, isInMinimap, districtControlColor, minimapPlayerBlips, minimapRivalBlips,
+  worldToMinimap, minimapToWorld, isInMinimap, cameraViewportRect, districtControlColor, minimapPlayerBlips, minimapRivalBlips,
   type MiniRect, type MiniUnit, type ControlStatus,
 } from './info/minimapMath';
 // HUD PHASE 1 — the one-drawer panel system + the dossier strip that REPLACE the always-on side stack.
@@ -5587,12 +5588,18 @@ export class IsoScene extends Phaser.Scene {
       g.fillStyle(col, status === 'neutral' ? 0.16 : status === 'contested' ? 0.28 + 0.14 * Math.abs(Math.sin(now / 320)) : 0.32);
       g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
     }
-    // camera viewport rectangle (world-px view → tiles → minimap)
+    // camera POV box (B5) — the iso screen-rect projects to a DIAMOND in grid space, so bound ALL FOUR
+    // corners (two opposite corners collapse it to a line). A WHITE outline — the player's own viewport, a
+    // non-danger mark (reds stay motion-only); fog-gating is unaffected and it changes no blip-reveal.
     const view = this.cameras.main.worldView;
-    const tl = screenToGrid(view.x, view.y), br = screenToGrid(view.right, view.bottom);
-    const va = worldToMinimap(Math.min(tl.gx, br.gx), Math.min(tl.gy, br.gy), r, WORLD_SIZE);
-    const vb = worldToMinimap(Math.max(tl.gx, br.gx), Math.max(tl.gy, br.gy), r, WORLD_SIZE);
-    g.lineStyle(1.5, hexNum(SPEC.bone), 0.9).strokeRect(va.x, va.y, vb.x - va.x, vb.y - va.y);
+    const povCorners = [
+      screenToGrid(view.x, view.y),
+      screenToGrid(view.right, view.y),
+      screenToGrid(view.right, view.bottom),
+      screenToGrid(view.x, view.bottom),
+    ];
+    const pov = cameraViewportRect(povCorners, r, WORLD_SIZE);
+    g.lineStyle(1.5, 0xffffff, 0.9).strokeRect(pov.x, pov.y, pov.w, pov.h);
     // blips — player always; collectors distinct; ⚠ rivals ONLY if their tile is revealed (#5 — no x-ray)
     const minis: MiniUnit[] = this.units.map((v) => ({ gx: v.unit.pos.gx, gy: v.unit.pos.gy, faction: v.faction, isCollector: v.unit.role === 'collector' }));
     for (const u of minimapPlayerBlips(minis)) {
@@ -5971,11 +5978,15 @@ export class IsoScene extends Phaser.Scene {
   // ── onboarding ───────────────────────────────────────────────────────────────────────────
 
   private buildLegend(): void {
-    const w = 600, h = 396;
-    const cx = this.scale.width / 2, cy = this.scale.height / 2;
-    const bg = this.add.rectangle(0, 0, w, h, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
-    const title = this.mkText(0, -h / 2 + 16, GAME_TITLE, { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
-    const body = this.mkText(0, -h / 2 + 50, [
+    // B2 — size the panel to its CONTENT so text never overflows the border. We measure the title/body/hint
+    // blocks (body wrapped to the viewport so long lines never exceed it), fit a panel around them, then — if
+    // the fitted panel is taller than the screen — scale the whole overlay down so it always fits.
+    const VW = this.scale.width, VH = this.scale.height;
+    const cx = VW / 2, cy = VH / 2;
+    const padX = 30, padY = 22, gap = 10;
+    const wrapW = Math.min(760, VW - 64) - padX * 2; // body wraps within the viewport (no horizontal overflow)
+    const title = this.mkText(0, 0, GAME_TITLE, { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
+    const body = this.mkText(0, 0, [
       'Prohibition-era Brassmere. Build a protection empire — quietly first, by war later.',
       '',
       'CAMERA — move around and read the city',
@@ -5997,9 +6008,21 @@ export class IsoScene extends Phaser.Scene {
       '  • Select a thug → its ACTION ICONS show; [Q] set PATROL (hold a block, adds muscle presence).',
       '',
       '  [K] crew · [L] the wire · [H] help · [B] card view',
-    ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left' }).setOrigin(0.5, 0);
-    const hint = this.mkText(0, h / 2 - 22, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
+    ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left', wordWrap: { width: wrapW } }).setOrigin(0.5, 0);
+    const hint = this.mkText(0, 0, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
+
+    // fit the border to the measured blocks, then place each block at its computed top.
+    const sizes = [title, body, hint].map((t) => ({ w: t.width, h: t.height }));
+    const { panelW, panelH, ys } = fitOverlayPanel(sizes, { padX, padY, gap });
+    const bg = this.add.rectangle(0, 0, panelW, panelH, PAL.ink, 0.96).setStrokeStyle(2, PAL.brass, 1);
+    title.setPosition(0, ys[0]);
+    body.setPosition(0, ys[1]);
+    hint.setPosition(0, ys[2]);
     this.legend = this.add.container(cx, cy, [bg, title, body, hint]).setScrollFactor(0).setDepth(100100);
+    // viewport-safe: if the fitted panel is taller/wider than the screen, scale the whole overlay down to fit
+    // (uniform scale preserves containment — the text still never overflows the border).
+    const fit = Math.min(1, (VH - 24) / panelH, (VW - 24) / panelW);
+    if (fit < 1) this.legend.setScale(fit);
   }
 
   private toggleLegend(): void {
