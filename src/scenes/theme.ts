@@ -28,6 +28,9 @@ export const NOIR_DISPLAY = '"Oswald", "Barlow Semi Condensed", "Arial Narrow", 
 // newspaper mastheads from the city. Centralised so every surface reads the same and a test can pin them. ──
 /** The product title shown to players (uppercased for the deco display face). */
 export const GAME_TITLE = 'BRASSMERE';
+/** The product tagline/subtitle (replaces the old "Fedora Noir" codename in user-facing surfaces; the
+ * codename stays internal in art/comments/CANON). */
+export const GAME_SUBTITLE = 'A Prohibition Noir';
 /** The fictional city the game is set in (replaces the old "Chicago"). */
 export const CITY_NAME = 'Brassmere';
 /** The win-screen newspaper masthead — the city's paper of record. */
