@@ -241,7 +241,7 @@ import {
   type UnitOrder, type OrderUnit, holdOrder, attackMoveOrder, resolveAutoOrder,
   ATTACK_MOVE_ACQUIRE_RADIUS,
 } from './combatOrders';
-import { applyDevDebug, isDevBuild } from './devDebug';
+import { applyDevDebug, isDevBuild, parseScenario, applyScenario } from './devDebug';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
 import { healthFraction, shouldShowHealthBar, isCritical, showTargetReticle } from './combatReadout';
@@ -3455,6 +3455,7 @@ export class IsoScene extends Phaser.Scene {
    *                                     (devDebug.applyDevDebug — never an invalid weapon state).
    *   • ?debug=win | ?debug=lose      — flip ONLY the resolved endgame status (no HQ raze, no corruption).
    *   • ?debug=turf|mutiny|all[&pulses=N] — fast-forward the turf war / prime a mutiny (legacy QA tools).
+   *   • ?scenario=rival-contest|fed-watch|save-roundtrip — prime a deterministic QA board (NO-X-RAY).
    */
   private applyDebugScenario(): void {
     if (!isDevBuild()) return; // the GUARD: nothing below ever runs in a production build
@@ -3468,6 +3469,9 @@ export class IsoScene extends Phaser.Scene {
     // ?debug=win|lose — dismiss the opening legend so the forced endgame readout is actually reachable
     // (it otherwise renders behind the intro overlay). The endgame resolves on the next sim-advance frame.
     if (report.dismissIntro) this.hideLegend();
+
+    // ?scenario= — deterministic QA boards (independent of ?debug; runs even with no ?debug param).
+    this.applyQaScenario(search);
 
     const params = new URLSearchParams(search);
     const debug = params.get('debug');
@@ -3484,6 +3488,20 @@ export class IsoScene extends Phaser.Scene {
       // Prime a mutiny: starve the crew's loyalty so the mutiny telegraph + desertions surface.
       for (const g of this.state.player.gangsters) g.loyalty = Math.min(g.loyalty, 8);
     }
+  }
+
+  /**
+   * Task 3 — ?scenario= deterministic QA boards, applied via the pure devDebug helpers (DEV-gated above).
+   * rival-contest fast-forwards the strategic clock (so we re-harvest incidents); fed-watch raises heat to
+   * WATCH; save-roundtrip is a marker. NO-X-RAY: the sim mutates, but no fog/reveal call is made here, so a
+   * hidden rival stays hidden. Each surfaces a QA status line. A no-op when no scenario flag is present.
+   */
+  private applyQaScenario(search: string): void {
+    const scenario = parseScenario(search, true); // dev-gated by applyDebugScenario's guard
+    if (!scenario) return;
+    const report = applyScenario(this.state, scenario);
+    if (report.pulsed) this.state = harvestIncidents(this.state);
+    if (report.note) this.setStatus(report.note);
   }
 
   /** ?arm view refresh: a just-equipped unit is now a weapon-tier ENFORCER — swap to its baked enforcer
@@ -3561,6 +3579,10 @@ export class IsoScene extends Phaser.Scene {
     objs.push(this.mkText(px + paperW - 24, footTop, 'BY THE NUMBERS', { fontFamily: NOIR_FONT, fontSize: '11px', color: ink, fontStyle: 'bold' }).setOrigin(1, 0).setScrollFactor(0).setDepth(200002));
     objs.push(this.mkText(px + paperW - 24, footTop + 18, report.byTheNumbers.join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: inkSoft, lineSpacing: 3, align: 'right' }).setOrigin(1, 0).setScrollFactor(0).setDepth(200002));
     objs.push(this.mkText(cx, py + paperH - 16, '— 30 —', { fontFamily: NOIR_FONT, fontSize: '12px', color: inkSoft }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
+
+    // RTS-34 fix (Task 4) — a DEFINED exit so the end-state never backs into a blank frame: an on-screen
+    // hint on the soot below the paper, paired with the Esc→menu / Enter→new-game handlers. Brass on soot.
+    objs.push(this.mkText(cx, py + paperH + 18, '[Enter] new game      ·      [Esc] main menu', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.brass }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(200002));
 
     this.hudFx(...objs);
     // a brief slam-in (the headline thumps onto the desk)
@@ -3976,6 +3998,9 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-B', () => this.armRestartPrompt());
     // HUD PHASE 1 — ESC closes the open drawer first (the common case); else cancels an armed restart prompt.
     this.input.keyboard?.on('keydown-ESC', () => {
+      // Task 4 — when the endgame newspaper is up, Esc has a DEFINED destination (the main menu); it must
+      // NOT fall through to the pause menu (which renders BELOW the newspaper → the old blank-frame hit).
+      if (this.endgameShown) { this.exitEndgame('menu'); return; }
       // Lane G — Esc precedence: a deeper modal closes first, then the pause menu, then existing overlays;
       // with nothing else open, Esc raises the pause menu.
       if (this.settingsPanel?.isOpen()) { this.settingsPanel.close(); return; }
@@ -3986,6 +4011,9 @@ export class IsoScene extends Phaser.Scene {
       if (this.saveMenu || this.marketOpen || this.audioPanelOpen) return; // another overlay owns Esc
       this.openPauseMenu();
     });
+    // Task 4 — Enter is the endgame's other defined exit: start a NEW GAME (a clean restart). Inert during
+    // normal play (Enter has no gameplay binding), so it only acts once the win/lose newspaper is showing.
+    this.input.keyboard?.on('keydown-ENTER', () => { if (this.endgameShown) this.exitEndgame('restart'); });
     // SELECTION/CONTROL QoL — numbered CONTROL GROUPS share the digit keys: Ctrl+1-9 BINDS the current
     // selection, a bare digit RECALLS a bound group (double-tap centres). A digit only acts as a group
     // recall once that group is BOUND, so an unused digit still fires its offense/build verb / audio bus.
@@ -5431,6 +5459,19 @@ export class IsoScene extends Phaser.Scene {
   private quitToMenu(): void {
     this.pause = setPausedState(this.pause, false);
     this.scene.start('MainMenuScene');
+  }
+
+  /**
+   * Task 4 — the endgame's defined exits (no blank state):
+   *   'menu'    → back to the main menu (the dev menu-bypass is one-shot, so the real front door shows).
+   *   'restart' → a clean NEW GAME (drop any load handoff, rebuild the scene from a fresh initial state).
+   * Either way the pause gate is released first so the next scene starts live.
+   */
+  private exitEndgame(dest: 'menu' | 'restart'): void {
+    this.pause = setPausedState(this.pause, false);
+    if (dest === 'menu') { this.scene.start('MainMenuScene'); return; }
+    this.registry.remove(LOADED_STATE_KEY); // ensure create() falls through to a fresh new game
+    this.scene.restart();
   }
 
   /** Live-apply the display toggles (screen-shake amplitude + lighting quality). */
