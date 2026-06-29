@@ -9,7 +9,7 @@
 // Its own scene, its own 1:1 camera — no world camera, so no setupUiCamera/hudFx is needed here.
 
 import Phaser from 'phaser';
-import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, GAME_TITLE } from './theme';
+import { NOIR_PALETTE, NOIR_FONT, NOIR_DISPLAY, GAME_TITLE, GAME_SUBTITLE } from './theme';
 import { PAL } from './cityArt';
 import { listResumableSlots, loadContinue, hasResumableSave, deleteSaveSlot, AUTOSAVE_SLOT, LOADED_STATE_KEY } from './saveStore';
 import { SettingsPanel } from './settingsPanel';
@@ -54,7 +54,7 @@ export class MainMenuScene extends Phaser.Scene {
 
     const cx = W / 2;
     this.add.text(cx, H * 0.22, GAME_TITLE, { fontFamily: NOIR_DISPLAY, fontSize: '64px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5);
-    this.add.text(cx, H * 0.22 + 56, 'FEDORA NOIR', { fontFamily: NOIR_DISPLAY, fontSize: '24px', color: NOIR_PALETTE.bone }).setOrigin(0.5);
+    this.add.text(cx, H * 0.22 + 56, GAME_SUBTITLE, { fontFamily: NOIR_DISPLAY, fontSize: '24px', color: NOIR_PALETTE.bone }).setOrigin(0.5);
     this.add.text(cx, H * 0.22 + 88, 'Prohibition-era Brassmere — build a protection empire, quietly first, by war later.', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5);
 
     // ── the saved-game probe (Lane F) — CONTINUE resumes only an IN-PROGRESS run (B1): a terminal win/lose
