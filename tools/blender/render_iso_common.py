@@ -184,6 +184,85 @@ def setup_lights(scene, key=1200.0, fill=500.0, rim=220.0):
             bg.inputs[1].default_value = 0.08  # ambient strength seed
 
 
+def rgb_to_hex(r, g, b):
+    return "#%02X%02X%02X" % (max(0, min(255, int(r * 255))), max(0, min(255, int(g * 255))), max(0, min(255, int(b * 255))))
+
+
+def material_base_hex(mat, default="#8A8A8A"):
+    """Best-effort base colour of a material as a hex string, for building the toon variant. Reads a stored
+    __base_hex__ (blockout) first, then a Principled BSDF Base Color, else the default gray."""
+    if mat is None:
+        return default
+    stored = mat.get("__base_hex__")
+    if stored:
+        return stored
+    try:
+        if mat.use_nodes:
+            for n in mat.node_tree.nodes:
+                if n.type == "BSDF_PRINCIPLED":
+                    c = n.inputs["Base Color"].default_value
+                    return rgb_to_hex(c[0], c[1], c[2])
+        elif mat.diffuse_color:
+            c = mat.diffuse_color
+            return rgb_to_hex(c[0], c[1], c[2])
+    except Exception:
+        pass
+    return default
+
+
+def import_fbx_unit(filepath, name_hint=""):
+    """Import a (Mixamo) FBX clip and return (pivot, armature, meshes, action). The armature + any unparented
+    meshes are parented (keeping world transform) under a fresh Empty at the WORLD ORIGIN so the whole clip can
+    be yaw-rotated as ONE for the 8 facings. Absolute scale is irrelevant downstream — the shared bbox pre-pass
+    normalises every clip to the same ortho_scale — so we do NOT rescale (Mixamo's cm units are fine)."""
+    if bpy is None:
+        raise SystemExit("RENDER_FAIL: bpy unavailable")
+    if not os.path.isfile(filepath):
+        raise SystemExit("RENDER_FAIL: FBX not found: %r" % filepath)
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.fbx(filepath=filepath, automatic_bone_orientation=True, ignore_leaf_bones=True)
+    new = [o for o in bpy.data.objects if o not in before]
+    arm = next((o for o in new if o.type == "ARMATURE"), None)
+    meshes = [o for o in new if o.type == "MESH"]
+    if arm is None:
+        raise SystemExit("RENDER_FAIL: no ARMATURE in FBX %r" % filepath)
+    if not meshes:
+        raise SystemExit("RENDER_FAIL: no MESH in FBX %r" % filepath)
+    action = arm.animation_data.action if (arm.animation_data and arm.animation_data.action) else None
+    piv = bpy.data.objects.new("piv_" + (name_hint or arm.name), None)
+    bpy.context.collection.objects.link(piv)
+    for o in [arm] + [m for m in meshes if m.parent is None]:
+        wm = o.matrix_world.copy()
+        o.parent = piv
+        o.matrix_world = wm  # keep world transform when re-parenting
+    return piv, arm, meshes, action
+
+
+# Common Mixamo root/hips bone names (the In-Place safeguard zeroes this bone's local X/Y per frame).
+MIXAMO_HIPS = ("mixamorig:Hips", "mixamorig1:Hips", "Hips", "Armature|Hips")
+
+
+def zero_root_inplace(arm):
+    """In-Place safeguard: zero the hips/root bone's local X/Y translation so a clip with leftover root motion
+    still renders centred (Mixamo 'In Place' export already removes it; this is belt-and-suspenders). Returns
+    True if a root bone was found+zeroed. Leaves Z (vertical bob) intact."""
+    if arm is None or not getattr(arm, "pose", None):
+        return False
+    pb = None
+    for nm in MIXAMO_HIPS:
+        pb = arm.pose.bones.get(nm)
+        if pb:
+            break
+    if pb is None:
+        # fall back to the first root (parentless) pose bone
+        pb = next((b for b in arm.pose.bones if b.parent is None), None)
+    if pb is None:
+        return False
+    pb.location[0] = 0.0  # zero local X
+    pb.location[1] = 0.0  # zero local Y (keep [2] = vertical bob)
+    return True
+
+
 def setup_freestyle(scene, view_layer, thickness=1.75, color_hex="#1E1713"):
     scene.render.use_freestyle = True
     view_layer.use_freestyle = True

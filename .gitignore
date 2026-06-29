@@ -6,5 +6,9 @@ dist/
 public/assets/sprites/units/_tmp_frames/
 tools/blender/*.blend
 tools/blender/*.blend1
+# Raw 3D inputs (Mixamo/Meshy FBX/GLB) are render INPUTS only — never shipped; the rendered PNG sheets are.
+assets/raw/
+*.fbx
+*.glb
 __pycache__/
 *.pyc

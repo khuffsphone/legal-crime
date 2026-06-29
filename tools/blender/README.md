@@ -48,8 +48,46 @@ Rejected alternatives:
 coherence). Foot anchor = bottom-centre; Phaser origin `(0.5, 1.0)`. Frames are 256² with the figure ≤224px
 tall and the feet on the cell's bottom edge.
 
-## Swapping in the real model later
+## Real model render — Mixamo "Chicago_Gangster" (the thug, #5)
 
-Point the job's `source` at an `fbx`/`glb` path instead of `"blockout"`, set `modelForwardDeg` if the rig's
-forward axis differs from the placeholder's (+Y), and map Mixamo action names in `actions[]`. Everything
-downstream — sheet layout, manifest schema, Phaser ingest — is unchanged.
+The real pass uses `source: "fbx"`. Mixamo exports **one FBX per animation**, all sharing the same rig/mesh,
+so the job lists a per-clip `fbx` path; the renderer imports each, applies the toon look, and the bbox
+pre-pass locks **one shared scale + foot anchor across all clips** so idle/walk/run/hurt line up in-game.
+
+**1. Put the 4 clip FBX here (gitignored — inputs, never shipped):**
+
+```
+assets/raw/thug/Breathing Idle.fbx     -> idle  (loop)
+assets/raw/thug/Walking.fbx            -> walk  (loop, export In-Place)
+assets/raw/thug/Running.fbx            -> run   (loop, export In-Place)
+assets/raw/thug/Injured Walking.fbx    -> hurt  (loop)
+```
+
+(No `attack` clip yet — add a Mixamo melee/punch on the same gangster later as `assets/raw/thug/Attack.fbx`
++ an `actions[]` entry `{ "name":"attack", "loop":false, "includeTerminalFrame":true }`. Until then the
+ingest's fallback plays **idle** for attacks.)
+
+**2. Render (local).** The job is `render_jobs/thug_gangster.json`.
+
+- **Windows (PowerShell)** — your verified `BLENDER_PATH`, no xvfb needed (desktop GL is present):
+  ```powershell
+  & $env:BLENDER_PATH -b -P tools\blender\render_iso_unit.py -- --job tools\blender\render_jobs\thug_gangster.json --engine BLENDER_EEVEE
+  # if EEVEE errors headless, retry the same line with: --engine CYCLES
+  ```
+- **macOS/Linux:** `BLENDER_PATH=/path/to/blender tools/blender/render_thug_gangster.sh`
+
+Emits `public/assets/sprites/units/thug_{idle,walk,run,hurt}.png` + `thug_manifest.json` (**overwrites the
+placeholder**). Squeeze them after with `pngquant` (flat toon art → ~95% smaller, identical at on-screen size),
+then commit the PNGs + manifest. The Phaser ingest (`?sprites`) reads them with **no code change**.
+
+**3. Facing calibration.** `modelForwardDeg` (in the job) yaws the rig so its front matches `dir0`. If the
+gangster faces the wrong way in-game, set it to `180` (Mixamo's forward axis commonly flips on FBX import) —
+or nudge the runtime `dirOffset` in `unitSpriteView`. Verify against `unitFacingQuantize.FACING_TO_DIR`.
+
+> **In-Place safeguard.** `inPlace: true` zeroes the hips' local X/Y each frame so any leftover root motion
+> still renders centred; exporting Walking/Running with Mixamo **In Place** is still the primary fix.
+
+### Generic swap (any future unit)
+
+Point a job's `source` at `fbx` with per-clip paths, set `modelForwardDeg` if the rig's forward differs, map
+the Mixamo clip names in `actions[]`. Sheet layout, manifest schema, and the Phaser ingest are unchanged.

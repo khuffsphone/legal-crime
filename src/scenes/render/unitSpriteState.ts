@@ -4,7 +4,32 @@
 // swap you turn ON to A/B. This mirrors the established query-flag idioms (artMode/fog) but defaults off
 // because it's an experimental art path, not a normal toggle.
 
-export type UnitSpriteAction = 'idle' | 'walk' | 'attack';
+export type UnitSpriteAction = 'idle' | 'walk' | 'run' | 'hurt' | 'attack';
+
+/**
+ * Graceful fallback chain per action → what to play if the desired clip wasn't rendered yet. `idle` is the
+ * CORE clip (always present once sprites are ready), so every chain bottoms out there. This is what lets the
+ * REAL render ship with only idle+walk (no attack/run/hurt yet) and still drive cleanly — an attack falls
+ * back to idle, a run to walk — until K renders those clips. Pure data.
+ */
+export const ACTION_FALLBACK: Readonly<Record<UnitSpriteAction, readonly UnitSpriteAction[]>> = {
+  idle: ['idle'],
+  walk: ['walk', 'idle'],
+  run: ['run', 'walk', 'idle'],
+  hurt: ['hurt', 'walk', 'idle'],
+  attack: ['attack', 'idle'],
+};
+
+/**
+ * Resolve a desired action to one that is actually AVAILABLE (a rendered + registered clip) by walking the
+ * fallback chain; returns the first available link, else 'idle'. Pure.
+ */
+export function resolvePlayableAction(desired: UnitSpriteAction, available: ReadonlySet<string>): UnitSpriteAction {
+  for (const a of ACTION_FALLBACK[desired] ?? ['idle']) {
+    if (available.has(a)) return a;
+  }
+  return 'idle';
+}
 
 const TRUTHY = new Set(['', '1', 'on', 'true', 'yes', 'sprites']);
 const FALSY = new Set(['0', 'off', 'false', 'no']);
@@ -41,11 +66,16 @@ export function spriteScaleParam(search: string, min = 0.25, max = 6): number {
 }
 
 /**
- * Pick the action clip for a unit's live state. Attack wins (one-shot); otherwise moving → walk, still →
- * idle. `loco` (0..2 idle/walk/run) folds RUN into walk for this 3-clip placeholder.
+ * Pick the DESIRED action clip for a unit's live state (before availability fallback). Attack wins (one-shot);
+ * then a flagged hurt state; then `loco` (0..2 idle/walk/run): run at ≥1.5, walk at ≥0.5, else idle. The
+ * caller passes the result through resolvePlayableAction() so a not-yet-rendered clip degrades gracefully
+ * (run→walk→idle, attack/hurt→idle). `hurt` defaults false (no hurt trigger is wired in the scene yet — the
+ * clip is supported end-to-end and ready for a future state to set this).
  */
-export function actionForState(opts: { attacking: boolean; moving: boolean; loco: number }): UnitSpriteAction {
+export function actionForState(opts: { attacking: boolean; moving: boolean; loco: number; hurt?: boolean }): UnitSpriteAction {
   if (opts.attacking) return 'attack';
+  if (opts.hurt) return 'hurt';
+  if (opts.loco >= 1.5) return 'run';
   if (opts.moving || opts.loco >= 0.5) return 'walk';
   return 'idle';
 }

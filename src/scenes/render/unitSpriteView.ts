@@ -5,11 +5,14 @@
 // passes `visible=false` for an unrevealed rival so a hidden unit draws nothing.
 
 import { facingToDirIndex } from './unitFacingQuantize';
-import { actionForState } from './unitSpriteState';
+import { actionForState, resolvePlayableAction } from './unitSpriteState';
 import type { UnitSpriteAction } from './unitSpriteState';
 import { playUnitAnim } from './unitSpriteAnimator';
 import { sheetTextureKey } from './unitSpriteLoader';
 import type { Facing } from '../../sim/inspect';
+
+/** Empty set fallback so an absent `availableActions` (legacy callers) just plays whatever clip exists. */
+const ANY_ACTION: ReadonlySet<string> = new Set(['idle', 'walk', 'run', 'hurt', 'attack']);
 
 export interface UnitSpriteDriveCtx {
   unitName: string;
@@ -17,12 +20,16 @@ export interface UnitSpriteDriveCtx {
   attacking: boolean;
   moving: boolean;
   loco: number;
+  /** optional injured state (no scene trigger wired yet; the hurt clip is supported end-to-end). */
+  hurt?: boolean;
   x: number;
   y: number;
   depth: number;
   alpha: number;
   visible: boolean;
   scale: number;
+  /** which clips actually rendered + registered — desired actions degrade to these (run→walk→idle, etc.). */
+  availableActions?: ReadonlySet<string>;
   /** runtime facing calibration (default 0; correct for the placeholder). */
   dirOffset?: number;
 }
@@ -44,7 +51,8 @@ export function driveUnitSprite(sprite: Phaser.GameObjects.Sprite, ctx: UnitSpri
     sprite.setVisible(false);
     return;
   }
-  const action = actionForState({ attacking: ctx.attacking, moving: ctx.moving, loco: ctx.loco });
+  const desired = actionForState({ attacking: ctx.attacking, moving: ctx.moving, loco: ctx.loco, hurt: ctx.hurt });
+  const action = resolvePlayableAction(desired, ctx.availableActions ?? ANY_ACTION);
   const dir = facingToDirIndex(ctx.facing, ctx.dirOffset ?? 0);
   playUnitAnim(sprite, ctx.unitName, action, dir);
   sprite
