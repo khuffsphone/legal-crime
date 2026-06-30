@@ -187,6 +187,7 @@ def main():
     source = job.get("source", "blockout")
     multi_model = (source == "fbx")
     inplace = bool(job.get("inPlace", multi_model))  # In-Place safeguard ON for real Mixamo clips
+    ic.clear_scene()  # remove the default Cube/Light/Camera so ONLY the character renders + drives the bbox
     clips = []
     if source == "blockout":
         arm, mesh, _action_names = blk.build_thug()

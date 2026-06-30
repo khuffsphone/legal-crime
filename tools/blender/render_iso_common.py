@@ -211,6 +211,16 @@ def material_base_hex(mat, default="#8A8A8A"):
     return default
 
 
+def clear_scene():
+    """Remove ALL objects (the default startup Cube + Light + Camera, and anything stale) so ONLY what we
+    build/import is visible to the camera. The blockout path clears via its own _reset_scene(); the FBX path
+    needs this so the default Cube doesn't render around the character's legs (the framing bug)."""
+    if bpy is None:
+        return
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o, do_unlink=True)
+
+
 def import_fbx_unit(filepath, name_hint=""):
     """Import a (Mixamo) FBX clip and return (pivot, armature, meshes, action). The armature + any unparented
     meshes are parented (keeping world transform) under a fresh Empty at the WORLD ORIGIN so the whole clip can
@@ -229,6 +239,16 @@ def import_fbx_unit(filepath, name_hint=""):
         raise SystemExit("RENDER_FAIL: no ARMATURE in FBX %r" % filepath)
     if not meshes:
         raise SystemExit("RENDER_FAIL: no MESH in FBX %r" % filepath)
+    # CHARACTER MESHES ONLY: keep meshes skinned to THIS armature; DELETE any stray imported geometry
+    # (a base/pedestal/ground plane Meshy sometimes bakes in) so it neither renders nor inflates the bbox.
+    def _skinned(m):
+        return any(md.type == "ARMATURE" and md.object == arm for md in m.modifiers)
+    char = [m for m in meshes if _skinned(m)]
+    if char:
+        for m in [m for m in meshes if m not in char]:
+            print("DROP non-character mesh from FBX:", m.name)
+            bpy.data.objects.remove(m, do_unlink=True)
+        meshes = char
     action = arm.animation_data.action if (arm.animation_data and arm.animation_data.action) else None
     piv = bpy.data.objects.new("piv_" + (name_hint or arm.name), None)
     bpy.context.collection.objects.link(piv)
