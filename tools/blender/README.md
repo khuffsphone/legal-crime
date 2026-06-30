@@ -106,13 +106,46 @@ and falls back to **idle** only if its sheet is absent.
   ```
 - **macOS/Linux:** `BLENDER_PATH=/path/to/blender tools/blender/render_thug_gangster.sh`
 
-Emits `public/assets/sprites/units/thug_{idle,walk,run,hurt}.png` + `thug_manifest.json` (**overwrites the
-placeholder**). Squeeze them after with `pngquant` (flat toon art → ~95% smaller, identical at on-screen size),
-then commit the PNGs + manifest. The Phaser ingest (`?sprites`) reads them with **no code change**.
+Emits `public/assets/sprites/units/thug_{idle,walk,run,hurt,attack}.png` + `thug_manifest.json` (**overwrites
+the placeholder**; the manifest's `placeholder` flips to `false`). **Eyeball the sheets in-browser BEFORE you
+squeeze (step 4).** Then squeeze with `pngquant` (flat toon art → ~95% smaller, identical at on-screen size),
+and commit the PNGs + manifest. The Phaser ingest (`?sprites`) reads them with **no code change**.
 
 **3. Facing calibration.** `modelForwardDeg` (in the job) yaws the rig so its front matches `dir0`. If the
 gangster faces the wrong way in-game, set it to `180` (Mixamo's forward axis commonly flips on FBX import) —
 or nudge the runtime `dirOffset` in `unitSpriteView`. Verify against `unitFacingQuantize.FACING_TO_DIR`.
+
+**4. Eyeball in-browser (`?sprites`) — the actual animation smoke-check.** The tests validate the manifest
+*data*; only this confirms the clips *look* right. The render output lives under `public/`, so the dev server
+serves it with no rebuild.
+
+```powershell
+npm run dev
+# open the printed URL with the opt-in flag, e.g.:
+#   http://localhost:5173/?sprites
+```
+
+- `?sprites` (any non-falsy value) swaps the thug's procedural figure for the rendered atlas. The flag is
+  **off by default**; without it you see the primitive figure. `?sprites=0` / `false` / `no` force it off.
+- If the manifest or the **idle** sheet fails to load, the view **silently falls back** to the procedural
+  figure (no crash). So *if you still see boxes, the sheets didn't load* — check the browser Network tab for
+  404s on `assets/sprites/units/thug_*.png` / `thug_manifest.json` and confirm `placeholder:false`.
+- Optional `?spritescale=N` (0.25–6, e.g. `?sprites&spritescale=2`) enlarges the on-screen unit so you can
+  scrutinise frames; it's a display zoom only, not a re-render.
+
+**What to verify (the things automated tests can't):**
+1. **Walk is a real walk** — not the old hands-up boxing-guard stance (the bug that triggered the Meshy swap).
+2. **Idle / run** read as breathe / run; **attack plays once and holds** (doesn't loop) when a unit attacks;
+   movement picks walk vs run by speed (`loco` ≥1.5 → run).
+3. **8 facings** rotate correctly as the unit changes direction — front matches travel (else tune
+   `modelForwardDeg`, re-render, or nudge `dirOffset`).
+4. **Feet planted** on the tile (foot anchor 0.5,1.0), figure sized like the procedural one (tune
+   `?spritescale` to taste; the manifest's `figurePxH` drives the base scale).
+5. **No x-ray / faction colour** — a hidden rival still draws nothing; faction stays on the base-plate ring,
+   never the body.
+
+If 1–5 look right, proceed to `pngquant` + commit. If walk/facing is off, it's a **render** fix (clip or
+`modelForwardDeg`), not a code change.
 
 > **Root-motion strip (source-agnostic).** `inPlace: true` re-centres the figure each frame so locomotion
 > that **travels** still renders in place — and it does **not** shrink `orthoScale` to compensate. For real
