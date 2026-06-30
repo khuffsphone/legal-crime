@@ -56,3 +56,13 @@ export const FACING_TO_DIR: Readonly<Record<Facing, number>> = {
 export function facingToDirIndex(facing: Facing, dirOffset: number = 0): number {
   return ((FACING_TO_DIR[facing] + dirOffset) % DIR_COUNT + DIR_COUNT) % DIR_COUNT;
 }
+
+/**
+ * Runtime facing calibration for the THUG sprite sheets. The real Mixamo gangster FBX forward axis is **-Y**,
+ * and the rows were baked with `modelForwardDeg=0` (uncompensated — see render_jobs/thug_gangster.json), so
+ * every row visually depicts the **180° antipode** of its FACING_TO_DIR label → the figure moonwalks (faces
+ * opposite its travel) in all 8 directions. FACING_TO_DIR is a clean 45° rotational sequence, so rotating the
+ * row selection by 4 octants (= 180°) cancels the flip uniformly and the figure faces its travel direction.
+ * (Durable alternative, decided separately: re-render with `modelForwardDeg:180` and reset this to 0.)
+ */
+export const THUG_FACING_OFFSET = 4;
