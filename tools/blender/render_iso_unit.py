@@ -46,6 +46,43 @@ def sample_frames(start, end, count, loop):
     return [start + i * step for i in range(count)]
 
 
+# Keyword fallbacks per action — used ONLY when the job's literal `fbx` path is missing. Meshy-native exports
+# carry arbitrary filenames, so if "assets/raw/thug/Walking.fbx" isn't there we look for any FBX in that same
+# folder whose name contains a walk keyword. The literal path stays the contract (the CI test enforces it);
+# this just spares a re-render when the on-disk names differ from the job. Order = specificity.
+ACTION_FBX_KEYWORDS = {
+    "idle": ("idle", "breath", "stand", "rest"),
+    "walk": ("walk",),
+    "run": ("run", "jog", "sprint"),
+    "hurt": ("hurt", "injured", "injure", "damage", "pain", "stagger", "flinch"),
+    "attack": ("attack", "punch", "melee", "swing", "strike", "combat", "kick"),
+}
+
+
+def resolve_fbx(fbx_rel, action_name):
+    """Return an existing absolute FBX path for this action. The job's literal path wins; if it's absent we
+    scan its folder for an FBX whose name matches the action's keywords (Meshy-native filenames are unknown to
+    the repo). Raises SystemExit with a clear message if nothing matches — never renders the wrong clip."""
+    fbx_abs = fbx_rel if os.path.isabs(fbx_rel) else os.path.abspath(os.path.join(_HERE, "..", "..", fbx_rel))
+    if os.path.isfile(fbx_abs):
+        return fbx_abs
+    folder = os.path.dirname(fbx_abs)
+    if not os.path.isdir(folder):
+        raise SystemExit("RENDER_FAIL: %r not found and its folder %r does not exist" % (fbx_rel, folder))
+    present = sorted(f for f in os.listdir(folder) if f.lower().endswith(".fbx"))
+    kws = ACTION_FBX_KEYWORDS.get(action_name, (action_name,))
+    matches = [f for f in present if any(k in f.lower() for k in kws)]
+    if len(matches) == 1:
+        chosen = os.path.join(folder, matches[0])
+        print("FBX_RESOLVE action=%s literal-missing -> keyword match %r" % (action_name, matches[0]))
+        return chosen
+    if len(matches) > 1:
+        raise SystemExit("RENDER_FAIL: action %r literal %r missing; %d keyword matches %s — rename or set "
+                         "the exact 'fbx' in the job" % (action_name, os.path.basename(fbx_abs), len(matches), matches))
+    raise SystemExit("RENDER_FAIL: action %r FBX %r not found; no keyword match in %s among %s"
+                     % (action_name, os.path.basename(fbx_abs), folder, present))
+
+
 def apply_toon_materials(meshes, shader_cfg):
     """Swap each material slot (across one or more meshes) for a toon cel variant built from the slot's base
     colour (the blockout stores __base_hex__; a real FBX exposes a Principled Base Color — material_base_hex
@@ -94,7 +131,7 @@ def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, 
             for f in clip["frames"]:
                 set_frame(scene, f)
                 if inplace:
-                    ic.zero_root_inplace(clip["arm"])
+                    ic.center_root_world_xy(clip["arm"], clip["piv"])  # strip locomotion TRAVEL (keep Z bob)
                 deps.update()
                 for mesh in clip["meshes"]:
                     ev = mesh.evaluated_get(deps)
@@ -204,7 +241,7 @@ def main():
             fbx = a.get("fbx")
             if not fbx:
                 raise SystemExit("RENDER_FAIL: action %r needs an 'fbx' path (source=fbx)" % a.get("name"))
-            fbx_abs = fbx if os.path.isabs(fbx) else os.path.abspath(os.path.join(_HERE, "..", "..", fbx))
+            fbx_abs = resolve_fbx(fbx, a["name"])
             piv, arm, meshes, action = ic.import_fbx_unit(fbx_abs, a["name"])
             if action is None:
                 raise SystemExit("RENDER_FAIL: FBX %r has no animation action" % fbx_abs)
@@ -260,7 +297,7 @@ def main():
             for ci, f in enumerate(clip["frames"]):
                 set_frame(scene, f)
                 if inplace:
-                    ic.zero_root_inplace(clip["arm"])
+                    ic.center_root_world_xy(clip["arm"], clip["piv"])  # strip locomotion TRAVEL (keep Z bob)
                 base = os.path.join(tmpdir, "%s_%s_d%d_f%02d" % (unit_name, name, d, ci))
                 png = render_cell(scene, base)
                 cell = load_cell_topdown(png, canvas)

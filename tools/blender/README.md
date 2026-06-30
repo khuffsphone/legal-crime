@@ -16,6 +16,7 @@ pipeline **end-to-end with a throwaway placeholder** so the real Meshy/Mixamo th
 | `blockout_thug.py` | Builds the crude primitive thug (coat/head/fedora/legs/arms/bat) + armature + 3 baked clips (idle/walk/attack). Importable (`build_thug()`) or standalone (`-- --save out.blend`). |
 | `render_iso_common.py` | Camera math (the tile-locked angle), toon/Freestyle look, lights, bbox pre-pass, sheet packer, manifest helpers. |
 | `render_iso_unit.py` | Headless entry: build/import → camera → bbox pre-pass → render each action sheet (rows=8 dirs × cols=frames) → write PNG + manifest. |
+| `inspect_fbx.py` | Diagnostic (no render): prints each FBX's objects/meshes(skin status)/armature bones+root/actions, and whether each clip's root **travels vs in-place**. Run this first on a new clip set to confirm the job map. |
 | `render_jobs/thug_placeholder.json` | The placeholder job (camera/actions/shader/light/framing knobs). |
 | `render_thug_placeholder.sh` | Wrapper: EEVEE under `xvfb` with a CYCLES fallback. |
 
@@ -48,24 +49,44 @@ Rejected alternatives:
 coherence). Foot anchor = bottom-centre; Phaser origin `(0.5, 1.0)`. Frames are 256² with the figure ≤224px
 tall and the feet on the cell's bottom edge.
 
-## Real model render — Mixamo "Chicago_Gangster" (the thug, #5)
+## Real model render — the animated thug (#5)
 
-The real pass uses `source: "fbx"`. Mixamo exports **one FBX per animation**, all sharing the same rig/mesh,
-so the job lists a per-clip `fbx` path; the renderer imports each, applies the toon look, and the bbox
-pre-pass locks **one shared scale + foot anchor across all clips** so idle/walk/run/hurt line up in-game.
+The real pass uses `source: "fbx"`. Each animation is **one FBX** (a rigged+skinned mesh); the job lists a
+per-clip `fbx` path; the renderer imports each, applies the toon look, and the bbox pre-pass locks **one
+shared scale + foot anchor across all clips** so idle/walk/run/hurt line up in-game. Works for Mixamo and
+**Meshy-native** exports alike.
 
-**1. Put the 4 clip FBX here (gitignored — inputs, never shipped):**
+**0. Inspect first (Meshy-native filenames are unknown to the repo).** Before touching the job, dump the real
+structure — this answers "is each clip its own FBX?", "what are the bone/root names?", and "does walk/run
+travel or stay in place?":
+
+```powershell
+# Windows
+& $env:BLENDER_PATH -b -P tools\blender\inspect_fbx.py -- --dir assets\raw\thug
+```
+```bash
+# macOS/Linux
+"$BLENDER_PATH" -b -P tools/blender/inspect_fbx.py -- --dir assets/raw/thug
+```
+
+**1. Put the clip FBX here (gitignored — inputs, never shipped):**
 
 ```
 assets/raw/thug/Breathing Idle.fbx     -> idle  (loop)
-assets/raw/thug/Walking.fbx            -> walk  (loop, export In-Place)
-assets/raw/thug/Running.fbx            -> run   (loop, export In-Place)
+assets/raw/thug/Walking.fbx            -> walk  (loop)
+assets/raw/thug/Running.fbx            -> run   (loop)
 assets/raw/thug/Injured Walking.fbx    -> hurt  (loop)
 ```
 
-(No `attack` clip yet — add a Mixamo melee/punch on the same gangster later as `assets/raw/thug/Attack.fbx`
-+ an `actions[]` entry `{ "name":"attack", "loop":false, "includeTerminalFrame":true }`. Until then the
-ingest's fallback plays **idle** for attacks.)
+The names above are the job's literal defaults. **Meshy-native files keep arbitrary names** — you don't have
+to rename them: if a literal path is missing, the renderer **keyword-resolves** it from the same folder
+(`idle`/`walk`/`run`/`hurt`, also `breath/stand`, `jog/sprint`, `injured/hurt/stagger`). It logs the file it
+picked (`FBX_RESOLVE …`) and errors clearly if a clip is ambiguous or missing. To pin exact paths, edit the
+`actions[].fbx` entries in the job.
+
+(No `attack` clip yet — add a melee/punch later as `assets/raw/thug/Attack.fbx` + an `actions[]` entry
+`{ "name":"attack", "fbx":"assets/raw/thug/Attack.fbx", "loop":false, "outputFrameCount":8, "playbackFps":12 }`.
+Until then the ingest's fallback plays **idle** for attacks.)
 
 **2. Render (local).** The job is `render_jobs/thug_gangster.json`.
 
@@ -84,10 +105,16 @@ then commit the PNGs + manifest. The Phaser ingest (`?sprites`) reads them with 
 gangster faces the wrong way in-game, set it to `180` (Mixamo's forward axis commonly flips on FBX import) —
 or nudge the runtime `dirOffset` in `unitSpriteView`. Verify against `unitFacingQuantize.FACING_TO_DIR`.
 
-> **In-Place safeguard.** `inPlace: true` zeroes the hips' local X/Y each frame so any leftover root motion
-> still renders centred; exporting Walking/Running with Mixamo **In Place** is still the primary fix.
+> **Root-motion strip (source-agnostic).** `inPlace: true` re-centres the figure each frame so locomotion
+> that **travels** still renders in place — and it does **not** shrink `orthoScale` to compensate. For real
+> FBX it translates the import pivot so the **root/hips bone sits over world origin in XY** every frame
+> (`center_root_world_xy`), preserving the vertical (Z) bob; for the blockout it zeroes the rig's own root
+> XY. This handles Meshy-native clips (which have no "In Place" export option) and Mixamo alike. If
+> `inspect_fbx.py` reports a clip as `IN-PLACE` the strip is a harmless no-op; if it `TRAVELS`, the strip is
+> what keeps the figure from sliding out of the cell.
 
 ### Generic swap (any future unit)
 
 Point a job's `source` at `fbx` with per-clip paths, set `modelForwardDeg` if the rig's forward differs, map
-the Mixamo clip names in `actions[]`. Sheet layout, manifest schema, and the Phaser ingest are unchanged.
+the clip names in `actions[]` (or rely on keyword auto-resolve). Sheet layout, manifest schema, and the
+Phaser ingest are unchanged.

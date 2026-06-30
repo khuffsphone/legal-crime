@@ -259,8 +259,47 @@ def import_fbx_unit(filepath, name_hint=""):
     return piv, arm, meshes, action
 
 
-# Common Mixamo root/hips bone names (the In-Place safeguard zeroes this bone's local X/Y per frame).
-MIXAMO_HIPS = ("mixamorig:Hips", "mixamorig1:Hips", "Hips", "Armature|Hips")
+# Common root/hips bone names tried first (Mixamo + a few Meshy-native variants); else the first root bone.
+MIXAMO_HIPS = ("mixamorig:Hips", "mixamorig1:Hips", "Hips", "hips", "Root", "root", "pelvis", "Pelvis", "Armature|Hips")
+
+
+def pick_root_bone(arm):
+    """The character's root/hips pose bone — a known name if present, else the first parentless pose bone.
+    Source-agnostic (Mixamo or Meshy-native rigs). Returns a PoseBone or None."""
+    if arm is None or not getattr(arm, "pose", None):
+        return None
+    for nm in MIXAMO_HIPS:
+        pb = arm.pose.bones.get(nm)
+        if pb:
+            return pb
+    return next((b for b in arm.pose.bones if b.parent is None), None)
+
+
+def center_root_world_xy(arm, piv):
+    """SOURCE-AGNOSTIC In-Place strip: translate the clip's PIVOT so the character's root bone sits over world
+    (0,0) in XY this frame — removing locomotion TRAVEL whether the motion lives on a hips bone, a root bone of
+    any name, or the object itself (Mixamo OR Meshy-native). Vertical (Z) bob is preserved, and ortho_scale is
+    untouched (we move the figure, not the zoom). Call AFTER set_frame; it runs its own depsgraph updates.
+    For the blockout (piv is None) it falls back to the local-XY zero (the placeholder is baked in-place)."""
+    if bpy is None:
+        return
+    if piv is None:
+        zero_root_inplace(arm)  # blockout: no pivot to drive; zero the rig's own root XY instead
+        return
+    pb = pick_root_bone(arm)
+    if pb is None:
+        return
+    deps = bpy.context.evaluated_depsgraph_get()
+    z = piv.location[2]
+    piv.location = (0.0, 0.0, z)              # neutralise prior offset so we measure the clip's intrinsic travel
+    deps.update()
+    arm_eval = arm.evaluated_get(deps)
+    pbe = arm_eval.pose.bones.get(pb.name)
+    if pbe is None:
+        return
+    world = arm_eval.matrix_world @ pbe.head  # posed root head in WORLD space (pivot rotation included)
+    piv.location = (-world.x, -world.y, z)    # cancel XY travel; figure stays centred over origin
+    deps.update()
 
 
 def zero_root_inplace(arm):

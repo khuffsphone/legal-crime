@@ -3,7 +3,7 @@
   "source": "fbx",
   "inPlace": true,
   "outputDir": "public/assets/sprites/units",
-  "_inputs": "Place the 4 Mixamo 'Chicago_Gangster' clip FBX files at the paths below (assets/raw/thug/ is gitignored). Each is one rigged+skinned mesh sharing the same rig; the renderer normalises them to a SHARED scale so they line up. Export Walking/Running with Mixamo 'In Place' ON.",
+  "_inputs": "Animated clip FBX live at assets/raw/thug/ (gitignored). Each is one rigged+skinned mesh; the renderer normalises them to a SHARED scale so they line up. Meshy-native exports use arbitrary filenames AND can carry root translation (no 'In Place' option) — that's fine: (1) inPlace:true strips locomotion TRAVEL on import (root bone re-centred over world origin each frame, Z bob kept), and (2) if a literal `fbx` path below is missing, the renderer keyword-resolves it from this folder (idle/walk/run/hurt). Run `inspect_fbx.py` first to confirm the real filenames + which clips travel; rename to the literals below OR set exact paths here.",
   "camera": {
     "tileW": 128,
     "tileH": 64,
