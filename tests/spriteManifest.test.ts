@@ -60,19 +60,21 @@ describe('thug sprite manifest — the committed render output', () => {
   });
 
   // A manifest validates GEOMETRY, not POSE — so a contaminated render (every slot driven by the same baked
-  // baselayer) can read 100% clean. These checks close that gap from metadata: a real render records the
-  // source FBX + resolved clip per slot, and we require each slot to come from a DISTINCT file with no
-  // 'baselayer' artefact. (The renderer also aborts on byte-identical sheets; this is the committed-artefact gate.)
-  it('a real render maps each slot to a distinct, non-contaminant source clip', () => {
+  // clip) can read 100% clean. These checks close that gap from metadata: a real render records the source FBX
+  // + resolved clip per slot, and we require each slot to come from a DISTINCT file and a DISTINCT clip.
+  // NB we do NOT reject a 'baselayer' sourceAction: Meshy names a per-clip export's real action
+  // '<Clip>|baselayer' (e.g. 'walking_man|baselayer'), so the token is the real clip here, not an artefact.
+  // The byte-identical-sheet abort in the renderer is the pose-level gate; this is the committed-artefact gate.
+  it('a real render maps each slot to a distinct source file AND a distinct clip', () => {
     if (manifest.placeholder) return; // placeholder has no source provenance — nothing to check
     const actions = Object.values(manifest.actions);
     const files = actions.map((a) => a.sourceFile);
+    const clips = actions.map((a) => a.sourceAction);
     expect(files.every((f) => typeof f === 'string' && f.length > 0)).toBe(true); // provenance recorded
+    expect(clips.every((c) => typeof c === 'string' && c.length > 0)).toBe(true);
     expect(new Set(files).size).toBe(files.length); // no FBX feeds two slots (clip→file mis-map)
-    for (const a of actions) {
-      expect((a.sourceAction ?? '').toLowerCase()).not.toContain('baselayer'); // not the baked artefact
-      expect(a.sourceFile).not.toMatch(/merged/i); // never the merged-takes FBX (the contamination source)
-    }
+    expect(new Set(clips).size).toBe(clips.length); // no clip drives two slots (the contamination signature)
+    for (const a of actions) expect(a.sourceFile).not.toMatch(/merged/i); // never the merged-takes FBX
   });
 });
 

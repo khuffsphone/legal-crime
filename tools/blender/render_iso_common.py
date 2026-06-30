@@ -236,13 +236,18 @@ def _is_contaminant_action(name):
 
 
 def select_clip_action(candidates, name_hint="", action_hint=None):
-    """Pick the INTENDED clip action from the actions imported with one FBX, skipping contaminating baselayers.
-    Order: explicit per-job action_hint (exact, then substring) -> non-contaminant 'mixamo.com|Layer0' (the real
-    Mixamo clip layer) -> non-contaminant whose name contains the keyword name_hint (idle/walk/...) -> first
-    non-contaminant -> first overall (last resort, flagged). Returns (action, reason); (None, reason) if empty."""
+    """Pick the INTENDED clip action from the actions imported with one FBX.
+    A SINGLE-action file is unambiguous — use it as-is (a per-clip Meshy export names its one real action
+    '<Clip>|baselayer', so contaminant-filtering must NOT apply here or it would drop the real clip). Only when
+    a file ships MULTIPLE actions is the '|baselayer' artefact a contaminant to drop (the Mixamo case: a junk
+    'Right_Upper_Hook_from_Guard|baselayer' beside the real 'mixamo.com|Layer0').
+    Order for multi-action: explicit action_hint (exact, then substring) -> drop baselayers -> 'mixamo.com|Layer0'
+    -> keyword name_hint -> first non-contaminant -> first overall. Returns (action, reason)."""
     cands = [a for a in candidates if a is not None]
     if not cands:
         return None, "no actions in file"
+    if len(cands) == 1:
+        return cands[0], "only action in file"  # single-clip export: unambiguous, no filtering
     clean = [a for a in cands if not _is_contaminant_action(a.name)]
     if action_hint:
         h = action_hint.lower()

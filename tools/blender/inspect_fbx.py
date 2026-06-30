@@ -215,13 +215,14 @@ def inspect_one(path, scene):
         print("    bones: %s" % (bone_names if nbones <= 40 else bone_names[:40] + ["...+%d more" % (nbones - 40)]))
         if root is None:
             continue
-        for action in all_actions:
+        multi = len(all_actions) > 1  # 'baselayer' is only a CONTAMINANT when a file ships >1 action;
+        for action in all_actions:    # a single-action per-clip export names its REAL clip '<Clip>|baselayer'.
             _assign_action(arm, action)
             has_loc, span_xy, span_z = _action_root_travel(action, root)
             fr = action.frame_range
             wspan = _world_root_travel(arm, root, action, scene)
             travels = max(span_xy, wspan) >= 0.05
-            tag = "  <<CONTAMINANT (baselayer/Guard/Hook) — importer drops this>>" if _is_contaminant(action.name) else ""
+            tag = "  <<suspected baselayer artefact — importer drops it>>" if (multi and _is_contaminant(action.name)) else ""
             verdict = ("TRAVELS  (needs root strip)" if travels else "IN-PLACE") + tag
             print("    action %r: frames %d..%d  rootLocKeys=%s  localXYspan=%.3f  worldXYspan=%.3f  -> %s"
                   % (action.name, int(fr[0]), int(fr[1]), has_loc, span_xy, wspan, verdict))
