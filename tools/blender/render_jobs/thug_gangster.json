@@ -3,7 +3,7 @@
   "source": "fbx",
   "inPlace": true,
   "outputDir": "public/assets/sprites/units",
-  "_inputs": "Animated clip FBX live at assets/raw/thug/ (gitignored). Each is one rigged+skinned mesh; the renderer normalises them to a SHARED scale so they line up. Meshy-native exports use arbitrary filenames AND can carry root translation (no 'In Place' option) — that's fine: (1) inPlace:true strips locomotion TRAVEL on import (root bone re-centred over world origin each frame, Z bob kept), and (2) if a literal `fbx` path below is missing, the renderer keyword-resolves it from this folder (idle/walk/run/hurt). Run `inspect_fbx.py` first to confirm the real filenames + which clips travel; rename to the literals below OR set exact paths here.",
+  "_inputs": "Meshy-native per-clip FBX at assets/raw/thug/ (gitignored), each one rigged+skinned mesh; the renderer normalises them to a SHARED scale so they line up. Paths below are the actual Meshy export filenames. Meshy clips can carry root translation (no 'In Place' option) — inPlace:true strips locomotion TRAVEL on import (root bone re-centred over world origin each frame, Z bob kept). If a clip's FBX carries more than one action, the importer drops contaminating guard/hook baselayers and picks the real clip (set per-action `actionName` to pin an exact take). If a literal path is missing the renderer keyword-resolves from this folder. attack=Punch_Combo_1 (non-loop, plays once).",
   "camera": {
     "tileW": 128,
     "tileH": 64,
@@ -16,10 +16,11 @@
     "_note": "2:1 tiles -> dimetric2to1 (60deg from top-down) is the EXACT match (same lock as #48). modelForwardDeg calibrates the rig's facing: if the gangster faces the wrong way in-game, try 180 here (Mixamo's forward axis often flips on FBX import) OR use the runtime dirOffset in unitSpriteView. dir0 = model yaw `dirStartDeg+modelForwardDeg`, increasing clockwise in 45deg steps; the ingest's FACING_TO_DIR maps grid facing -> row."
   },
   "actions": [
-    { "name": "idle", "fbx": "assets/raw/thug/Breathing Idle.fbx", "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
-    { "name": "walk", "fbx": "assets/raw/thug/Walking.fbx",         "outputFrameCount": 10, "playbackFps": 10, "loop": true },
-    { "name": "run",  "fbx": "assets/raw/thug/Running.fbx",         "outputFrameCount": 10, "playbackFps": 12, "loop": true },
-    { "name": "hurt", "fbx": "assets/raw/thug/Injured Walking.fbx", "outputFrameCount": 10, "playbackFps": 9,  "loop": true }
+    { "name": "idle",   "fbx": "assets/raw/thug/Meshy_AI_biped_Animation_Short_Breathe_and_Look_Around_withSkin.fbx", "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
+    { "name": "walk",   "fbx": "assets/raw/thug/Meshy_AI_biped_Animation_Walking_withSkin.fbx",                        "outputFrameCount": 10, "playbackFps": 10, "loop": true },
+    { "name": "run",    "fbx": "assets/raw/thug/Meshy_AI_biped_Animation_Running_withSkin.fbx",                        "outputFrameCount": 10, "playbackFps": 12, "loop": true },
+    { "name": "hurt",   "fbx": "assets/raw/thug/Meshy_AI_biped_Animation_Hit_Reaction_withSkin.fbx",                  "outputFrameCount": 10, "playbackFps": 9,  "loop": true },
+    { "name": "attack", "fbx": "assets/raw/thug/Meshy_AI_biped_Animation_Punch_Combo_1_withSkin.fbx",                 "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
   ],
   "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
   "shader": {

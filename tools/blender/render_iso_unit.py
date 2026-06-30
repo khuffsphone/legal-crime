@@ -54,7 +54,7 @@ ACTION_FBX_KEYWORDS = {
     "idle": ("idle", "breath", "stand", "rest"),
     "walk": ("walk",),
     "run": ("run", "jog", "sprint"),
-    "hurt": ("hurt", "injured", "injure", "damage", "pain", "stagger", "flinch"),
+    "hurt": ("hurt", "injured", "injure", "damage", "pain", "stagger", "flinch", "hit", "reaction"),
     "attack": ("attack", "punch", "melee", "swing", "strike", "combat", "kick"),
 }
 

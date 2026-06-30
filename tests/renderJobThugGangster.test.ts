@@ -14,23 +14,24 @@ const job = JSON.parse(
   framing: { frameCanvasW: number; anchorX: number; anchorY: number };
 };
 
-describe('thug_gangster render job — real Mixamo FBX pass', () => {
+describe('thug_gangster render job — real Meshy-native FBX pass', () => {
   it('is an fbx source with the In-Place safeguard on', () => {
     expect(job.source).toBe('fbx');
     expect(job.inPlace).toBe(true);
     expect(job.unitName).toBe(THUG_SPRITE_CONFIG.unitName); // 'thug'
   });
 
-  it('renders idle+walk(+run+hurt); every clip names an FBX input + loops; idle (the core) is present', () => {
+  it('renders idle+walk+run+hurt+attack; every clip names an FBX input; idle (the core) is present', () => {
     const names = job.actions.map((a) => a.name);
     expect(names).toContain('idle');                 // CORE clip the ingest requires
     expect(names).toContain('walk');
+    expect(names).toContain('attack');               // combat clip (Punch_Combo_1) is present this pass
     expect(new Set(names).size).toBe(names.length);  // no dupes
     for (const a of job.actions) {
       expect(a.fbx).toMatch(/^assets\/raw\/thug\/.+\.fbx$/i); // gitignored input path
       expect(a.outputFrameCount).toBeGreaterThan(0);
       expect(a.playbackFps).toBeGreaterThan(0);
-      expect(a.loop).toBe(true); // all four clips this pass are loops (attack arrives later, non-loop)
+      expect(a.loop).toBe(a.name !== 'attack');      // loco/idle/hurt loop; attack plays once
     }
     // every rendered action is one the ingest knows how to load
     for (const n of names) expect(THUG_SPRITE_CONFIG.actions).toContain(n);

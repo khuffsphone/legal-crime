@@ -69,24 +69,24 @@ travel or stay in place?":
 "$BLENDER_PATH" -b -P tools/blender/inspect_fbx.py -- --dir assets/raw/thug
 ```
 
-**1. Put the clip FBX here (gitignored — inputs, never shipped):**
+**1. Put the clip FBX here (gitignored — inputs, never shipped).** The job's literal paths are the actual
+Meshy-native export filenames:
 
 ```
-assets/raw/thug/Breathing Idle.fbx     -> idle  (loop)
-assets/raw/thug/Walking.fbx            -> walk  (loop)
-assets/raw/thug/Running.fbx            -> run   (loop)
-assets/raw/thug/Injured Walking.fbx    -> hurt  (loop)
+assets/raw/thug/Meshy_AI_biped_Animation_Short_Breathe_and_Look_Around_withSkin.fbx  -> idle    (loop)
+assets/raw/thug/Meshy_AI_biped_Animation_Walking_withSkin.fbx                         -> walk    (loop)
+assets/raw/thug/Meshy_AI_biped_Animation_Running_withSkin.fbx                         -> run     (loop)
+assets/raw/thug/Meshy_AI_biped_Animation_Hit_Reaction_withSkin.fbx                    -> hurt    (loop)
+assets/raw/thug/Meshy_AI_biped_Animation_Punch_Combo_1_withSkin.fbx                   -> attack  (once)
 ```
 
-The names above are the job's literal defaults. **Meshy-native files keep arbitrary names** — you don't have
-to rename them: if a literal path is missing, the renderer **keyword-resolves** it from the same folder
-(`idle`/`walk`/`run`/`hurt`, also `breath/stand`, `jog/sprint`, `injured/hurt/stagger`). It logs the file it
-picked (`FBX_RESOLVE …`) and errors clearly if a clip is ambiguous or missing. To pin exact paths, edit the
-`actions[].fbx` entries in the job.
+If a literal path is missing, the renderer **keyword-resolves** it from the same folder (`idle`/`walk`/`run`/
+`hurt`/`attack`, plus `breath/stand`, `jog/sprint`, `injured/hit/reaction`, `punch/melee`). It logs the file
+it picked (`FBX_RESOLVE …`) and errors clearly if a clip is ambiguous or missing. To pin exact paths, edit
+the `actions[].fbx` entries in the job.
 
-(No `attack` clip yet — add a melee/punch later as `assets/raw/thug/Attack.fbx` + an `actions[]` entry
-`{ "name":"attack", "fbx":"assets/raw/thug/Attack.fbx", "loop":false, "outputFrameCount":8, "playbackFps":12 }`.
-Until then the ingest's fallback plays **idle** for attacks.)
+`attack` (Punch_Combo_1) is a **non-loop** clip — it plays once; the others loop. The ingest knows `attack`
+and falls back to **idle** only if its sheet is absent.
 
 > **Multiple actions in one FBX / contaminating baselayers.** Some exports ship a baked
 > `…Right_Upper_Hook_from_Guard|baselayer` action *alongside* the real clip — that stray guard pose was the
