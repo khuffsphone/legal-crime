@@ -39,8 +39,8 @@ CONTAMINANT_TOKENS = ("baselayer",)
 
 
 def _is_contaminant(name):
-    low = (name or "").lower()
-    return any(tok in low for tok in CONTAMINANT_TOKENS)
+    low = (name or "").lower()  # case-insensitive: catches 'BaseLayer', '|baselayer', 'BASELAYER' alike
+    return any(tok in low for tok in CONTAMINANT_TOKENS)  # tokens MUST stay lowercase for this to hold
 
 
 def _argv_after_dashes():
