@@ -32,6 +32,15 @@ except Exception:  # pragma: no cover - only runs inside Blender
 # Same root/hips name candidates the renderer tries first (Mixamo + Meshy-native variants); else first root bone.
 ROOT_NAMES = ("mixamorig:Hips", "mixamorig1:Hips", "Hips", "hips", "Root", "root", "pelvis", "Pelvis", "Armature|Hips")
 
+# Actions whose NAME carries one of these is a contaminating export artefact (a baked guard/hook baselayer),
+# NOT the intended clip — the render importer drops them. Kept in sync with render_iso_common.CONTAMINANT_TOKENS.
+CONTAMINANT_TOKENS = ("baselayer", "guard", "hook")
+
+
+def _is_contaminant(name):
+    low = (name or "").lower()
+    return any(tok in low for tok in CONTAMINANT_TOKENS)
+
 
 def _argv_after_dashes():
     return sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -67,6 +76,55 @@ def _pick_root_name(arm_obj):
     return roots[0] if roots else None
 
 
+def _iter_action_fcurves(action):
+    """Every F-curve in an action, ACROSS Blender versions. Legacy (<=4.3) exposes Action.fcurves; the slotted
+    'Baklava' actions in 4.4+/5.1 removed it — F-curves now live under
+    action.layers[].strips[].channelbag(slot).fcurves. Returns a list (may be empty), never raises."""
+    if action is None:
+        return []
+    try:
+        legacy = list(action.fcurves)  # AttributeError on slotted-only builds
+    except AttributeError:
+        legacy = None
+    if legacy:
+        return legacy
+    out = []
+    slots = list(getattr(action, "slots", []) or [])
+    for layer in (getattr(action, "layers", []) or []):
+        for strip in (getattr(layer, "strips", []) or []):
+            cbags = []
+            for slot in slots:
+                try:
+                    cb = strip.channelbag(slot)
+                except Exception:
+                    cb = None
+                if cb is not None:
+                    cbags.append(cb)
+            if not cbags:
+                cbags = list(getattr(strip, "channelbags", []) or [])
+            for cb in cbags:
+                out.extend(list(getattr(cb, "fcurves", []) or []))
+    return out
+
+
+def _assign_action(arm, action):
+    """Assign an action to the armature, binding a slot on slotted (4.4+) actions so it actually drives the rig
+    (legacy actions need only the .action assignment). Version-safe; never raises."""
+    if arm is None or action is None:
+        return
+    if arm.animation_data is None:
+        arm.animation_data_create()
+    ad = arm.animation_data
+    ad.action = action
+    slots = getattr(action, "slots", None)
+    if slots and hasattr(ad, "action_slot"):
+        try:
+            if ad.action_slot is None:
+                ad.action_slot = slots[0]
+        except Exception:
+            pass
+
+
 def _action_root_travel(action, root_name):
     """Return (has_loc_fcurves, span_xy, span_z) for the root bone's location across the action.
     span_xy is the diagonal of the X/Y bounding box of the root's keyed local translation — a proxy for how
@@ -76,7 +134,7 @@ def _action_root_travel(action, root_name):
     path = 'pose.bones["%s"].location' % root_name
     chans = {0: [], 1: [], 2: []}
     has = False
-    for fc in action.fcurves:
+    for fc in _iter_action_fcurves(action):
         if fc.data_path == path and fc.array_index in chans:
             has = True
             for kp in fc.keyframe_points:
@@ -157,13 +215,13 @@ def inspect_one(path, scene):
         if root is None:
             continue
         for action in all_actions:
-            if arm.animation_data is None:
-                arm.animation_data_create()
-            arm.animation_data.action = action
+            _assign_action(arm, action)
             has_loc, span_xy, span_z = _action_root_travel(action, root)
             fr = action.frame_range
             wspan = _world_root_travel(arm, root, action, scene)
-            verdict = "IN-PLACE" if max(span_xy, wspan) < 0.05 else "TRAVELS  (needs root strip)"
+            travels = max(span_xy, wspan) >= 0.05
+            tag = "  <<CONTAMINANT (baselayer/Guard/Hook) — importer drops this>>" if _is_contaminant(action.name) else ""
+            verdict = ("TRAVELS  (needs root strip)" if travels else "IN-PLACE") + tag
             print("    action %r: frames %d..%d  rootLocKeys=%s  localXYspan=%.3f  worldXYspan=%.3f  -> %s"
                   % (action.name, int(fr[0]), int(fr[1]), has_loc, span_xy, wspan, verdict))
 

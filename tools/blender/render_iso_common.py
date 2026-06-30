@@ -221,18 +221,83 @@ def clear_scene():
         bpy.data.objects.remove(o, do_unlink=True)
 
 
-def import_fbx_unit(filepath, name_hint=""):
-    """Import a (Mixamo) FBX clip and return (pivot, armature, meshes, action). The armature + any unparented
-    meshes are parented (keeping world transform) under a fresh Empty at the WORLD ORIGIN so the whole clip can
-    be yaw-rotated as ONE for the 8 facings. Absolute scale is irrelevant downstream — the shared bbox pre-pass
-    normalises every clip to the same ortho_scale — so we do NOT rescale (Mixamo's cm units are fine)."""
+# An action whose NAME carries one of these tokens is a contaminating export artefact (a baked
+# guard/hook baselayer that Mixamo/Meshy sometimes ships ALONGSIDE the real clip — e.g.
+# 'Armature|...|Right_Upper_Hook_from_Guard|baselayer'), NOT the clip we want to render. The importer
+# drops these so a stray boxing-guard pose can't hijack the render. Kept in sync with inspect_fbx.py.
+CONTAMINANT_TOKENS = ("baselayer", "guard", "hook")
+
+
+def _is_contaminant_action(name):
+    low = (name or "").lower()
+    return any(tok in low for tok in CONTAMINANT_TOKENS)
+
+
+def select_clip_action(candidates, name_hint="", action_hint=None):
+    """Pick the INTENDED clip action from the actions imported with one FBX, skipping contaminating baselayers.
+    Order: explicit per-job action_hint (exact, then substring) -> non-contaminant 'mixamo.com|Layer0' (the real
+    Mixamo clip layer) -> non-contaminant whose name contains the keyword name_hint (idle/walk/...) -> first
+    non-contaminant -> first overall (last resort, flagged). Returns (action, reason); (None, reason) if empty."""
+    cands = [a for a in candidates if a is not None]
+    if not cands:
+        return None, "no actions in file"
+    clean = [a for a in cands if not _is_contaminant_action(a.name)]
+    if action_hint:
+        h = action_hint.lower()
+        pool = clean or cands
+        for a in pool:
+            if a.name == action_hint:
+                return a, "job actionName exact %r" % action_hint
+        for a in pool:
+            if h in a.name.lower():
+                return a, "job actionName substring %r" % action_hint
+    for a in clean:
+        if "mixamo.com|layer0" in a.name.lower():
+            return a, "mixamo.com|Layer0 clip layer"
+    if name_hint:
+        nh = name_hint.lower()
+        for a in clean:
+            if nh in a.name.lower():
+                return a, "keyword %r match" % name_hint
+    if clean:
+        return clean[0], "first non-contaminant"
+    return cands[0], "ALL actions look contaminated — using first (REVIEW)"
+
+
+def assign_action(arm, action):
+    """Assign an action to the armature, binding a slot on slotted (Blender 4.4+/5.1 'Baklava') actions so it
+    actually drives the rig; legacy actions need only the .action assignment. Version-safe; never raises."""
+    if bpy is None or arm is None or action is None:
+        return
+    if arm.animation_data is None:
+        arm.animation_data_create()
+    ad = arm.animation_data
+    ad.action = action
+    slots = getattr(action, "slots", None)
+    if slots and hasattr(ad, "action_slot"):
+        try:
+            if ad.action_slot is None:
+                ad.action_slot = slots[0]
+        except Exception:
+            pass
+
+
+def import_fbx_unit(filepath, name_hint="", action_hint=None):
+    """Import an FBX clip and return (pivot, armature, meshes, action). The armature + any unparented meshes are
+    parented (keeping world transform) under a fresh Empty at the WORLD ORIGIN so the whole clip can be
+    yaw-rotated as ONE for the 8 facings. Absolute scale is irrelevant downstream — the shared bbox pre-pass
+    normalises every clip to the same ortho_scale — so we do NOT rescale (Mixamo's cm units are fine).
+    When the FBX ships MULTIPLE actions (e.g. a contaminating guard/hook baselayer beside the real clip),
+    select_clip_action picks the intended one and the baselayer is ignored. action_hint = per-job override."""
     if bpy is None:
         raise SystemExit("RENDER_FAIL: bpy unavailable")
     if not os.path.isfile(filepath):
         raise SystemExit("RENDER_FAIL: FBX not found: %r" % filepath)
     before = set(bpy.data.objects)
+    before_actions = set(bpy.data.actions)
     bpy.ops.import_scene.fbx(filepath=filepath, automatic_bone_orientation=True, ignore_leaf_bones=True)
     new = [o for o in bpy.data.objects if o not in before]
+    new_actions = [a for a in bpy.data.actions if a not in before_actions]
     arm = next((o for o in new if o.type == "ARMATURE"), None)
     meshes = [o for o in new if o.type == "MESH"]
     if arm is None:
@@ -249,7 +314,14 @@ def import_fbx_unit(filepath, name_hint=""):
             print("DROP non-character mesh from FBX:", m.name)
             bpy.data.objects.remove(m, do_unlink=True)
         meshes = char
-    action = arm.animation_data.action if (arm.animation_data and arm.animation_data.action) else None
+    # SELECT the intended clip action; DROP contaminating guard/hook baselayers (the boxing-stance source).
+    assigned = arm.animation_data.action if (arm.animation_data and arm.animation_data.action) else None
+    cand_actions = new_actions or ([assigned] if assigned else [])
+    action, why = select_clip_action(cand_actions, name_hint, action_hint)
+    print("ACTION_PICK file=%s -> %r (%s); candidates=%s"
+          % (os.path.basename(filepath), (action.name if action else None), why, [a.name for a in cand_actions]))
+    if action is not None:
+        assign_action(arm, action)
     piv = bpy.data.objects.new("piv_" + (name_hint or arm.name), None)
     bpy.context.collection.objects.link(piv)
     for o in [arm] + [m for m in meshes if m.parent is None]:

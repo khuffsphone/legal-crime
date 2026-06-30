@@ -124,7 +124,7 @@ def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, 
     for clip in clips:
         if multi_model:
             set_only_visible(clips, clip)
-        clip["arm"].animation_data.action = clip["action"]
+        ic.assign_action(clip["arm"], clip["action"])  # slot-bind on Blender 4.4+/5.1 slotted actions
         rot_obj = clip["piv"] or clip["arm"]
         for d in range(dirs):
             rot_obj.rotation_euler = (0, 0, math.radians(dir_start + model_forward + d * dir_step))
@@ -242,7 +242,7 @@ def main():
             if not fbx:
                 raise SystemExit("RENDER_FAIL: action %r needs an 'fbx' path (source=fbx)" % a.get("name"))
             fbx_abs = resolve_fbx(fbx, a["name"])
-            piv, arm, meshes, action = ic.import_fbx_unit(fbx_abs, a["name"])
+            piv, arm, meshes, action = ic.import_fbx_unit(fbx_abs, a["name"], a.get("actionName"))
             if action is None:
                 raise SystemExit("RENDER_FAIL: FBX %r has no animation action" % fbx_abs)
             apply_toon_materials(meshes, shader_cfg)
@@ -286,7 +286,7 @@ def main():
     for clip in clips:
         if multi_model:
             set_only_visible(clips, clip)
-        clip["arm"].animation_data.action = clip["action"]
+        ic.assign_action(clip["arm"], clip["action"])  # slot-bind on Blender 4.4+/5.1 slotted actions
         rot_obj = clip["piv"] or clip["arm"]
         name = clip["name"]
         cols = clip["cols"]

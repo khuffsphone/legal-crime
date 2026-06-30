@@ -88,6 +88,15 @@ picked (`FBX_RESOLVE …`) and errors clearly if a clip is ambiguous or missing.
 `{ "name":"attack", "fbx":"assets/raw/thug/Attack.fbx", "loop":false, "outputFrameCount":8, "playbackFps":12 }`.
 Until then the ingest's fallback plays **idle** for attacks.)
 
+> **Multiple actions in one FBX / contaminating baselayers.** Some exports ship a baked
+> `…Right_Upper_Hook_from_Guard|baselayer` action *alongside* the real clip — that stray guard pose was the
+> "boxing-stance walk" bug. The importer now **drops any action whose name contains `baselayer`/`Guard`/`Hook`**
+> and selects the intended one: a per-clip `"actionName"` hint in the job wins, else `mixamo.com|Layer0` (the
+> real Mixamo clip layer), else a keyword match on the action name. It logs the pick per file
+> (`ACTION_PICK file=… -> '…'`), so a wrong choice is visible in the render output. Set `"actionName"` on an
+> `actions[]` entry to pin an exact take if the auto-pick ever guesses wrong. Run `inspect_fbx.py` first — it
+> lists every take and tags the contaminants.
+
 **2. Render (local).** The job is `render_jobs/thug_gangster.json`.
 
 - **Windows (PowerShell)** — your verified `BLENDER_PATH`, no xvfb needed (desktop GL is present):
