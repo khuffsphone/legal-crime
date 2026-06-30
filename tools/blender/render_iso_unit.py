@@ -11,6 +11,7 @@ import os
 import sys
 import json
 import math
+import hashlib
 
 import bpy  # type: ignore
 
@@ -54,7 +55,7 @@ ACTION_FBX_KEYWORDS = {
     "idle": ("idle", "breath", "stand", "rest"),
     "walk": ("walk",),
     "run": ("run", "jog", "sprint"),
-    "hurt": ("hurt", "injured", "injure", "damage", "pain", "stagger", "flinch", "hit", "reaction"),
+    "hurt": ("hurt", "injured", "injure", "damage", "pain", "stagger", "flinch", "hit", "reaction", "slap"),
     "attack": ("attack", "punch", "melee", "swing", "strike", "combat", "kick"),
 }
 
@@ -233,6 +234,7 @@ def main():
             clips.append({
                 "name": a["name"], "arm": arm, "meshes": [mesh], "piv": None,
                 "action": bpy.data.actions[a["name"]],
+                "sourceFile": "blockout", "sourceAction": a["name"],
                 "frames": sample_frames(a["sourceFrameStart"], a["sourceFrameEnd"], a["outputFrameCount"], a["loop"]),
                 "cols": a["outputFrameCount"], "fps": a["playbackFps"], "loop": a["loop"],
             })
@@ -251,10 +253,11 @@ def main():
             end = int(a.get("sourceFrameEnd", int(fr[1])))
             clips.append({
                 "name": a["name"], "arm": arm, "meshes": meshes, "piv": piv, "action": action,
+                "sourceFile": os.path.basename(fbx_abs), "sourceAction": action.name,
                 "frames": sample_frames(start, end, a["outputFrameCount"], a["loop"]),
                 "cols": a["outputFrameCount"], "fps": a["playbackFps"], "loop": a["loop"],
             })
-            print("IMPORTED %s <- %s frames[%d..%d]" % (a["name"], fbx_abs, start, end))
+            print("IMPORTED %s <- %s [action=%r] frames[%d..%d]" % (a["name"], fbx_abs, action.name, start, end))
     else:
         raise SystemExit("RENDER_FAIL: unknown source %r (expected 'blockout' or 'fbx')" % source)
 
@@ -283,6 +286,7 @@ def main():
     # ── render every cell, pack per-clip sheets (rows=8 dirs × cols=frames) ──────────────────────────────
     unit_name = job["unitName"]
     manifest_actions = {}
+    sheet_digests = {}  # action -> content hash; identical hashes across actions == contamination (abort below)
     for clip in clips:
         if multi_model:
             set_only_visible(clips, clip)
@@ -312,14 +316,30 @@ def main():
                 })
         sheet_path = os.path.join(outdir, "%s_%s.png" % (unit_name, name))
         save_sheet(sheet_path, sheet)
+        sheet_digests[name] = hashlib.sha1(sheet.tobytes()).hexdigest()
         manifest_actions[name] = {
             "action": name,
             "image": "%s_%s.png" % (unit_name, name),
             "frameW": canvas, "frameH": canvas, "rows": dirs, "cols": cols,
             "playbackFps": clip["fps"], "loop": clip["loop"],
+            "sourceFile": clip.get("sourceFile"), "sourceAction": clip.get("sourceAction"),
             "frames": frames_meta,
         }
-        print("SHEET %s rows=%d cols=%d" % (sheet_path, dirs, cols))
+        print("SHEET %s rows=%d cols=%d source=%s action=%r"
+              % (sheet_path, dirs, cols, clip.get("sourceFile"), clip.get("sourceAction")))
+
+    # ── CONTAMINATION GUARD: two actions rendering BYTE-IDENTICAL pixels means the same clip drove both slots
+    # (a baked baselayer hijacked them, or a clip→file mis-map). The manifest validates geometry, not pose, so
+    # this is the only render-time check that catches it. Abort BEFORE writing the manifest so nothing bad ships.
+    by_digest = {}
+    for act, dig in sheet_digests.items():
+        by_digest.setdefault(dig, []).append(act)
+    dupes = [grp for grp in by_digest.values() if len(grp) > 1]
+    if dupes:
+        groups = "; ".join("==".join(sorted(g)) for g in dupes)
+        raise SystemExit(
+            "RENDER_FAIL: identical sheets across distinct actions (%s) — likely a baked 'baselayer' hijack or a "
+            "clip→file mis-map. Check the ACTION_PICK/IMPORTED logs; each action must resolve to its own clip." % groups)
 
     manifest = {
         "unitName": unit_name,

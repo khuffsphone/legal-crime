@@ -221,11 +221,13 @@ def clear_scene():
         bpy.data.objects.remove(o, do_unlink=True)
 
 
-# An action whose NAME carries one of these tokens is a contaminating export artefact (a baked
-# guard/hook baselayer that Mixamo/Meshy sometimes ships ALONGSIDE the real clip — e.g.
+# An action whose NAME carries one of these tokens is a contaminating export artefact — the baked
+# "...|baselayer" layer Mixamo/Meshy ships ALONGSIDE the real clip (e.g.
 # 'Armature|...|Right_Upper_Hook_from_Guard|baselayer'), NOT the clip we want to render. The importer
-# drops these so a stray boxing-guard pose can't hijack the render. Kept in sync with inspect_fbx.py.
-CONTAMINANT_TOKENS = ("baselayer", "guard", "hook")
+# drops these so a stray pose can't hijack the render. Kept in sync with inspect_fbx.py.
+# NB: ONLY 'baselayer' — do NOT add 'guard'/'hook'. Legit combat clips are literally named with those words
+# (e.g. 'Boxing_Guard_Prep_Straight_Punch', 'Right_Upper_Hook'); matching them would drop the REAL attack clip.
+CONTAMINANT_TOKENS = ("baselayer",)
 
 
 def _is_contaminant_action(name):

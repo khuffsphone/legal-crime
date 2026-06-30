@@ -32,9 +32,10 @@ except Exception:  # pragma: no cover - only runs inside Blender
 # Same root/hips name candidates the renderer tries first (Mixamo + Meshy-native variants); else first root bone.
 ROOT_NAMES = ("mixamorig:Hips", "mixamorig1:Hips", "Hips", "hips", "Root", "root", "pelvis", "Pelvis", "Armature|Hips")
 
-# Actions whose NAME carries one of these is a contaminating export artefact (a baked guard/hook baselayer),
+# Actions whose NAME carries this token are a contaminating export artefact (the baked "...|baselayer"),
 # NOT the intended clip — the render importer drops them. Kept in sync with render_iso_common.CONTAMINANT_TOKENS.
-CONTAMINANT_TOKENS = ("baselayer", "guard", "hook")
+# ONLY 'baselayer' — 'guard'/'hook' would wrongly flag legit combat clips (Boxing_Guard.../Right_Upper_Hook).
+CONTAMINANT_TOKENS = ("baselayer",)
 
 
 def _is_contaminant(name):
