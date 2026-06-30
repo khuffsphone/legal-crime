@@ -10,10 +10,11 @@ import {
 const MANIFEST_PATH = join(process.cwd(), 'public', 'assets', 'sprites', 'units', 'thug_manifest.json');
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as UnitSpriteManifest;
 
-describe('thug placeholder manifest — the committed render output', () => {
-  it('the manifest + all three action sheets exist on disk', () => {
+describe('thug sprite manifest — the committed render output', () => {
+  it('the manifest + every action sheet it lists exist on disk (idle is always the core)', () => {
     expect(existsSync(MANIFEST_PATH)).toBe(true);
-    for (const action of ['idle', 'walk', 'attack']) {
+    expect(manifest.actions.idle).toBeTruthy(); // CORE clip the ingest requires
+    for (const action of Object.keys(manifest.actions)) {
       expect(existsSync(join(process.cwd(), 'public', 'assets', 'sprites', 'units', `thug_${action}.png`))).toBe(true);
     }
   });
@@ -41,12 +42,21 @@ describe('thug placeholder manifest — the committed render output', () => {
     expect(manifest.actions.idle).toMatchObject({ cols: 6, rows: 8, playbackFps: 6, loop: true });
     expect(manifest.actions.walk).toMatchObject({ cols: 10, rows: 8, playbackFps: 10, loop: true });
     expect(manifest.actions.attack).toMatchObject({ cols: 8, rows: 8, playbackFps: 12, loop: false });
+    // the real Meshy render also ships run + hurt (looping); assert their loop flag when present.
+    if (manifest.actions.run) expect(manifest.actions.run).toMatchObject({ rows: 8, loop: true });
+    if (manifest.actions.hurt) expect(manifest.actions.hurt).toMatchObject({ rows: 8, loop: true });
     // looping clips drop the terminal duplicate; the non-looping attack keeps its final frame.
     for (const a of Object.values(manifest.actions)) expect(a.frames.length).toBe(a.rows * a.cols);
   });
 
-  it('it is flagged as a throwaway placeholder (not shipped art)', () => {
-    expect(manifest.placeholder).toBe(true);
+  it('the placeholder flag matches its action set (placeholder→idle/walk/attack; real render→+run+hurt)', () => {
+    const names = Object.keys(manifest.actions).sort();
+    if (manifest.placeholder) {
+      expect(names).toEqual(['attack', 'idle', 'walk']); // throwaway primitive stand-in — NOT shipped art
+    } else {
+      // the real Meshy render ships the full clip set the ingest knows
+      for (const a of ['idle', 'walk', 'run', 'hurt', 'attack']) expect(names).toContain(a);
+    }
   });
 });
 
