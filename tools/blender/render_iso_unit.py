@@ -310,7 +310,7 @@ def main():
         os.rmdir(tmpdir)
     except OSError:
         pass
-    print("RENDER_OK unit=%s actions=%d dirs=%d" % (unit_name, len(actions), dirs))
+    print("RENDER_OK unit=%s actions=%d dirs=%d" % (unit_name, len(clips), dirs))
 
 
 if __name__ == "__main__":

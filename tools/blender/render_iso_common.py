@@ -12,6 +12,7 @@
 #   we use it only as a sanity check, and LOCK dimetric2to1. cameraXDeg below is measured FROM TOP-DOWN
 #   (a top-down camera = 0deg; horizon = 90deg), which is how the Blender rotation_euler.x is set.
 
+import os
 import math
 
 try:
