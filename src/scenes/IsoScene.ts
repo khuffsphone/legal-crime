@@ -311,7 +311,7 @@ import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
 // ?sprites — the OPT-IN 3D-rendered iso sprite-sheet view for the thug (procedural figure stays the
 // authoritative fallback). Pure flag/state/facing math + Phaser loader/animator/view.
 import { spritesRequested, spriteScaleParam, spriteDisplayScale } from './render/unitSpriteState';
-import { preloadUnitSprites, registerUnitAnims, THUG_SPRITE_CONFIG } from './render/unitSpriteLoader';
+import { preloadUnitSprites, registerUnitAnims, availableActions, THUG_SPRITE_CONFIG } from './render/unitSpriteLoader';
 import { ensureUnitSprite, driveUnitSprite } from './render/unitSpriteView';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
@@ -704,6 +704,7 @@ export class IsoScene extends Phaser.Scene {
   private spriteScaleMul = spriteScaleParam(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private spriteSheetReady = false;
   private spriteScale = 0.25; // display scale (manifest figurePxH → FIGURE_PX), recomputed in create()
+  private spriteActions: ReadonlySet<string> = new Set(); // which clips actually rendered (drives fallback)
   private grain?: Phaser.GameObjects.TileSprite;
   // FIGURE-STYLE v2 (?fig2 A/B proof — THUG): swap the default thug rig for the upgraded iconic noir
   // silhouette (figureDraw2). OFF by default — nothing changes unless flagged. ?figscale=N (dev knob, ~56/
@@ -823,6 +824,7 @@ export class IsoScene extends Phaser.Scene {
       if (manifest) {
         this.spriteSheetReady = true;
         this.spriteScale = spriteDisplayScale(manifest.figurePxH, FIGURE_PX, this.spriteScaleMul);
+        this.spriteActions = availableActions(this, THUG_SPRITE_CONFIG); // clips that actually rendered (idle/walk/…)
       }
     }
 
@@ -1920,6 +1922,7 @@ export class IsoScene extends Phaser.Scene {
             facing: unitFacing(v.unit),
             attacking: !!v.attackUntil && now < v.attackUntil,
             moving, loco: v.loco ?? 0,
+            availableActions: this.spriteActions, // desired action degrades to a rendered clip (run→walk→idle)
             x: s.x + kick, y: s.y + lift, depth, alpha: v.occA ?? 1, visible: revealed, scale: this.spriteScale,
           });
         } else if (rigLOD(this.targetZoom) === 'far') {

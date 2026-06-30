@@ -11,6 +11,7 @@ import os
 import sys
 import json
 import math
+import hashlib
 
 import bpy  # type: ignore
 
@@ -46,17 +47,57 @@ def sample_frames(start, end, count, loop):
     return [start + i * step for i in range(count)]
 
 
-def apply_toon_materials(mesh, shader_cfg):
-    """Swap each material slot for a toon cel variant built from the slot's stored base hex."""
+# Keyword fallbacks per action — used ONLY when the job's literal `fbx` path is missing. Meshy-native exports
+# carry arbitrary filenames, so if "assets/raw/thug/Walking.fbx" isn't there we look for any FBX in that same
+# folder whose name contains a walk keyword. The literal path stays the contract (the CI test enforces it);
+# this just spares a re-render when the on-disk names differ from the job. Order = specificity.
+ACTION_FBX_KEYWORDS = {
+    "idle": ("idle", "breath", "stand", "rest"),
+    "walk": ("walk",),
+    "run": ("run", "jog", "sprint"),
+    "hurt": ("hurt", "injured", "injure", "damage", "pain", "stagger", "flinch", "hit", "reaction", "slap"),
+    "attack": ("attack", "punch", "melee", "swing", "strike", "combat", "kick"),
+}
+
+
+def resolve_fbx(fbx_rel, action_name):
+    """Return an existing absolute FBX path for this action. The job's literal path wins; if it's absent we
+    scan its folder for an FBX whose name matches the action's keywords (Meshy-native filenames are unknown to
+    the repo). Raises SystemExit with a clear message if nothing matches — never renders the wrong clip."""
+    fbx_abs = fbx_rel if os.path.isabs(fbx_rel) else os.path.abspath(os.path.join(_HERE, "..", "..", fbx_rel))
+    if os.path.isfile(fbx_abs):
+        return fbx_abs
+    folder = os.path.dirname(fbx_abs)
+    if not os.path.isdir(folder):
+        raise SystemExit("RENDER_FAIL: %r not found and its folder %r does not exist" % (fbx_rel, folder))
+    present = sorted(f for f in os.listdir(folder) if f.lower().endswith(".fbx"))
+    kws = ACTION_FBX_KEYWORDS.get(action_name, (action_name,))
+    matches = [f for f in present if any(k in f.lower() for k in kws)]
+    if len(matches) == 1:
+        chosen = os.path.join(folder, matches[0])
+        print("FBX_RESOLVE action=%s literal-missing -> keyword match %r" % (action_name, matches[0]))
+        return chosen
+    if len(matches) > 1:
+        raise SystemExit("RENDER_FAIL: action %r literal %r missing; %d keyword matches %s — rename or set "
+                         "the exact 'fbx' in the job" % (action_name, os.path.basename(fbx_abs), len(matches), matches))
+    raise SystemExit("RENDER_FAIL: action %r FBX %r not found; no keyword match in %s among %s"
+                     % (action_name, os.path.basename(fbx_abs), folder, present))
+
+
+def apply_toon_materials(meshes, shader_cfg):
+    """Swap each material slot (across one or more meshes) for a toon cel variant built from the slot's base
+    colour (the blockout stores __base_hex__; a real FBX exposes a Principled Base Color — material_base_hex
+    handles both)."""
     thresholds = shader_cfg.get("toonThresholds01", [0.28, 0.62, 0.88])
     desat = shader_cfg.get("desaturateAmount01", 0.28)
     sepia = shader_cfg.get("sepiaAmount01", 0.12)
-    for slot in mesh.material_slots:
-        m = slot.material
-        if m is None:
-            continue
-        base_hex = m.get("__base_hex__", "#808080")
-        slot.material = ic.make_toon_material("toon_" + m.name, base_hex, thresholds, desat, sepia)
+    for mesh in meshes:
+        for slot in mesh.material_slots:
+            m = slot.material
+            if m is None:
+                continue
+            base_hex = ic.material_base_hex(m)
+            slot.material = ic.make_toon_material("toon_" + m.name, base_hex, thresholds, desat, sepia)
 
 
 def set_frame(scene, f):
@@ -64,32 +105,48 @@ def set_frame(scene, f):
     scene.frame_set(fi, subframe=float(f - fi))
 
 
-def bbox_prepass(scene, arm, mesh, actions, dirs, basis, dir_start, dir_step, model_forward):
-    """Project every posed vertex (all actions x dirs x frames) onto the camera right/up axes; return the
-    global (minR, maxR, minU, maxU) so framing is consistent and nothing clips."""
+def set_only_visible(clips, active):
+    """Render-hide every clip's meshes except the active clip's (real-FBX mode: each clip is its own imported
+    rig+mesh, so we render one at a time). No-op-safe for shared-mesh blockout (single clip group)."""
+    for c in clips:
+        hide = c is not active
+        for m in c["meshes"]:
+            m.hide_render = hide
+
+
+def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace):
+    """Project every posed vertex (all clips x dirs x frames) onto the camera right/up axes; return the global
+    (minR, maxR, minU, maxU). The UNION across clips locks ONE ortho_scale so idle/walk/run/... all render at
+    the SAME size and foot anchor (the dispatch's 'shared normalization')."""
     right, up, _fwd = basis
     deps = bpy.context.evaluated_depsgraph_get()
     min_r = min_u = float("inf")
     max_r = max_u = float("-inf")
-    for act in actions:
-        arm.animation_data.action = bpy.data.actions[act["name"]]
+    for clip in clips:
+        if multi_model:
+            set_only_visible(clips, clip)
+        ic.assign_action(clip["arm"], clip["action"])  # slot-bind on Blender 4.4+/5.1 slotted actions
+        rot_obj = clip["piv"] or clip["arm"]
         for d in range(dirs):
-            arm.rotation_euler = (0, 0, math.radians(dir_start + model_forward + d * dir_step))
-            for f in act["_frames"]:
+            rot_obj.rotation_euler = (0, 0, math.radians(dir_start + model_forward + d * dir_step))
+            for f in clip["frames"]:
                 set_frame(scene, f)
+                if inplace:
+                    ic.center_root_world_xy(clip["arm"], clip["piv"])  # strip locomotion TRAVEL (keep Z bob)
                 deps.update()
-                ev = mesh.evaluated_get(deps)
-                me = ev.to_mesh()
-                mw = ev.matrix_world
-                for v in me.vertices:
-                    w = mw @ v.co
-                    r = w.dot(right)
-                    u = w.dot(up)
-                    if r < min_r: min_r = r
-                    if r > max_r: max_r = r
-                    if u < min_u: min_u = u
-                    if u > max_u: max_u = u
-                ev.to_mesh_clear()
+                for mesh in clip["meshes"]:
+                    ev = mesh.evaluated_get(deps)
+                    me = ev.to_mesh()
+                    mw = ev.matrix_world
+                    for v in me.vertices:
+                        w = mw @ v.co
+                        r = w.dot(right)
+                        u = w.dot(up)
+                        if r < min_r: min_r = r
+                        if r > max_r: max_r = r
+                        if u < min_u: min_u = u
+                        if u > max_u: max_u = u
+                    ev.to_mesh_clear()
     return (min_r, max_r, min_u, max_u)
 
 
@@ -151,13 +208,7 @@ def main():
     tile_h = float(cam_cfg["tileH"])
     mode = cam_cfg.get("cameraMode", "dimetric2to1")
 
-    # ── scene + model ────────────────────────────────────────────────────────────────────────────────
-    source = job.get("source", "blockout")
-    if source == "blockout":
-        arm, mesh, action_names = blk.build_thug()
-    else:
-        raise SystemExit("RENDER_FAIL: only source=blockout is wired in this placeholder pass (got %r)" % source)
-
+    # ── scene setup (engine, world, output) ─────────────────────────────────────────────────────────────
     scene = bpy.context.scene
     scene.render.engine = engine
     scene.render.resolution_x = canvas
@@ -167,7 +218,49 @@ def main():
         scene.eevee.taa_render_samples = int(out_cfg.get("eeveeSamples", 24))
     ic.setup_world_transparent(scene)
     scene.render.image_settings.compression = int(out_cfg.get("pngCompression", 100))  # max lossless squeeze
-    apply_toon_materials(mesh, shader_cfg)
+
+    # ── build CLIPS: blockout = ONE shared rig + named baked actions; fbx = ONE imported rig PER clip ────
+    # (Mixamo exports one FBX per animation, all sharing the rig/mesh). Either way the bbox pre-pass below
+    # locks ONE shared scale + foot anchor across every clip so they line up in-game.
+    source = job.get("source", "blockout")
+    multi_model = (source == "fbx")
+    inplace = bool(job.get("inPlace", multi_model))  # In-Place safeguard ON for real Mixamo clips
+    ic.clear_scene()  # remove the default Cube/Light/Camera so ONLY the character renders + drives the bbox
+    clips = []
+    if source == "blockout":
+        arm, mesh, _action_names = blk.build_thug()
+        apply_toon_materials([mesh], shader_cfg)
+        for a in job["actions"]:
+            clips.append({
+                "name": a["name"], "arm": arm, "meshes": [mesh], "piv": None,
+                "action": bpy.data.actions[a["name"]],
+                "sourceFile": "blockout", "sourceAction": a["name"],
+                "frames": sample_frames(a["sourceFrameStart"], a["sourceFrameEnd"], a["outputFrameCount"], a["loop"]),
+                "cols": a["outputFrameCount"], "fps": a["playbackFps"], "loop": a["loop"],
+            })
+    elif source == "fbx":
+        for a in job["actions"]:
+            fbx = a.get("fbx")
+            if not fbx:
+                raise SystemExit("RENDER_FAIL: action %r needs an 'fbx' path (source=fbx)" % a.get("name"))
+            fbx_abs = resolve_fbx(fbx, a["name"])
+            piv, arm, meshes, action = ic.import_fbx_unit(fbx_abs, a["name"], a.get("actionName"))
+            if action is None:
+                raise SystemExit("RENDER_FAIL: FBX %r has no animation action" % fbx_abs)
+            apply_toon_materials(meshes, shader_cfg)
+            fr = action.frame_range
+            start = int(a.get("sourceFrameStart", int(fr[0])))
+            end = int(a.get("sourceFrameEnd", int(fr[1])))
+            clips.append({
+                "name": a["name"], "arm": arm, "meshes": meshes, "piv": piv, "action": action,
+                "sourceFile": os.path.basename(fbx_abs), "sourceAction": action.name,
+                "frames": sample_frames(start, end, a["outputFrameCount"], a["loop"]),
+                "cols": a["outputFrameCount"], "fps": a["playbackFps"], "loop": a["loop"],
+            })
+            print("IMPORTED %s <- %s [action=%r] frames[%d..%d]" % (a["name"], fbx_abs, action.name, start, end))
+    else:
+        raise SystemExit("RENDER_FAIL: unknown source %r (expected 'blockout' or 'fbx')" % source)
+
     ic.setup_lights(scene, light_cfg.get("keyEnergy", 1200.0), light_cfg.get("fillEnergy", 500.0),
                     light_cfg.get("rimEnergy", 220.0))
     if shader_cfg.get("outlineEnabled", True) and "--no-freestyle" not in args:
@@ -181,60 +274,78 @@ def main():
     scene.camera = cam
     basis = ic.camera_basis(cam_x, cam_z)
 
-    # ── resolve per-action sampled frames ─────────────────────────────────────────────────────────────
-    actions = []
-    for a in job["actions"]:
-        frames = sample_frames(a["sourceFrameStart"], a["sourceFrameEnd"], a["outputFrameCount"], a["loop"])
-        actions.append({**a, "_frames": frames})
-
-    # ── bbox pre-pass -> lock framing (feet on bottom edge, consistent scale) ──────────────────────────
-    bounds = bbox_prepass(scene, arm, mesh, actions, dirs, basis, dir_start, dir_step, model_forward)
+    # ── bbox pre-pass -> lock ONE framing across ALL clips (feet on bottom edge, shared scale) ───────────
+    bounds = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
     ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad)
     px_per_bu = canvas / ortho_scale
     figure_px_h = proj_h * px_per_bu
     figure_px_w = proj_w * px_per_bu
-    print("CAM mode=%s cameraXDeg=%.4f cameraZDeg=%.1f ortho_scale=%.4f figurePx=%.1fx%.1f"
-          % (mode, cam_x, cam_z, ortho_scale, figure_px_w, figure_px_h))
+    print("CAM mode=%s cameraXDeg=%.4f cameraZDeg=%.1f ortho_scale=%.4f figurePx=%.1fx%.1f source=%s"
+          % (mode, cam_x, cam_z, ortho_scale, figure_px_w, figure_px_h, source))
 
-    # ── render every cell, pack per-action sheets ──────────────────────────────────────────────────────
+    # ── render every cell, pack per-clip sheets (rows=8 dirs × cols=frames) ──────────────────────────────
     unit_name = job["unitName"]
     manifest_actions = {}
-    for act in actions:
-        arm.animation_data.action = bpy.data.actions[act["name"]]
-        cols = act["outputFrameCount"]
+    sheet_digests = {}  # action -> content hash; identical hashes across actions == contamination (abort below)
+    for clip in clips:
+        if multi_model:
+            set_only_visible(clips, clip)
+        ic.assign_action(clip["arm"], clip["action"])  # slot-bind on Blender 4.4+/5.1 slotted actions
+        rot_obj = clip["piv"] or clip["arm"]
+        name = clip["name"]
+        cols = clip["cols"]
         sheet = np.zeros((dirs * canvas, cols * canvas, 4), dtype=np.float32)
         frames_meta = []
         for d in range(dirs):
-            arm.rotation_euler = (0, 0, math.radians(dir_start + model_forward + d * dir_step))
-            for ci, f in enumerate(act["_frames"]):
+            rot_obj.rotation_euler = (0, 0, math.radians(dir_start + model_forward + d * dir_step))
+            for ci, f in enumerate(clip["frames"]):
                 set_frame(scene, f)
-                base = os.path.join(tmpdir, "%s_%s_d%d_f%02d" % (unit_name, act["name"], d, ci))
+                if inplace:
+                    ic.center_root_world_xy(clip["arm"], clip["piv"])  # strip locomotion TRAVEL (keep Z bob)
+                base = os.path.join(tmpdir, "%s_%s_d%d_f%02d" % (unit_name, name, d, ci))
                 png = render_cell(scene, base)
                 cell = load_cell_topdown(png, canvas)
                 y0 = d * canvas
                 x0 = ci * canvas
                 sheet[y0:y0 + canvas, x0:x0 + canvas, :] = cell
                 frames_meta.append({
-                    "name": "%s_%s_dir%d_f%02d" % (unit_name, act["name"], d, ci),
+                    "name": "%s_%s_dir%d_f%02d" % (unit_name, name, d, ci),
                     "x": x0, "y": y0, "w": canvas, "h": canvas,
                     "anchorX": 0.5, "anchorY": 1.0,
-                    "dirIndex": d, "action": act["name"], "frameIndex": ci,
+                    "dirIndex": d, "action": name, "frameIndex": ci,
                 })
-        sheet_path = os.path.join(outdir, "%s_%s.png" % (unit_name, act["name"]))
+        sheet_path = os.path.join(outdir, "%s_%s.png" % (unit_name, name))
         save_sheet(sheet_path, sheet)
-        manifest_actions[act["name"]] = {
-            "action": act["name"],
-            "image": "%s_%s.png" % (unit_name, act["name"]),
+        sheet_digests[name] = hashlib.sha1(sheet.tobytes()).hexdigest()
+        manifest_actions[name] = {
+            "action": name,
+            "image": "%s_%s.png" % (unit_name, name),
             "frameW": canvas, "frameH": canvas, "rows": dirs, "cols": cols,
-            "playbackFps": act["playbackFps"], "loop": act["loop"],
+            "playbackFps": clip["fps"], "loop": clip["loop"],
+            "sourceFile": clip.get("sourceFile"), "sourceAction": clip.get("sourceAction"),
             "frames": frames_meta,
         }
-        print("SHEET %s rows=%d cols=%d" % (sheet_path, dirs, cols))
+        print("SHEET %s rows=%d cols=%d source=%s action=%r"
+              % (sheet_path, dirs, cols, clip.get("sourceFile"), clip.get("sourceAction")))
+
+    # ── CONTAMINATION GUARD: two actions rendering BYTE-IDENTICAL pixels means the same clip drove both slots
+    # (a baked baselayer hijacked them, or a clip→file mis-map). The manifest validates geometry, not pose, so
+    # this is the only render-time check that catches it. Abort BEFORE writing the manifest so nothing bad ships.
+    by_digest = {}
+    for act, dig in sheet_digests.items():
+        by_digest.setdefault(dig, []).append(act)
+    dupes = [grp for grp in by_digest.values() if len(grp) > 1]
+    if dupes:
+        groups = "; ".join("==".join(sorted(g)) for g in dupes)
+        raise SystemExit(
+            "RENDER_FAIL: identical sheets across distinct actions (%s) — likely a baked 'baselayer' hijack or a "
+            "clip→file mis-map. Check the ACTION_PICK/IMPORTED logs; each action must resolve to its own clip." % groups)
 
     manifest = {
         "unitName": unit_name,
-        "placeholder": True,
-        "generator": "tools/blender/render_iso_unit.py (blockout_thug placeholder — NOT shipped art)",
+        "placeholder": (source == "blockout"),
+        "generator": "tools/blender/render_iso_unit.py (%s)" % (
+            "blockout_thug placeholder — NOT shipped art" if source == "blockout" else "real model render (%s)" % source),
         "camera": {"mode": mode, "cameraXDeg": round(cam_x, 4), "cameraZDeg": cam_z,
                    "tileW": tile_w, "tileH": tile_h, "orthoScale": round(ortho_scale, 4)},
         "anchor": {"anchorX": 0.5, "anchorY": 1.0},
@@ -257,7 +368,7 @@ def main():
         os.rmdir(tmpdir)
     except OSError:
         pass
-    print("RENDER_OK unit=%s actions=%d dirs=%d" % (unit_name, len(actions), dirs))
+    print("RENDER_OK unit=%s actions=%d dirs=%d" % (unit_name, len(clips), dirs))
 
 
 if __name__ == "__main__":

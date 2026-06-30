@@ -12,6 +12,7 @@
 #   we use it only as a sanity check, and LOCK dimetric2to1. cameraXDeg below is measured FROM TOP-DOWN
 #   (a top-down camera = 0deg; horizon = 90deg), which is how the Blender rotation_euler.x is set.
 
+import os
 import math
 
 try:
@@ -182,6 +183,223 @@ def setup_lights(scene, key=1200.0, fill=500.0, rim=220.0):
         bg = scene.world.node_tree.nodes.get("Background")
         if bg:
             bg.inputs[1].default_value = 0.08  # ambient strength seed
+
+
+def rgb_to_hex(r, g, b):
+    return "#%02X%02X%02X" % (max(0, min(255, int(r * 255))), max(0, min(255, int(g * 255))), max(0, min(255, int(b * 255))))
+
+
+def material_base_hex(mat, default="#8A8A8A"):
+    """Best-effort base colour of a material as a hex string, for building the toon variant. Reads a stored
+    __base_hex__ (blockout) first, then a Principled BSDF Base Color, else the default gray."""
+    if mat is None:
+        return default
+    stored = mat.get("__base_hex__")
+    if stored:
+        return stored
+    try:
+        if mat.use_nodes:
+            for n in mat.node_tree.nodes:
+                if n.type == "BSDF_PRINCIPLED":
+                    c = n.inputs["Base Color"].default_value
+                    return rgb_to_hex(c[0], c[1], c[2])
+        elif mat.diffuse_color:
+            c = mat.diffuse_color
+            return rgb_to_hex(c[0], c[1], c[2])
+    except Exception:
+        pass
+    return default
+
+
+def clear_scene():
+    """Remove ALL objects (the default startup Cube + Light + Camera, and anything stale) so ONLY what we
+    build/import is visible to the camera. The blockout path clears via its own _reset_scene(); the FBX path
+    needs this so the default Cube doesn't render around the character's legs (the framing bug)."""
+    if bpy is None:
+        return
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o, do_unlink=True)
+
+
+# An action whose NAME carries one of these tokens is a contaminating export artefact — the baked
+# "...|baselayer" layer Mixamo/Meshy ships ALONGSIDE the real clip (e.g.
+# 'Armature|...|Right_Upper_Hook_from_Guard|baselayer'), NOT the clip we want to render. The importer
+# drops these so a stray pose can't hijack the render. Kept in sync with inspect_fbx.py.
+# NB: ONLY 'baselayer' — do NOT add 'guard'/'hook'. Legit combat clips are literally named with those words
+# (e.g. 'Boxing_Guard_Prep_Straight_Punch', 'Right_Upper_Hook'); matching them would drop the REAL attack clip.
+CONTAMINANT_TOKENS = ("baselayer",)
+
+
+def _is_contaminant_action(name):
+    low = (name or "").lower()  # case-insensitive: catches 'BaseLayer', '|baselayer', 'BASELAYER' alike
+    return any(tok in low for tok in CONTAMINANT_TOKENS)  # tokens MUST stay lowercase for this to hold
+
+
+def select_clip_action(candidates, name_hint="", action_hint=None):
+    """Pick the INTENDED clip action from the actions imported with one FBX.
+    A SINGLE-action file is unambiguous — use it as-is (a per-clip Meshy export names its one real action
+    '<Clip>|baselayer', so contaminant-filtering must NOT apply here or it would drop the real clip). Only when
+    a file ships MULTIPLE actions is the '|baselayer' artefact a contaminant to drop (the Mixamo case: a junk
+    'Right_Upper_Hook_from_Guard|baselayer' beside the real 'mixamo.com|Layer0').
+    Order for multi-action: explicit action_hint (exact, then substring) -> drop baselayers -> 'mixamo.com|Layer0'
+    -> keyword name_hint -> first non-contaminant -> first overall. Returns (action, reason)."""
+    cands = [a for a in candidates if a is not None]
+    if not cands:
+        return None, "no actions in file"
+    if len(cands) == 1:
+        return cands[0], "only action in file"  # single-clip export: unambiguous, no filtering
+    clean = [a for a in cands if not _is_contaminant_action(a.name)]
+    if action_hint:
+        h = action_hint.lower()
+        pool = clean or cands
+        for a in pool:
+            if a.name == action_hint:
+                return a, "job actionName exact %r" % action_hint
+        for a in pool:
+            if h in a.name.lower():
+                return a, "job actionName substring %r" % action_hint
+    for a in clean:
+        if "mixamo.com|layer0" in a.name.lower():
+            return a, "mixamo.com|Layer0 clip layer"
+    if name_hint:
+        nh = name_hint.lower()
+        for a in clean:
+            if nh in a.name.lower():
+                return a, "keyword %r match" % name_hint
+    if clean:
+        return clean[0], "first non-contaminant"
+    return cands[0], "ALL actions look contaminated — using first (REVIEW)"
+
+
+def assign_action(arm, action):
+    """Assign an action to the armature, binding a slot on slotted (Blender 4.4+/5.1 'Baklava') actions so it
+    actually drives the rig; legacy actions need only the .action assignment. Version-safe; never raises."""
+    if bpy is None or arm is None or action is None:
+        return
+    if arm.animation_data is None:
+        arm.animation_data_create()
+    ad = arm.animation_data
+    ad.action = action
+    slots = getattr(action, "slots", None)
+    if slots and hasattr(ad, "action_slot"):
+        try:
+            if ad.action_slot is None:
+                ad.action_slot = slots[0]
+        except Exception:
+            pass
+
+
+def import_fbx_unit(filepath, name_hint="", action_hint=None):
+    """Import an FBX clip and return (pivot, armature, meshes, action). The armature + any unparented meshes are
+    parented (keeping world transform) under a fresh Empty at the WORLD ORIGIN so the whole clip can be
+    yaw-rotated as ONE for the 8 facings. Absolute scale is irrelevant downstream — the shared bbox pre-pass
+    normalises every clip to the same ortho_scale — so we do NOT rescale (Mixamo's cm units are fine).
+    When the FBX ships MULTIPLE actions (e.g. a contaminating guard/hook baselayer beside the real clip),
+    select_clip_action picks the intended one and the baselayer is ignored. action_hint = per-job override."""
+    if bpy is None:
+        raise SystemExit("RENDER_FAIL: bpy unavailable")
+    if not os.path.isfile(filepath):
+        raise SystemExit("RENDER_FAIL: FBX not found: %r" % filepath)
+    before = set(bpy.data.objects)
+    before_actions = set(bpy.data.actions)
+    bpy.ops.import_scene.fbx(filepath=filepath, automatic_bone_orientation=True, ignore_leaf_bones=True)
+    new = [o for o in bpy.data.objects if o not in before]
+    new_actions = [a for a in bpy.data.actions if a not in before_actions]
+    arm = next((o for o in new if o.type == "ARMATURE"), None)
+    meshes = [o for o in new if o.type == "MESH"]
+    if arm is None:
+        raise SystemExit("RENDER_FAIL: no ARMATURE in FBX %r" % filepath)
+    if not meshes:
+        raise SystemExit("RENDER_FAIL: no MESH in FBX %r" % filepath)
+    # CHARACTER MESHES ONLY: keep meshes skinned to THIS armature; DELETE any stray imported geometry
+    # (a base/pedestal/ground plane Meshy sometimes bakes in) so it neither renders nor inflates the bbox.
+    def _skinned(m):
+        return any(md.type == "ARMATURE" and md.object == arm for md in m.modifiers)
+    char = [m for m in meshes if _skinned(m)]
+    if char:
+        for m in [m for m in meshes if m not in char]:
+            print("DROP non-character mesh from FBX:", m.name)
+            bpy.data.objects.remove(m, do_unlink=True)
+        meshes = char
+    # SELECT the intended clip action; DROP contaminating guard/hook baselayers (the boxing-stance source).
+    assigned = arm.animation_data.action if (arm.animation_data and arm.animation_data.action) else None
+    cand_actions = new_actions or ([assigned] if assigned else [])
+    action, why = select_clip_action(cand_actions, name_hint, action_hint)
+    print("ACTION_PICK file=%s -> %r (%s); candidates=%s"
+          % (os.path.basename(filepath), (action.name if action else None), why, [a.name for a in cand_actions]))
+    if action is not None:
+        assign_action(arm, action)
+    piv = bpy.data.objects.new("piv_" + (name_hint or arm.name), None)
+    bpy.context.collection.objects.link(piv)
+    for o in [arm] + [m for m in meshes if m.parent is None]:
+        wm = o.matrix_world.copy()
+        o.parent = piv
+        o.matrix_world = wm  # keep world transform when re-parenting
+    return piv, arm, meshes, action
+
+
+# Common root/hips bone names tried first (Mixamo + a few Meshy-native variants); else the first root bone.
+MIXAMO_HIPS = ("mixamorig:Hips", "mixamorig1:Hips", "Hips", "hips", "Root", "root", "pelvis", "Pelvis", "Armature|Hips")
+
+
+def pick_root_bone(arm):
+    """The character's root/hips pose bone — a known name if present, else the first parentless pose bone.
+    Source-agnostic (Mixamo or Meshy-native rigs). Returns a PoseBone or None."""
+    if arm is None or not getattr(arm, "pose", None):
+        return None
+    for nm in MIXAMO_HIPS:
+        pb = arm.pose.bones.get(nm)
+        if pb:
+            return pb
+    return next((b for b in arm.pose.bones if b.parent is None), None)
+
+
+def center_root_world_xy(arm, piv):
+    """SOURCE-AGNOSTIC In-Place strip: translate the clip's PIVOT so the character's root bone sits over world
+    (0,0) in XY this frame — removing locomotion TRAVEL whether the motion lives on a hips bone, a root bone of
+    any name, or the object itself (Mixamo OR Meshy-native). Vertical (Z) bob is preserved, and ortho_scale is
+    untouched (we move the figure, not the zoom). Call AFTER set_frame; it runs its own depsgraph updates.
+    For the blockout (piv is None) it falls back to the local-XY zero (the placeholder is baked in-place)."""
+    if bpy is None:
+        return
+    if piv is None:
+        zero_root_inplace(arm)  # blockout: no pivot to drive; zero the rig's own root XY instead
+        return
+    pb = pick_root_bone(arm)
+    if pb is None:
+        return
+    deps = bpy.context.evaluated_depsgraph_get()
+    z = piv.location[2]
+    piv.location = (0.0, 0.0, z)              # neutralise prior offset so we measure the clip's intrinsic travel
+    deps.update()
+    arm_eval = arm.evaluated_get(deps)
+    pbe = arm_eval.pose.bones.get(pb.name)
+    if pbe is None:
+        return
+    world = arm_eval.matrix_world @ pbe.head  # posed root head in WORLD space (pivot rotation included)
+    piv.location = (-world.x, -world.y, z)    # cancel XY travel; figure stays centred over origin
+    deps.update()
+
+
+def zero_root_inplace(arm):
+    """In-Place safeguard: zero the hips/root bone's local X/Y translation so a clip with leftover root motion
+    still renders centred (Mixamo 'In Place' export already removes it; this is belt-and-suspenders). Returns
+    True if a root bone was found+zeroed. Leaves Z (vertical bob) intact."""
+    if arm is None or not getattr(arm, "pose", None):
+        return False
+    pb = None
+    for nm in MIXAMO_HIPS:
+        pb = arm.pose.bones.get(nm)
+        if pb:
+            break
+    if pb is None:
+        # fall back to the first root (parentless) pose bone
+        pb = next((b for b in arm.pose.bones if b.parent is None), None)
+    if pb is None:
+        return False
+    pb.location[0] = 0.0  # zero local X
+    pb.location[1] = 0.0  # zero local Y (keep [2] = vertical bob)
+    return True
 
 
 def setup_freestyle(scene, view_layer, thickness=1.75, color_hex="#1E1713"):

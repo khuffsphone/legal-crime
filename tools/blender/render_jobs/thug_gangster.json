@@ -1,0 +1,37 @@
+{
+  "unitName": "thug",
+  "source": "fbx",
+  "inPlace": true,
+  "outputDir": "public/assets/sprites/units",
+  "_inputs": "Stage the 5 'Chicago Gangster A Po' per-clip FBX at assets/raw/thug/ (gitignored) RENAMED to the short names below: idle.fbx (Short_Breathe_and_Look_Around), walk.fbx (Walking), run.fbx (Running), hurt.fbx (Slap_Reaction), attack.fbx (Boxing_Guard_Prep_Straight_Punch). Short names = no ambiguity, no long-filename typing. Remove any OTHER .fbx from this folder first (stale files cause keyword-match ambiguity). Each is one rigged+skinned mesh; the renderer normalises them to a SHARED scale. Meshy clips can carry root translation — inPlace:true strips locomotion TRAVEL on import (root re-centred over world origin per frame, Z bob kept). Each FBX ships a baked '...|baselayer' artefact beside the real clip; the importer DROPS the baselayer and picks the real action (logs ACTION_PICK/IMPORTED per file). The renderer ABORTS if any two sheets come out byte-identical (the 'every slot is the guard' contamination). attack is non-loop (plays once).",
+  "camera": {
+    "tileW": 128,
+    "tileH": 64,
+    "cameraMode": "dimetric2to1",
+    "cameraZDeg": 45,
+    "directions": 8,
+    "dirStartDeg": 0,
+    "dirStepDeg": 45,
+    "modelForwardDeg": 0,
+    "_note": "2:1 tiles -> dimetric2to1 (60deg from top-down) is the EXACT match (same lock as #48). modelForwardDeg calibrates the rig's facing: if the gangster faces the wrong way in-game, try 180 here (Mixamo's forward axis often flips on FBX import) OR use the runtime dirOffset in unitSpriteView. dir0 = model yaw `dirStartDeg+modelForwardDeg`, increasing clockwise in 45deg steps; the ingest's FACING_TO_DIR maps grid facing -> row."
+  },
+  "actions": [
+    { "name": "idle",   "fbx": "assets/raw/thug/idle.fbx",   "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
+    { "name": "walk",   "fbx": "assets/raw/thug/walk.fbx",   "outputFrameCount": 10, "playbackFps": 10, "loop": true },
+    { "name": "run",    "fbx": "assets/raw/thug/run.fbx",    "outputFrameCount": 10, "playbackFps": 12, "loop": true },
+    { "name": "hurt",   "fbx": "assets/raw/thug/hurt.fbx",   "outputFrameCount": 10, "playbackFps": 9,  "loop": true },
+    { "name": "attack", "fbx": "assets/raw/thug/attack.fbx", "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
+  ],
+  "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
+  "shader": {
+    "toonBandCount": 3,
+    "toonThresholds01": [0.28, 0.62, 0.88],
+    "desaturateAmount01": 0.28,
+    "sepiaAmount01": 0.12,
+    "outlineEnabled": true,
+    "outlineThicknessPx": 1.75,
+    "outlineColorHex": "#1E1713"
+  },
+  "light": { "keyEnergy": 1200, "fillEnergy": 500, "rimEnergy": 220, "ambientStrength": 0.08 },
+  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "emitManifestJson": true }
+}

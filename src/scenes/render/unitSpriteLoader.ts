@@ -17,10 +17,17 @@ export interface SpriteUnitConfig {
   cell: number;
 }
 
+/** The CORE clip every sprite unit must have for the view to engage; the rest are optional and degrade via
+ * the fallback chain (see unitSpriteState.resolvePlayableAction). */
+export const CORE_ACTION = 'idle';
+
 export const THUG_SPRITE_CONFIG: SpriteUnitConfig = {
   unitName: 'thug',
   baseUrl: 'assets/sprites/units/',
-  actions: ['idle', 'walk', 'attack'],
+  // CANDIDATE clips to attempt — only those actually rendered need exist; a missing optional sheet 404s
+  // gracefully (texture absent → not registered → fallback chain covers it). The real Mixamo gangster pass
+  // ships idle+walk(+run/hurt); attack arrives later and falls back to idle until then.
+  actions: ['idle', 'walk', 'run', 'hurt', 'attack'],
   cell: 256,
 };
 
@@ -43,21 +50,35 @@ export function preloadUnitSprites(scene: Phaser.Scene, cfg: SpriteUnitConfig = 
   }
 }
 
-/** True once the manifest + all action textures loaded (post-load, from create()). */
+/** The candidate actions that actually loaded — present in BOTH the manifest and as a texture. Drives which
+ * clips can play; the rest degrade via the fallback chain. */
+export function availableActions(scene: Phaser.Scene, cfg: SpriteUnitConfig = THUG_SPRITE_CONFIG): Set<string> {
+  const manifest = scene.cache.json.get(manifestCacheKey(cfg.unitName)) as UnitSpriteManifest | undefined;
+  const out = new Set<string>();
+  if (!manifest || !manifest.actions) return out;
+  for (const a of cfg.actions) {
+    if (manifest.actions[a] && scene.textures.exists(sheetTextureKey(cfg.unitName, a))) out.add(a);
+  }
+  return out;
+}
+
+/** True once the manifest + the CORE (idle) sheet loaded — optional clips need NOT be present (they fall back).
+ * This is what lets a real render ship idle+walk (no attack yet) and still engage the sprite view. */
 export function unitSpritesReady(scene: Phaser.Scene, cfg: SpriteUnitConfig = THUG_SPRITE_CONFIG): boolean {
   const manifest = scene.cache.json.get(manifestCacheKey(cfg.unitName)) as UnitSpriteManifest | undefined;
   if (!manifest || !manifest.actions) return false;
-  return cfg.actions.every((a) => scene.textures.exists(sheetTextureKey(cfg.unitName, a)) && !!manifest.actions[a]);
+  return availableActions(scene, cfg).has(CORE_ACTION);
 }
 
 /**
- * Register one Phaser animation per action×direction from the manifest. Idempotent (skips existing keys).
- * Returns the manifest (or null if not ready). Call from create() after load completes.
+ * Register one Phaser animation per action×direction, for EVERY action that actually loaded (manifest + texture).
+ * Idempotent (skips existing keys). Returns the manifest (or null if the core clip isn't ready). Call from
+ * create() after load completes.
  */
 export function registerUnitAnims(scene: Phaser.Scene, cfg: SpriteUnitConfig = THUG_SPRITE_CONFIG): UnitSpriteManifest | null {
   if (!unitSpritesReady(scene, cfg)) return null;
   const manifest = scene.cache.json.get(manifestCacheKey(cfg.unitName)) as UnitSpriteManifest;
-  for (const action of cfg.actions) {
+  for (const action of availableActions(scene, cfg)) {
     const am = manifest.actions[action];
     const tex = sheetTextureKey(cfg.unitName, action);
     for (let dir = 0; dir < am.rows; dir++) {

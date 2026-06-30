@@ -26,6 +26,11 @@ export interface ActionManifest {
   cols: number;
   playbackFps: number;
   loop: boolean;
+  /** Traceability for a real (fbx) render: the source FBX basename + the resolved clip action that drove this
+   * slot. Lets a reviewer (or CI) confirm each slot came from a DISTINCT clip — catching a baked-baselayer
+   * hijack or a clip→file mis-map from metadata alone. Absent on the primitive blockout placeholder. */
+  sourceFile?: string;
+  sourceAction?: string;
   frames: FrameRect[];
 }
 
