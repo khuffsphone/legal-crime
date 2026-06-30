@@ -3,7 +3,7 @@
   "source": "fbx",
   "inPlace": true,
   "outputDir": "public/assets/sprites/units",
-  "_inputs": "Meshy-native per-clip FBX at assets/raw/thug/ (gitignored), each one rigged+skinned mesh; the renderer normalises them to a SHARED scale so they line up. Paths below are the 'Chicago Gangster A Po' export filenames. Meshy clips can carry root translation (no 'In Place' option) — inPlace:true strips locomotion TRAVEL on import (root bone re-centred over world origin each frame, Z bob kept). Each per-clip FBX also ships a baked '...|baselayer' artefact ALONGSIDE the real clip; the importer drops the baselayer and picks the real action, logging ACTION_PICK/IMPORTED per file. The renderer ABORTS if any two action sheets come out byte-identical (the 'every slot is the guard pose' contamination). Do NOT use the merged-takes FBX as an input. attack=Boxing_Guard_Prep_Straight_Punch (non-loop, plays once); hurt=Slap_Reaction.",
+  "_inputs": "Stage the 5 'Chicago Gangster A Po' per-clip FBX at assets/raw/thug/ (gitignored) RENAMED to the short names below: idle.fbx (Short_Breathe_and_Look_Around), walk.fbx (Walking), run.fbx (Running), hurt.fbx (Slap_Reaction), attack.fbx (Boxing_Guard_Prep_Straight_Punch). Short names = no ambiguity, no long-filename typing. Remove any OTHER .fbx from this folder first (stale files cause keyword-match ambiguity). Each is one rigged+skinned mesh; the renderer normalises them to a SHARED scale. Meshy clips can carry root translation — inPlace:true strips locomotion TRAVEL on import (root re-centred over world origin per frame, Z bob kept). Each FBX ships a baked '...|baselayer' artefact beside the real clip; the importer DROPS the baselayer and picks the real action (logs ACTION_PICK/IMPORTED per file). The renderer ABORTS if any two sheets come out byte-identical (the 'every slot is the guard' contamination). attack is non-loop (plays once).",
   "camera": {
     "tileW": 128,
     "tileH": 64,
@@ -16,11 +16,11 @@
     "_note": "2:1 tiles -> dimetric2to1 (60deg from top-down) is the EXACT match (same lock as #48). modelForwardDeg calibrates the rig's facing: if the gangster faces the wrong way in-game, try 180 here (Mixamo's forward axis often flips on FBX import) OR use the runtime dirOffset in unitSpriteView. dir0 = model yaw `dirStartDeg+modelForwardDeg`, increasing clockwise in 45deg steps; the ingest's FACING_TO_DIR maps grid facing -> row."
   },
   "actions": [
-    { "name": "idle",   "fbx": "assets/raw/thug/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Short_Breathe_and_Look_Around_withSkin.fbx",     "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
-    { "name": "walk",   "fbx": "assets/raw/thug/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Walking_withSkin.fbx",                            "outputFrameCount": 10, "playbackFps": 10, "loop": true },
-    { "name": "run",    "fbx": "assets/raw/thug/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Running_withSkin.fbx",                            "outputFrameCount": 10, "playbackFps": 12, "loop": true },
-    { "name": "hurt",   "fbx": "assets/raw/thug/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Slap_Reaction_withSkin.fbx",                     "outputFrameCount": 10, "playbackFps": 9,  "loop": true },
-    { "name": "attack", "fbx": "assets/raw/thug/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Boxing_Guard_Prep_Straight_Punch_withSkin.fbx", "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
+    { "name": "idle",   "fbx": "assets/raw/thug/idle.fbx",   "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
+    { "name": "walk",   "fbx": "assets/raw/thug/walk.fbx",   "outputFrameCount": 10, "playbackFps": 10, "loop": true },
+    { "name": "run",    "fbx": "assets/raw/thug/run.fbx",    "outputFrameCount": 10, "playbackFps": 12, "loop": true },
+    { "name": "hurt",   "fbx": "assets/raw/thug/hurt.fbx",   "outputFrameCount": 10, "playbackFps": 9,  "loop": true },
+    { "name": "attack", "fbx": "assets/raw/thug/attack.fbx", "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
   ],
   "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
   "shader": {

@@ -69,24 +69,23 @@ travel or stay in place?":
 "$BLENDER_PATH" -b -P tools/blender/inspect_fbx.py -- --dir assets/raw/thug
 ```
 
-**1. Put the clip FBX here (gitignored — inputs, never shipped).** The job's literal paths are the actual
-Meshy-native export filenames:
+**1. Stage the clip FBX here (gitignored — inputs, never shipped).** Rename the 5 'Chicago Gangster A Po'
+per-clip exports to short names — no ambiguity, no long-filename typing:
 
 ```
-assets/raw/thug/Meshy_AI_biped_Animation_Short_Breathe_and_Look_Around_withSkin.fbx  -> idle    (loop)
-assets/raw/thug/Meshy_AI_biped_Animation_Walking_withSkin.fbx                         -> walk    (loop)
-assets/raw/thug/Meshy_AI_biped_Animation_Running_withSkin.fbx                         -> run     (loop)
-assets/raw/thug/Meshy_AI_biped_Animation_Hit_Reaction_withSkin.fbx                    -> hurt    (loop)
-assets/raw/thug/Meshy_AI_biped_Animation_Punch_Combo_1_withSkin.fbx                   -> attack  (once)
+assets/raw/thug/idle.fbx     <- ..._Short_Breathe_and_Look_Around_withSkin.fbx
+assets/raw/thug/walk.fbx     <- ..._Walking_withSkin.fbx
+assets/raw/thug/run.fbx      <- ..._Running_withSkin.fbx
+assets/raw/thug/hurt.fbx     <- ..._Slap_Reaction_withSkin.fbx
+assets/raw/thug/attack.fbx   <- ..._Boxing_Guard_Prep_Straight_Punch_withSkin.fbx   (non-loop)
 ```
 
-If a literal path is missing, the renderer **keyword-resolves** it from the same folder (`idle`/`walk`/`run`/
-`hurt`/`attack`, plus `breath/stand`, `jog/sprint`, `injured/hit/reaction`, `punch/melee`). It logs the file
-it picked (`FBX_RESOLVE …`) and errors clearly if a clip is ambiguous or missing. To pin exact paths, edit
-the `actions[].fbx` entries in the job.
+**Remove any OTHER `.fbx` from this folder first** — a stale file (e.g. an old `Walking.fbx`) makes the
+keyword fallback ambiguous and the renderer aborts by design. With the exact short names above the job matches
+directly; the keyword fallback (`idle`/`walk`/`run`/`hurt`/`attack` + synonyms) is just a backstop.
 
-`attack` (Punch_Combo_1) is a **non-loop** clip — it plays once; the others loop. The ingest knows `attack`
-and falls back to **idle** only if its sheet is absent.
+`attack` is a **non-loop** clip — it plays once; the others loop. The ingest knows `attack` and falls back to
+**idle** only if its sheet is absent.
 
 > **Multiple actions in one FBX / contaminating baselayers.** Some exports ship a baked
 > `…Right_Upper_Hook_from_Guard|baselayer` action *alongside* the real clip — that stray guard pose was the
