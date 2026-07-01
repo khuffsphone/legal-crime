@@ -18,7 +18,7 @@ const job = JSON.parse(
   }[];
   framing: { frameCanvasW: number; anchorX: number; anchorY: number };
   shader: { keepSourceMaterial: boolean };
-  output: { viewTransform: string };
+  output: { viewTransform: string; fixedOrthoScale: number };
 };
 
 describe('thug_gangster render job — full 5-clip textured-GLB pass', () => {
@@ -27,6 +27,7 @@ describe('thug_gangster render job — full 5-clip textured-GLB pass', () => {
     expect(job.inPlace).toBe(true);                       // clips travel; strip locomotion per-frame
     expect(job.shader.keepSourceMaterial).toBe(true);     // no flat-grey toon override
     expect(job.output.viewTransform).toBe('Standard');    // true colour, not EEVEE AgX
+    expect(job.output.fixedOrthoScale).toBeCloseTo(2.8284, 4); // LOCKED kit scale — thug matches cop/props (not per-subject auto-fit)
     expect(job.unitName).toBe(THUG_SPRITE_CONFIG.unitName); // 'thug'
   });
 
