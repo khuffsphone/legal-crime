@@ -289,39 +289,63 @@ def assign_action(arm, action):
             pass
 
 
-def import_fbx_unit(filepath, name_hint="", action_hint=None):
-    """Import an FBX clip and return (pivot, armature, meshes, action). The armature + any unparented meshes are
-    parented (keeping world transform) under a fresh Empty at the WORLD ORIGIN so the whole clip can be
-    yaw-rotated as ONE for the 8 facings. Absolute scale is irrelevant downstream — the shared bbox pre-pass
-    normalises every clip to the same ortho_scale — so we do NOT rescale (Mixamo's cm units are fine).
-    When the FBX ships MULTIPLE actions (e.g. a contaminating guard/hook baselayer beside the real clip),
-    select_clip_action picks the intended one and the baselayer is ignored. action_hint = per-job override."""
+def _import_scene_objects(filepath):
+    """Run the right Blender importer for the file EXTENSION and return (new_objects, new_actions).
+    .glb/.gltf -> import_scene.gltf (textured Meshy exports); anything else -> import_scene.fbx (Mixamo).
+    Only the objects/actions that DIDN'T exist before the call are returned, so a multi-clip import stays
+    isolated per file."""
+    ext = os.path.splitext(filepath)[1].lower()
+    before = set(bpy.data.objects)
+    before_actions = set(bpy.data.actions)
+    if ext in (".glb", ".gltf"):
+        # glTF carries the PBR material + base-color texture the FBX pipeline lost; defaults import the
+        # skinned mesh + armature + its baked action. (No automatic_bone_orientation knob on the gltf op.)
+        bpy.ops.import_scene.gltf(filepath=filepath)
+    else:
+        bpy.ops.import_scene.fbx(filepath=filepath, automatic_bone_orientation=True, ignore_leaf_bones=True)
+    new = [o for o in bpy.data.objects if o not in before]
+    new_actions = [a for a in bpy.data.actions if a not in before_actions]
+    return new, new_actions
+
+
+def import_unit(filepath, name_hint="", action_hint=None):
+    """Import ONE animation clip (FBX or GLB — dispatched by extension) and return (pivot, armature, meshes,
+    action). The armature + any unparented meshes are parented (keeping world transform) under a fresh Empty at
+    the WORLD ORIGIN so the whole clip can be yaw-rotated as ONE for the 8 facings. Absolute scale is
+    irrelevant downstream — the shared bbox pre-pass normalises every clip to the same ortho_scale.
+    CHARACTER MESH ONLY: a Meshy GLB ships a stray un-skinned 'Icosphere' (and FBX can bake a pedestal) beside
+    the real body — we keep only the mesh(es) SKINNED to this armature and DELETE the rest so junk neither
+    renders into the sprite nor inflates the framing bbox. Robust fallback: if skin-detection finds nothing
+    (importer quirk), keep the single HIGHEST-vertex mesh (the body) and drop the rest — the Icosphere (42
+    verts) can never survive that against char1 (~99k). When the file ships MULTIPLE actions the baselayer
+    artefact is dropped (select_clip_action); a single-action file is used as-is. action_hint = per-job override."""
     if bpy is None:
         raise SystemExit("RENDER_FAIL: bpy unavailable")
     if not os.path.isfile(filepath):
-        raise SystemExit("RENDER_FAIL: FBX not found: %r" % filepath)
-    before = set(bpy.data.objects)
-    before_actions = set(bpy.data.actions)
-    bpy.ops.import_scene.fbx(filepath=filepath, automatic_bone_orientation=True, ignore_leaf_bones=True)
-    new = [o for o in bpy.data.objects if o not in before]
-    new_actions = [a for a in bpy.data.actions if a not in before_actions]
+        raise SystemExit("RENDER_FAIL: model not found: %r" % filepath)
+    new, new_actions = _import_scene_objects(filepath)
     arm = next((o for o in new if o.type == "ARMATURE"), None)
     meshes = [o for o in new if o.type == "MESH"]
     if arm is None:
-        raise SystemExit("RENDER_FAIL: no ARMATURE in FBX %r" % filepath)
+        raise SystemExit("RENDER_FAIL: no ARMATURE in %r" % filepath)
     if not meshes:
-        raise SystemExit("RENDER_FAIL: no MESH in FBX %r" % filepath)
-    # CHARACTER MESHES ONLY: keep meshes skinned to THIS armature; DELETE any stray imported geometry
-    # (a base/pedestal/ground plane Meshy sometimes bakes in) so it neither renders nor inflates the bbox.
+        raise SystemExit("RENDER_FAIL: no MESH in %r" % filepath)
+
     def _skinned(m):
         return any(md.type == "ARMATURE" and md.object == arm for md in m.modifiers)
     char = [m for m in meshes if _skinned(m)]
-    if char:
-        for m in [m for m in meshes if m not in char]:
-            print("DROP non-character mesh from FBX:", m.name)
-            bpy.data.objects.remove(m, do_unlink=True)
-        meshes = char
-    # SELECT the intended clip action; DROP contaminating guard/hook baselayers (the boxing-stance source).
+    if not char:
+        # skin-modifier detection came up empty (some glTF rigs bind via parenting) — keep the biggest mesh.
+        biggest = max(meshes, key=lambda m: len(m.data.vertices))
+        print("CHAR-MESH fallback: no skinned mesh detected; keeping highest-vert mesh %r (verts=%d)"
+              % (biggest.name, len(biggest.data.vertices)))
+        char = [biggest]
+    for m in [m for m in meshes if m not in char]:
+        print("DROP non-character mesh from import: %r (verts=%d, not skinned)" % (m.name, len(m.data.vertices)))
+        bpy.data.objects.remove(m, do_unlink=True)
+    meshes = char
+
+    # SELECT the intended clip action; DROP a contaminating baselayer only when >1 action ships.
     assigned = arm.animation_data.action if (arm.animation_data and arm.animation_data.action) else None
     cand_actions = new_actions or ([assigned] if assigned else [])
     action, why = select_clip_action(cand_actions, name_hint, action_hint)
@@ -336,6 +360,64 @@ def import_fbx_unit(filepath, name_hint="", action_hint=None):
         o.parent = piv
         o.matrix_world = wm  # keep world transform when re-parenting
     return piv, arm, meshes, action
+
+
+# Back-compat alias: the FBX pipeline entry callers used before GLB support (dispatch is by extension now).
+import_fbx_unit = import_unit
+
+
+def downscale_oversized_textures(meshes, max_size=1024):
+    """A Meshy base-colour texture is 4096x4096 — wildly oversized for a ~30px sprite. Scale every image
+    datablock used by these meshes' materials down to <= max_size (in place, mip-friendly) so EEVEE doesn't
+    blow memory or over-sharpen the downsample. Idempotent + version-safe; logs each scale. Returns the count
+    scaled. A no-op if max_size<=0 (keep native)."""
+    if bpy is None or max_size <= 0:
+        return 0
+    seen = set()
+    scaled = 0
+    for mesh in meshes:
+        for slot in mesh.material_slots:
+            mat = slot.material
+            if mat is None or not mat.use_nodes:
+                continue
+            for node in mat.node_tree.nodes:
+                img = getattr(node, "image", None)
+                if img is None or img.name in seen:
+                    continue
+                seen.add(img.name)
+                w, h = (img.size[0], img.size[1]) if len(img.size) >= 2 else (0, 0)
+                if w > max_size or h > max_size:
+                    nw = min(w, max_size) if w else max_size
+                    nh = min(h, max_size) if h else max_size
+                    try:
+                        img.scale(nw, nh)
+                        scaled += 1
+                        print("TEXTURE downscaled %r %dx%d -> %dx%d (material %r)" % (img.name, w, h, nw, nh, mat.name))
+                    except Exception as exc:
+                        print("TEXTURE downscale skipped %r (%s)" % (img.name, exc))
+    return scaled
+
+
+def log_material_diagnostics(meshes):
+    """Print each kept material's node wiring so a bad photoreal render is DIAGNOSABLE from the .out log
+    without a screenshot: the material name, whether a base-colour IMAGE texture feeds the Principled BSDF,
+    and the image resolution. (PBR-through-EEVEE is new territory — this is the breadcrumb if colour is off.)"""
+    if bpy is None:
+        return
+    seen = set()
+    for mesh in meshes:
+        for slot in mesh.material_slots:
+            mat = slot.material
+            if mat is None or mat.name in seen:
+                continue
+            seen.add(mat.name)
+            if not mat.use_nodes:
+                print("MATERIAL %r: no nodes (legacy) diffuse=%s" % (mat.name, tuple(getattr(mat, "diffuse_color", ()))[:3]))
+                continue
+            imgs = [n.image.name + " %dx%d" % (n.image.size[0], n.image.size[1])
+                    for n in mat.node_tree.nodes if getattr(n, "image", None) is not None]
+            principled = any(n.type == "BSDF_PRINCIPLED" for n in mat.node_tree.nodes)
+            print("MATERIAL %r: principled=%s images=%s" % (mat.name, principled, imgs or "NONE"))
 
 
 # Common root/hips bone names tried first (Mixamo + a few Meshy-native variants); else the first root bone.

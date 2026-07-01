@@ -60,28 +60,30 @@ ACTION_FBX_KEYWORDS = {
 }
 
 
-def resolve_fbx(fbx_rel, action_name):
-    """Return an existing absolute FBX path for this action. The job's literal path wins; if it's absent we
-    scan its folder for an FBX whose name matches the action's keywords (Meshy-native filenames are unknown to
-    the repo). Raises SystemExit with a clear message if nothing matches — never renders the wrong clip."""
-    fbx_abs = fbx_rel if os.path.isabs(fbx_rel) else os.path.abspath(os.path.join(_HERE, "..", "..", fbx_rel))
-    if os.path.isfile(fbx_abs):
-        return fbx_abs
-    folder = os.path.dirname(fbx_abs)
+def resolve_model(rel, action_name):
+    """Return an existing absolute model path (FBX or GLB) for this action. The job's literal path wins; if
+    it's absent we scan its folder for a file of the SAME EXTENSION whose name matches the action's keywords
+    (Meshy-native filenames are unknown to the repo). Raises SystemExit with a clear message if nothing matches
+    — never renders the wrong clip."""
+    abs_path = rel if os.path.isabs(rel) else os.path.abspath(os.path.join(_HERE, "..", "..", rel))
+    if os.path.isfile(abs_path):
+        return abs_path
+    ext = os.path.splitext(abs_path)[1].lower() or ".fbx"
+    folder = os.path.dirname(abs_path)
     if not os.path.isdir(folder):
-        raise SystemExit("RENDER_FAIL: %r not found and its folder %r does not exist" % (fbx_rel, folder))
-    present = sorted(f for f in os.listdir(folder) if f.lower().endswith(".fbx"))
+        raise SystemExit("RENDER_FAIL: %r not found and its folder %r does not exist" % (rel, folder))
+    present = sorted(f for f in os.listdir(folder) if f.lower().endswith(ext))
     kws = ACTION_FBX_KEYWORDS.get(action_name, (action_name,))
     matches = [f for f in present if any(k in f.lower() for k in kws)]
     if len(matches) == 1:
         chosen = os.path.join(folder, matches[0])
-        print("FBX_RESOLVE action=%s literal-missing -> keyword match %r" % (action_name, matches[0]))
+        print("MODEL_RESOLVE action=%s literal-missing -> keyword match %r" % (action_name, matches[0]))
         return chosen
     if len(matches) > 1:
-        raise SystemExit("RENDER_FAIL: action %r literal %r missing; %d keyword matches %s — rename or set "
-                         "the exact 'fbx' in the job" % (action_name, os.path.basename(fbx_abs), len(matches), matches))
-    raise SystemExit("RENDER_FAIL: action %r FBX %r not found; no keyword match in %s among %s"
-                     % (action_name, os.path.basename(fbx_abs), folder, present))
+        raise SystemExit("RENDER_FAIL: action %r literal %r missing; %d keyword %s matches %s — rename or set "
+                         "the exact path in the job" % (action_name, os.path.basename(abs_path), len(matches), ext, matches))
+    raise SystemExit("RENDER_FAIL: action %r model %r not found; no keyword match in %s among %s"
+                     % (action_name, os.path.basename(abs_path), folder, present))
 
 
 def apply_toon_materials(meshes, shader_cfg):
@@ -122,6 +124,9 @@ def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, 
     deps = bpy.context.evaluated_depsgraph_get()
     min_r = min_u = float("inf")
     max_r = max_u = float("-inf")
+    # which (clip, frame) set each extreme — so we can LOG what drove the ONE locked shared scale (e.g. a wide
+    # punch pose). Diagnostic only; the scale itself is the union, unchanged.
+    drivers = {"minR": None, "maxR": None, "minU": None, "maxU": None}
     for clip in clips:
         if multi_model:
             set_only_visible(clips, clip)
@@ -142,12 +147,12 @@ def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, 
                         w = mw @ v.co
                         r = w.dot(right)
                         u = w.dot(up)
-                        if r < min_r: min_r = r
-                        if r > max_r: max_r = r
-                        if u < min_u: min_u = u
-                        if u > max_u: max_u = u
+                        if r < min_r: min_r = r; drivers["minR"] = (clip["name"], f)
+                        if r > max_r: max_r = r; drivers["maxR"] = (clip["name"], f)
+                        if u < min_u: min_u = u; drivers["minU"] = (clip["name"], f)
+                        if u > max_u: max_u = u; drivers["maxU"] = (clip["name"], f)
                     ev.to_mesh_clear()
-    return (min_r, max_r, min_u, max_u)
+    return (min_r, max_r, min_u, max_u), drivers
 
 
 def render_cell(scene, path_base):
@@ -190,6 +195,13 @@ def main():
     framing = job.get("framing", {})
     out_cfg = job.get("output", {})
 
+    source = job.get("source", "blockout")
+    multi_model = source in ("fbx", "glb")            # one imported rig per clip (vs the shared blockout rig)
+    inplace = bool(job.get("inPlace", multi_model))   # In-Place root-strip ON for real animated clips
+    # PILOT/photoreal: a GLB carries its own PBR material + base-colour texture — KEEP it (no flat-grey toon
+    # override, which is what ghosted the FBX). Default: keep for glb, toon-override for blockout/fbx.
+    keep_source_material = bool(shader_cfg.get("keepSourceMaterial", source == "glb"))
+
     engine = get_opt(args, "--engine", out_cfg.get("renderEngine", "BLENDER_EEVEE"))
     outdir = get_opt(args, "--outdir", job["outputDir"])
     outdir = os.path.abspath(os.path.join(_HERE, "..", "..", outdir)) if not os.path.isabs(outdir) else outdir
@@ -217,15 +229,24 @@ def main():
     if engine == "BLENDER_EEVEE":
         scene.eevee.taa_render_samples = int(out_cfg.get("eeveeSamples", 24))
     ic.setup_world_transparent(scene)
-    scene.render.image_settings.compression = int(out_cfg.get("pngCompression", 100))  # max lossless squeeze
+    # COLOUR FIDELITY for a photoreal texture eval: EEVEE's default view transform (AgX/Filmic) tone-maps +
+    # desaturates, misrepresenting the base-colour texture K is judging. 'Standard' shows true colour. Only
+    # forced when we KEEP the source PBR material (the grey toon look is unaffected); overridable per job.
+    view_xform = out_cfg.get("viewTransform", "Standard" if keep_source_material else None)
+    if view_xform:
+        try:
+            scene.view_settings.view_transform = view_xform
+            print("VIEW_TRANSFORM %s" % view_xform)
+        except Exception as exc:
+            print("VIEW_TRANSFORM %r unavailable (%s) — using default" % (view_xform, exc))
+    scene.render.image_settings.compression = int(out_cfg.get("pngCompression", 100))  # lossless PNG (NO pngquant)
 
     # ── build CLIPS: blockout = ONE shared rig + named baked actions; fbx = ONE imported rig PER clip ────
     # (Mixamo exports one FBX per animation, all sharing the rig/mesh). Either way the bbox pre-pass below
     # locks ONE shared scale + foot anchor across every clip so they line up in-game.
-    source = job.get("source", "blockout")
-    multi_model = (source == "fbx")
-    inplace = bool(job.get("inPlace", multi_model))  # In-Place safeguard ON for real Mixamo clips
     ic.clear_scene()  # remove the default Cube/Light/Camera so ONLY the character renders + drives the bbox
+    if inplace:
+        print("ROOT-STRIP applied (in-place): locomotion TRAVEL removed per-frame for ALL clips (Z bob kept)")
     clips = []
     if source == "blockout":
         arm, mesh, _action_names = blk.build_thug()
@@ -238,28 +259,35 @@ def main():
                 "frames": sample_frames(a["sourceFrameStart"], a["sourceFrameEnd"], a["outputFrameCount"], a["loop"]),
                 "cols": a["outputFrameCount"], "fps": a["playbackFps"], "loop": a["loop"],
             })
-    elif source == "fbx":
+    elif source in ("fbx", "glb"):
         for a in job["actions"]:
-            fbx = a.get("fbx")
-            if not fbx:
-                raise SystemExit("RENDER_FAIL: action %r needs an 'fbx' path (source=fbx)" % a.get("name"))
-            fbx_abs = resolve_fbx(fbx, a["name"])
-            piv, arm, meshes, action = ic.import_fbx_unit(fbx_abs, a["name"], a.get("actionName"))
+            model_rel = a.get("file") or a.get("glb") or a.get("fbx")
+            if not model_rel:
+                raise SystemExit("RENDER_FAIL: action %r needs a 'file'/'glb'/'fbx' path (source=%s)" % (a.get("name"), source))
+            model_abs = resolve_model(model_rel, a["name"])
+            piv, arm, meshes, action = ic.import_unit(model_abs, a["name"], a.get("actionName"))
             if action is None:
-                raise SystemExit("RENDER_FAIL: FBX %r has no animation action" % fbx_abs)
-            apply_toon_materials(meshes, shader_cfg)
+                raise SystemExit("RENDER_FAIL: %r has no animation action" % model_abs)
+            if keep_source_material:
+                # PILOT: keep the GLB's Material_1 (PBR + base-colour texture); downscale the 4096² texture so
+                # EEVEE doesn't blow memory / over-sharpen; log the material wiring for a diagnosable render.
+                ic.downscale_oversized_textures(meshes, int(shader_cfg.get("maxTextureSize", 1024)))
+                ic.log_material_diagnostics(meshes)
+                print("KEEP source material (no toon override) for %s <- %s" % (a["name"], os.path.basename(model_abs)))
+            else:
+                apply_toon_materials(meshes, shader_cfg)
             fr = action.frame_range
             start = int(a.get("sourceFrameStart", int(fr[0])))
             end = int(a.get("sourceFrameEnd", int(fr[1])))
             clips.append({
                 "name": a["name"], "arm": arm, "meshes": meshes, "piv": piv, "action": action,
-                "sourceFile": os.path.basename(fbx_abs), "sourceAction": action.name,
+                "sourceFile": os.path.basename(model_abs), "sourceAction": action.name,
                 "frames": sample_frames(start, end, a["outputFrameCount"], a["loop"]),
                 "cols": a["outputFrameCount"], "fps": a["playbackFps"], "loop": a["loop"],
             })
-            print("IMPORTED %s <- %s [action=%r] frames[%d..%d]" % (a["name"], fbx_abs, action.name, start, end))
+            print("IMPORTED %s <- %s [action=%r] frames[%d..%d]" % (a["name"], model_abs, action.name, start, end))
     else:
-        raise SystemExit("RENDER_FAIL: unknown source %r (expected 'blockout' or 'fbx')" % source)
+        raise SystemExit("RENDER_FAIL: unknown source %r (expected 'blockout', 'fbx', or 'glb')" % source)
 
     ic.setup_lights(scene, light_cfg.get("keyEnergy", 1200.0), light_cfg.get("fillEnergy", 500.0),
                     light_cfg.get("rimEnergy", 220.0))
@@ -275,13 +303,20 @@ def main():
     basis = ic.camera_basis(cam_x, cam_z)
 
     # ── bbox pre-pass -> lock ONE framing across ALL clips (feet on bottom edge, shared scale) ───────────
-    bounds = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
+    bounds, drivers = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
     ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad)
     px_per_bu = canvas / ortho_scale
     figure_px_h = proj_h * px_per_bu
     figure_px_w = proj_w * px_per_bu
     print("CAM mode=%s cameraXDeg=%.4f cameraZDeg=%.1f ortho_scale=%.4f figurePx=%.1fx%.1f source=%s"
           % (mode, cam_x, cam_z, ortho_scale, figure_px_w, figure_px_h, source))
+    # LOCKED-SCALE: ONE shared scale across ALL clips (union bbox). Name the clip/frame that drove each extent,
+    # so a suspicious resize is diagnosable from the log (e.g. attack's wide punch driving the width).
+    def _drv(k):
+        d = drivers.get(k)
+        return "%s@f%.0f" % (d[0], d[1]) if d else "n/a"
+    print("LOCKED-SCALE ortho_scale=%.4f figurePxH=%.2f (shared by ALL %d clips) | widthSpan=%.3f [minR=%s maxR=%s] heightSpan=%.3f [minU=%s maxU=%s]"
+          % (ortho_scale, figure_px_h, len(clips), proj_w, _drv("minR"), _drv("maxR"), proj_h, _drv("minU"), _drv("maxU")))
 
     # ── render every cell, pack per-clip sheets (rows=8 dirs × cols=frames) ──────────────────────────────
     unit_name = job["unitName"]
@@ -323,6 +358,9 @@ def main():
             "frameW": canvas, "frameH": canvas, "rows": dirs, "cols": cols,
             "playbackFps": clip["fps"], "loop": clip["loop"],
             "sourceFile": clip.get("sourceFile"), "sourceAction": clip.get("sourceAction"),
+            # SHARED scale mirrored per action (identical for every clip — the union bbox locks one scale).
+            # A test asserts these are all equal + match the top-level, so a future per-clip-resize regression fails.
+            "figurePxH": round(figure_px_h, 2), "orthoScale": round(ortho_scale, 4),
             "frames": frames_meta,
         }
         print("SHEET %s rows=%d cols=%d source=%s action=%r"

@@ -1,9 +1,10 @@
 {
   "unitName": "thug",
-  "source": "fbx",
+  "source": "glb",
   "inPlace": true,
   "outputDir": "public/assets/sprites/units",
-  "_inputs": "Stage the 5 'Chicago Gangster A Po' per-clip FBX at assets/raw/thug/ (gitignored) RENAMED to the short names below: idle.fbx (Short_Breathe_and_Look_Around), walk.fbx (Walking), run.fbx (Running), hurt.fbx (Slap_Reaction), attack.fbx (Boxing_Guard_Prep_Straight_Punch). Short names = no ambiguity, no long-filename typing. Remove any OTHER .fbx from this folder first (stale files cause keyword-match ambiguity). Each is one rigged+skinned mesh; the renderer normalises them to a SHARED scale. Meshy clips can carry root translation — inPlace:true strips locomotion TRAVEL on import (root re-centred over world origin per frame, Z bob kept). Each FBX ships a baked '...|baselayer' artefact beside the real clip; the importer DROPS the baselayer and picks the real action (logs ACTION_PICK/IMPORTED per file). The renderer ABORTS if any two sheets come out byte-identical (the 'every slot is the guard' contamination). attack is non-loop (plays once).",
+  "_inputs": "FULL 5-clip TEXTURED-GLB render (supersedes the flat-grey FBX render and the walk pilot #54). GLBs live in assets/raw/thug_glb/ (gitignored inputs). source=glb -> import_scene.gltf keeps each GLB's PBR Material_1 + base-colour texture (FBX dropped it -> grey ghost); keepSourceMaterial=true means NO toon override; output.viewTransform=Standard renders true colour (not EEVEE AgX). Meshy GLBs ship a stray un-skinned 'Icosphere' beside 'char1' -> the importer keeps only the skinned body and DROPs the sphere. Every clip TRAVELS (root motion baked); inPlace strips locomotion per-frame for ALL clips (Z bob kept). SHARED SCALE: the bbox pre-pass unions ALL 5 clips' ACTUAL frame ranges -> ONE ortho_scale + ONE figurePxH for the whole set (no resize-per-action); the LOCKED-SCALE log line names which clip/frame drove the max extent (Punch_Combo_4's wide punch is the likely driver). Action names + frame ranges below were CONFIRMED via inspect_fbx.py; NOTE Punch_Combo_4 starts at frame 45 (not 0).",
+  "_run": "Windows PowerShell, SPLIT STREAMS (Meshy meshes spam stderr with edge warnings; keep them off the gate log): $ErrorActionPreference='Continue'; & $env:BLENDER_PATH -b -P tools\\blender\\render_iso_unit.py -- --job tools\\blender\\render_jobs\\thug_gangster.json --engine BLENDER_EEVEE 1> thug_render.out 2> thug_render.err ; then paste thug_render.out. Expect 5x IMPORTED/DROP Icosphere/KEEP source material/MATERIAL principled=True, 5x SHEET rows=8, a LOCKED-SCALE line, and RENDER_OK actions=5 dirs=8. DO NOT squeeze until colour is eyeballed (photoreal bands harder than flat grey).",
   "camera": {
     "tileW": 128,
     "tileH": 64,
@@ -13,25 +14,17 @@
     "dirStartDeg": 0,
     "dirStepDeg": 45,
     "modelForwardDeg": 0,
-    "_note": "2:1 tiles -> dimetric2to1 (60deg from top-down) is the EXACT match (same lock as #48). modelForwardDeg calibrates the rig's facing: if the gangster faces the wrong way in-game, try 180 here (Mixamo's forward axis often flips on FBX import) OR use the runtime dirOffset in unitSpriteView. dir0 = model yaw `dirStartDeg+modelForwardDeg`, increasing clockwise in 45deg steps; the ingest's FACING_TO_DIR maps grid facing -> row."
+    "_note": "Identical lock to the pilot/grey render: 2:1 tiles -> dimetric2to1 (60deg from top-down), Z=45. Facing is corrected at runtime by unitSpriteView dirOffset (THUG_FACING_OFFSET=4, PR #51) — do NOT diverge the render from that."
   },
   "actions": [
-    { "name": "idle",   "fbx": "assets/raw/thug/idle.fbx",   "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
-    { "name": "walk",   "fbx": "assets/raw/thug/walk.fbx",   "outputFrameCount": 10, "playbackFps": 10, "loop": true },
-    { "name": "run",    "fbx": "assets/raw/thug/run.fbx",    "outputFrameCount": 10, "playbackFps": 12, "loop": true },
-    { "name": "hurt",   "fbx": "assets/raw/thug/hurt.fbx",   "outputFrameCount": 10, "playbackFps": 9,  "loop": true },
-    { "name": "attack", "fbx": "assets/raw/thug/attack.fbx", "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
+    { "name": "idle",   "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Long_Breathe_and_Look_Around_withSkin.glb", "actionName": "Long_Breathe_and_Look_Around", "sourceFrameStart": 0,  "sourceFrameEnd": 271, "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
+    { "name": "walk",   "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Walking_withSkin.glb",                       "actionName": "walking_man",                  "sourceFrameStart": 0,  "sourceFrameEnd": 25,  "outputFrameCount": 10, "playbackFps": 10, "loop": true },
+    { "name": "run",    "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Running_withSkin.glb",                       "actionName": "running",                      "sourceFrameStart": 0,  "sourceFrameEnd": 16,  "outputFrameCount": 10, "playbackFps": 12, "loop": true },
+    { "name": "hurt",   "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Gunshot_Reaction_withSkin.glb",              "actionName": "Gunshot_Reaction",             "sourceFrameStart": 0,  "sourceFrameEnd": 72,  "outputFrameCount": 10, "playbackFps": 9,  "loop": true },
+    { "name": "attack", "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Punch_Combo_4_withSkin.glb",                 "actionName": "Punch_Combo_4",                "sourceFrameStart": 45, "sourceFrameEnd": 136, "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
   ],
   "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
-  "shader": {
-    "toonBandCount": 3,
-    "toonThresholds01": [0.28, 0.62, 0.88],
-    "desaturateAmount01": 0.28,
-    "sepiaAmount01": 0.12,
-    "outlineEnabled": true,
-    "outlineThicknessPx": 1.75,
-    "outlineColorHex": "#1E1713"
-  },
+  "shader": { "keepSourceMaterial": true, "maxTextureSize": 1024, "outlineEnabled": true, "outlineThicknessPx": 1.75, "outlineColorHex": "#1E1713" },
   "light": { "keyEnergy": 1200, "fillEnergy": 500, "rimEnergy": 220, "ambientStrength": 0.08 },
-  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "emitManifestJson": true }
+  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "viewTransform": "Standard", "emitManifestJson": true }
 }

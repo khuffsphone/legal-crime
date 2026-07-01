@@ -31,6 +31,11 @@ export interface ActionManifest {
    * hijack or a clip→file mis-map from metadata alone. Absent on the primitive blockout placeholder. */
   sourceFile?: string;
   sourceAction?: string;
+  /** The shared locked scale, mirrored per action (identical for every clip — the bbox pre-pass unions all
+   * clips into ONE ortho_scale/figurePxH). Present on the multi-clip GLB render; a test asserts they're all
+   * equal so a per-clip resize regression fails. Absent on older single-scale-at-top-level manifests. */
+  figurePxH?: number;
+  orthoScale?: number;
   frames: FrameRect[];
 }
 
