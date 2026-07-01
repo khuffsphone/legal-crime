@@ -140,45 +140,70 @@ GLB's own PBR material (its 4096² base-colour texture) instead of the toon-grey
 (camera 60/45, 256 canvas, 8 dirs, anchors, `inPlace` root-strip, the bbox scale-lock, the manifest schema)
 is identical to the FBX pass, so it drops into the loader unchanged.
 
-**PILOT (one clip, walk).** Prove colour on ONE sheet before wiring all five: `render_jobs/thug_walk.json`.
-Stage the textured GLB (gitignored input) at the exact path in the job, then:
+**FULL 5-clip render (the final colour set): `render_jobs/thug_glb.json`.** All five clips (idle/walk/run/
+hurt/attack) in ONE job — that single job is the **shared-scale** precondition (below). Stage the five
+textured GLBs (gitignored inputs) at the exact paths in the job, then:
 
 ```powershell
 # Windows PowerShell — SPLIT STREAMS (Meshy meshes throw heavy edge-warning spam on stderr; keep it OFF the
 # gate stream so it can't abort a *> capture). ErrorActionPreference Continue keeps going past the warnings.
 $ErrorActionPreference='Continue'
-& $env:BLENDER_PATH -b -P tools\blender\render_iso_unit.py -- --job tools\blender\render_jobs\thug_walk.json --engine BLENDER_EEVEE 1> thug_walk.out 2> thug_walk.err
-# then paste thug_walk.out (the gate log). thug_walk.err is just the mesh-warning noise.
+& $env:BLENDER_PATH -b -P tools\blender\render_iso_unit.py -- --job tools\blender\render_jobs\thug_glb.json --engine BLENDER_EEVEE 1> thug_glb.out 2> thug_glb.err
+# then paste thug_glb.out (the gate log). thug_glb.err is just the mesh-warning noise.
 ```
 
-Expect in `thug_walk.out`: `IMPORTED walk <- …Walking_withSkin.glb`, a `DROP non-character mesh … 'Icosphere'`
-line (the stray un-skinned sphere is excluded), `ROOT-STRIP applied (in-place)`, `KEEP source material`, a
-`MATERIAL 'Material_1': principled=True images=[…4096x4096]` diagnostic, `TEXTURE downscaled … 4096 -> 1024`,
-`SHEET …/thug_walk.png rows=8 cols=10`, and `RENDER_OK`.
+Expect in `thug_glb.out`: **5×** (`IMPORTED <action> <- …withSkin.glb`, a `DROP non-character mesh … 'Icosphere'`
+line, `KEEP source material`, a `MATERIAL 'Material_1': principled=True images=[…4096x4096]` diagnostic,
+`TEXTURE downscaled … 4096 -> 1024`); one `ROOT-STRIP applied (in-place)`; a `LOCKED-SCALE …` line naming the
+clip/frame that drove the widest span; a `SHARED-SCALE OK: ONE figurePxH=… locked across 5 clips` line; **5×**
+`SHEET …/thug_<action>.png rows=8`; and `RENDER_OK unit=thug actions=5 dirs=8 figurePxH=… orthoScale=…`.
 
-Notes specific to the colour pass:
-- **Do NOT `pngquant`/squeeze the pilot output.** Photoreal bands harder than flat grey and may need >256
-  colours — hold the squeeze until K confirms the colour reads.
+### ★ Shared scale (the load-bearing item)
+
+The bbox pre-pass **unions all five clips' full frame ranges** into ONE `ortho_scale`/`figurePxH`, so every
+action renders at the SAME size — attack's wide arm-throw can't shrink the normalised figure vs a compact
+idle (the resize-on-action bug we killed on the grey render). This only holds because all five are in **one
+job**; do **not** render them as five separate jobs. The render logs the single locked scale + which
+clip/frame/dir drove the widest span + each clip's own extent, and **`RENDER_FAIL`s** if any clip escapes the
+shared union. `spriteManifest.test.ts` guards the emitted manifest (one top-level `figurePxH`; no per-action
+scale key), and the loader normalises on-screen size by that one `figurePxH` (`spriteDisplayScale`).
+
+### pngquant squeeze (K approved — but eyeball banding)
+
+Local `pngquant` isn't on PATH, so use the bundled bin via `npx`. After the render, squeeze all five in place:
+
+```powershell
+foreach ($a in 'idle','walk','run','hurt','attack') {
+  npx pngquant-bin --force --speed 1 --output "public\assets\sprites\units\thug_$a.png" "public\assets\sprites\units\thug_$a.png"
+}
+```
+
+⚠ These are **photoreal** (pinstripe / skin / two-tone-shoe gradients) — 256-colour bands *much* harder than
+the flat-grey sheets did. **Eyeball at least one squeezed sheet for banding before trusting the setting**; if
+it bands, re-run at a higher colour count (`--quality=80-100`, or drop `pngquant` for the gradient-heavy
+clips). Report before/after sizes. Do not treat "it ran" as "it's clean" — banding is a human call.
+
+### Other colour-pass notes
 - `output.viewTransform: "Standard"` renders true texture colour (EEVEE's default AgX tone-maps what you're
   judging). Override in the job if you want the filmic look.
-- The pilot writes a **walk-only** `thug_manifest.json` (it overwrites the grey one — intended for the eval).
-  The full 5-clip GLB render re-locks ONE shared scale across all clips and rewrites the full manifest.
-- **PBR-through-EEVEE is new here.** If the sheet renders black/untextured, read the `MATERIAL …` diagnostic
-  line in `.out` (is a base-colour image wired to the Principled BSDF?) and report it — don't force a pass.
+- **PBR-through-EEVEE.** If a sheet renders black/untextured, read that clip's `MATERIAL …` diagnostic in
+  `.out` (is a base-colour image wired to the Principled BSDF?) and report it — don't force a pass.
 
-**What to verify (the things automated tests can't):**
-1. **Walk is a real walk** — not the old hands-up boxing-guard stance (the bug that triggered the Meshy swap).
-2. **Idle / run** read as breathe / run; **attack plays once and holds** (doesn't loop) when a unit attacks;
-   movement picks walk vs run by speed (`loco` ≥1.5 → run).
-3. **8 facings** rotate correctly as the unit changes direction — front matches travel (else tune
-   `modelForwardDeg`, re-render, or nudge `dirOffset`).
-4. **Feet planted** on the tile (foot anchor 0.5,1.0), figure sized like the procedural one (tune
-   `?spritescale` to taste; the manifest's `figurePxH` drives the base scale).
-5. **No x-ray / faction colour** — a hidden rival still draws nothing; faction stays on the base-plate ring,
-   never the body.
+**What to verify (the things automated tests can't — the human gate):**
+1. **Colour reads on all 5** — navy suit, skin tone, two-tone shoes (as the walk pilot confirmed), on idle/
+   run/hurt/attack too.
+2. **NO resize between actions** in-game — the thug is the SAME size whether idling, running, or attacking
+   (the whole point of the shared scale). Watch a unit cycle idle→walk→run→attack.
+3. **Facing** — the thug faces its travel direction in all 8 dirs. Camera keeps `modelForwardDeg:0` like the
+   grey render, so `THUG_FACING_OFFSET` (+4) is applied unchanged — **but the GLB imports via a different path
+   than the FBX**, so if it moonwalks, set `THUG_FACING_OFFSET=0` in `unitFacingQuantize.ts` (or re-render
+   with `modelForwardDeg:180`).
+4. **Banding acceptable** post-`pngquant` (see above).
+5. **Clips read right** — idle breathes / looks around, run reads as a run, **attack plays once and holds**
+   (doesn't loop); **feet planted** (foot anchor 0.5,1.0).
 
-If 1–5 look right, proceed to `pngquant` + commit. If walk/facing is off, it's a **render** fix (clip or
-`modelForwardDeg`), not a code change.
+If these look right, commit the sheets + manifest. If colour/facing/scale is off, it's a **render** fix
+(clip, `modelForwardDeg`, or the job), not a code change.
 
 > **Root-motion strip (source-agnostic).** `inPlace: true` re-centres the figure each frame so locomotion
 > that **travels** still renders in place — and it does **not** shrink `orthoScale` to compensate. For real

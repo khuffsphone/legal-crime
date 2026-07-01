@@ -49,6 +49,23 @@ describe('thug sprite manifest — the committed render output', () => {
     for (const a of Object.values(manifest.actions)) expect(a.frames.length).toBe(a.rows * a.cols);
   });
 
+  it('locks ONE shared figure scale across ALL actions (no per-action resize)', () => {
+    // The load-bearing invariant of the multi-clip render: the bbox pre-pass UNIONS every clip into ONE
+    // ortho_scale, so the loader (spriteDisplayScale reads manifest.figurePxH) sizes every action identically
+    // — attack's wide arm-throw can't render bigger/smaller than a compact idle. Scale lives at the TOP level
+    // ONLY; a per-action figurePxH/orthoScale/scale key would reintroduce the resize-on-action bug. This holds
+    // for the grey render committed today and the colour re-render (same schema, different numbers).
+    expect(manifest.figurePxH).toBeGreaterThan(0);
+    expect(manifest.figurePxW).toBeGreaterThan(0);
+    expect(manifest.camera.orthoScale ?? 0).toBeGreaterThan(0);
+    for (const [key, a] of Object.entries(manifest.actions)) {
+      const rec = a as unknown as Record<string, unknown>;
+      for (const scaleKey of ['figurePxH', 'figurePxW', 'orthoScale', 'scale'] as const) {
+        expect(rec[scaleKey], `action '${key}' must not carry its own ${scaleKey} — scale is shared/global`).toBeUndefined();
+      }
+    }
+  });
+
   it('the placeholder flag matches its action set (placeholder→idle/walk/attack; real render→+run+hurt)', () => {
     const names = Object.keys(manifest.actions).sort();
     if (manifest.placeholder) {

@@ -1,0 +1,39 @@
+{
+  "unitName": "thug",
+  "source": "glb",
+  "inPlace": true,
+  "sharedScale": true,
+  "outputDir": "public/assets/sprites/units",
+  "_full": "FULL 5-clip COLOUR render — supersedes the walk pilot. Renders idle/walk/run/hurt/attack from the textured Meshy GLBs into the final thug_{action}.png set (overwrites the grey FBX sheets) + ONE rewritten thug_manifest.json. Reuses the proven pipeline: source=glb -> import_scene.gltf (keeps each GLB's PBR Material_1 + base-colour texture), the stray un-skinned 'Icosphere' is DROPped, the 4096² texture is downscaled to maxTextureSize (1024), view transform 'Standard' (true colour, not AgX), and inPlace root-strip removes locomotion TRAVEL on every clip (Z bob kept). Frame counts/fps/loop are IDENTICAL to the grey render (thug_gangster.json) so spriteManifest.test's locked cols (idle 6, walk 10, attack 8) stay green. Camera/framing/anchors/dirs are IDENTICAL too, so THUG_FACING_OFFSET (+4, #51) and the loader apply unchanged.",
+  "_sharedScale": "★ THE LOAD-BEARING ITEM. All 5 clips are in ONE job so the bbox pre-pass UNIONS their full frame ranges into ONE ortho_scale/figurePxH — every action renders at the SAME size (attack's wide arm-throw cannot shrink the normalised figure vs a compact idle). The render logs LOCKED-SCALE (the single scale + which clip/frame/dir drove the widest span + each clip's own extent) and asserts no clip escapes the shared union (RENDER_FAIL if it does). Do NOT render the clips as 5 separate jobs — that reintroduces per-clip scale.",
+  "_actions": "idle/walk/run give the confirmed Meshy action names + source frame ranges. hurt (Gunshot_Reaction) and attack (Punch_Combo_4) intentionally OMIT actionName + frame range: each GLB is single-action, so the importer auto-selects its one action (no guessing) and the REAL action name flows into the manifest's sourceAction from action.name; the full clip range is used. If K's inspect shows either GLB is multi-action, add its exact actionName here.",
+  "_run": "Windows PowerShell (SPLIT STREAMS; ErrorActionPreference Continue): $ErrorActionPreference='Continue'; & $env:BLENDER_PATH -b -P tools\\blender\\render_iso_unit.py -- --job tools\\blender\\render_jobs\\thug_glb.json --engine BLENDER_EEVEE 1> thug_glb.out 2> thug_glb.err ; then paste thug_glb.out. THEN squeeze (K approved) — see README 'pngquant' block — and EYEBALL one squeezed sheet for banding before trusting 256 colours (photoreal gradients band harder than flat grey).",
+  "camera": {
+    "tileW": 128,
+    "tileH": 64,
+    "cameraMode": "dimetric2to1",
+    "cameraZDeg": 45,
+    "directions": 8,
+    "dirStartDeg": 0,
+    "dirStepDeg": 45,
+    "modelForwardDeg": 0,
+    "_note": "IDENTICAL lock to the grey render (thug_gangster.json): 2:1 tiles -> dimetric2to1 (60deg from top-down). modelForwardDeg=0 like the grey render, so THUG_FACING_OFFSET=+4 (unitFacingQuantize.ts, #51) still applies. ⚠ FACING IS A K-GATE: the GLB imports via a DIFFERENT path than the FBX (import_scene.gltf, no automatic_bone_orientation), so its forward axis may differ. If the thug moonwalks (faces opposite travel) in-game, the fix is set THUG_FACING_OFFSET=0 (or re-render with modelForwardDeg:180)."
+  },
+  "actions": [
+    { "name": "idle",   "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Long_Breathe_and_Look_Around_withSkin.glb", "actionName": "Long_Breathe_and_Look_Around", "sourceFrameStart": 0, "sourceFrameEnd": 271, "outputFrameCount": 6,  "playbackFps": 6,  "loop": true },
+    { "name": "walk",   "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Walking_withSkin.glb",                     "actionName": "walking_man",                 "sourceFrameStart": 0, "sourceFrameEnd": 25,  "outputFrameCount": 10, "playbackFps": 10, "loop": true },
+    { "name": "run",    "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Running_withSkin.glb",                     "actionName": "running",                     "sourceFrameStart": 0, "sourceFrameEnd": 16,  "outputFrameCount": 10, "playbackFps": 12, "loop": true },
+    { "name": "hurt",   "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Gunshot_Reaction_withSkin.glb",                                                          "outputFrameCount": 10, "playbackFps": 9,  "loop": true },
+    { "name": "attack", "glb": "assets/raw/thug_glb/Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Punch_Combo_4_withSkin.glb",                                                             "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
+  ],
+  "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
+  "shader": {
+    "keepSourceMaterial": true,
+    "maxTextureSize": 1024,
+    "outlineEnabled": true,
+    "outlineThicknessPx": 1.75,
+    "outlineColorHex": "#1E1713"
+  },
+  "light": { "keyEnergy": 1200, "fillEnergy": 500, "rimEnergy": 220, "ambientStrength": 0.08 },
+  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "viewTransform": "Standard", "emitManifestJson": true }
+}

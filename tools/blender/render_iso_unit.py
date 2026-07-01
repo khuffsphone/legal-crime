@@ -117,18 +117,25 @@ def set_only_visible(clips, active):
 
 
 def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace):
-    """Project every posed vertex (all clips x dirs x frames) onto the camera right/up axes; return the global
-    (minR, maxR, minU, maxU). The UNION across clips locks ONE ortho_scale so idle/walk/run/... all render at
-    the SAME size and foot anchor (the dispatch's 'shared normalization')."""
+    """Project every posed vertex (all clips x dirs x frames) onto the camera right/up axes and return
+    ((minR, maxR, minU, maxU) UNION, per_clip_extents, drivers). The UNION across clips locks ONE ortho_scale
+    so idle/walk/run/... all render at the SAME size and foot anchor (the 'shared normalization') — the
+    load-bearing guarantee against resize-on-action. `per_clip_extents` is {name: [minR,maxR,minU,maxU]} for
+    each clip's own span; `drivers` records which (clip, frame, dir) set each union extreme, so the locked
+    scale is auditable from the .out log (which pose is widest/tallest across the whole set)."""
     right, up, _fwd = basis
     deps = bpy.context.evaluated_depsgraph_get()
     min_r = min_u = float("inf")
     max_r = max_u = float("-inf")
+    drivers = {"min_r": None, "max_r": None, "min_u": None, "max_u": None}
+    per_clip = {}
     for clip in clips:
         if multi_model:
             set_only_visible(clips, clip)
         ic.assign_action(clip["arm"], clip["action"])  # slot-bind on Blender 4.4+/5.1 slotted actions
         rot_obj = clip["piv"] or clip["arm"]
+        cname = clip["name"]
+        cb = per_clip.setdefault(cname, [float("inf"), float("-inf"), float("inf"), float("-inf")])
         for d in range(dirs):
             rot_obj.rotation_euler = (0, 0, math.radians(dir_start + model_forward + d * dir_step))
             for f in clip["frames"]:
@@ -144,12 +151,20 @@ def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, 
                         w = mw @ v.co
                         r = w.dot(right)
                         u = w.dot(up)
-                        if r < min_r: min_r = r
-                        if r > max_r: max_r = r
-                        if u < min_u: min_u = u
-                        if u > max_u: max_u = u
+                        if r < min_r:
+                            min_r, drivers["min_r"] = r, (cname, f, d)
+                        if r > max_r:
+                            max_r, drivers["max_r"] = r, (cname, f, d)
+                        if u < min_u:
+                            min_u, drivers["min_u"] = u, (cname, f, d)
+                        if u > max_u:
+                            max_u, drivers["max_u"] = u, (cname, f, d)
+                        if r < cb[0]: cb[0] = r
+                        if r > cb[1]: cb[1] = r
+                        if u < cb[2]: cb[2] = u
+                        if u > cb[3]: cb[3] = u
                     ev.to_mesh_clear()
-    return (min_r, max_r, min_u, max_u)
+    return (min_r, max_r, min_u, max_u), per_clip, drivers
 
 
 def render_cell(scene, path_base):
@@ -195,6 +210,10 @@ def main():
     source = job.get("source", "blockout")
     multi_model = source in ("fbx", "glb")            # one imported rig per clip (vs the shared blockout rig)
     inplace = bool(job.get("inPlace", multi_model))   # In-Place root-strip ON for real animated clips
+    # SHARED SCALE (load-bearing): the bbox pre-pass unions EVERY clip into ONE ortho_scale/figurePxH so no
+    # action renders bigger/smaller than another (attack's wide arm-throw vs a compact idle). ON for real
+    # multi-clip renders; the assertion below fails the render if any clip escapes the shared union.
+    shared_scale = bool(job.get("sharedScale", multi_model))
     # PILOT/photoreal: a GLB carries its own PBR material + base-colour texture — KEEP it (no flat-grey toon
     # override, which is what ghosted the FBX). Default: keep for glb, toon-override for blockout/fbx.
     keep_source_material = bool(shader_cfg.get("keepSourceMaterial", source == "glb"))
@@ -236,7 +255,7 @@ def main():
             print("VIEW_TRANSFORM %s" % view_xform)
         except Exception as exc:
             print("VIEW_TRANSFORM %r unavailable (%s) — using default" % (view_xform, exc))
-    scene.render.image_settings.compression = int(out_cfg.get("pngCompression", 100))  # lossless PNG (NO pngquant)
+    scene.render.image_settings.compression = int(out_cfg.get("pngCompression", 100))  # lossless PNG (pngquant runs as a post-step — see README; K eyeballs banding)
 
     # ── build CLIPS: blockout = ONE shared rig + named baked actions; fbx = ONE imported rig PER clip ────
     # (Mixamo exports one FBX per animation, all sharing the rig/mesh). Either way the bbox pre-pass below
@@ -300,13 +319,42 @@ def main():
     basis = ic.camera_basis(cam_x, cam_z)
 
     # ── bbox pre-pass -> lock ONE framing across ALL clips (feet on bottom edge, shared scale) ───────────
-    bounds = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
+    bounds, per_clip, drivers = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward,
+                                             multi_model, inplace)
     ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad)
     px_per_bu = canvas / ortho_scale
     figure_px_h = proj_h * px_per_bu
     figure_px_w = proj_w * px_per_bu
     print("CAM mode=%s cameraXDeg=%.4f cameraZDeg=%.1f ortho_scale=%.4f figurePx=%.1fx%.1f source=%s"
           % (mode, cam_x, cam_z, ortho_scale, figure_px_w, figure_px_h, source))
+
+    # ── LOCKED-SCALE: report the ONE scale that all clips render at + which clip/frame/dir drove the ────
+    # governing (widest) span, plus each clip's own extent. Makes the shared normalization auditable from the
+    # .out log — K can see e.g. attack drove the max and every clip renders at that single locked figurePxH.
+    scale_by_h = proj_h * canvas / max(1, canvas - pad)
+    scale_by_w = proj_w * canvas / max(1, canvas - 2 * pad)
+    gov_axis, lo, hi = (("height(U)", drivers["min_u"], drivers["max_u"]) if scale_by_h >= scale_by_w
+                        else ("width(R)", drivers["min_r"], drivers["max_r"]))
+    _drv = lambda x: ("%s@f%.1f/dir%d" % (x[0], x[1], x[2])) if x else "?"
+    print("LOCKED-SCALE ortho_scale=%.4f figurePxH=%.2f figurePxW=%.2f | governing=%s | span min=%s max=%s"
+          % (ortho_scale, figure_px_h, figure_px_w, gov_axis, _drv(lo), _drv(hi)))
+    for cn, cb in per_clip.items():
+        print("  clip-extent %-8s projW=%.3f projH=%.3f" % (cn, max(0.0, cb[1] - cb[0]), max(0.0, cb[3] - cb[2])))
+
+    # SHARED-SCALE assertion: ONE figurePxH must cover every clip, so no action renders at a divergent size
+    # (the resize-on-action bug). Structural — one ortho_scale for all — plus this defensive check that no
+    # clip's own extent escapes the union it was framed by. Fails the render loudly rather than shipping a
+    # per-clip-scaled sheet set.
+    if shared_scale and len(clips) > 1:
+        min_r, max_r, min_u, max_u = bounds
+        eps = 1e-4
+        for cn, cb in per_clip.items():
+            if cb[0] < min_r - eps or cb[1] > max_r + eps or cb[2] < min_u - eps or cb[3] > max_u + eps:
+                raise SystemExit("RENDER_FAIL: clip %r extent [%.3f,%.3f]x[%.3f,%.3f] escapes the shared union "
+                                 "[%.3f,%.3f]x[%.3f,%.3f] — scale is NOT shared across clips"
+                                 % (cn, cb[0], cb[1], cb[2], cb[3], min_r, max_r, min_u, max_u))
+        print("SHARED-SCALE OK: ONE figurePxH=%.2f / ortho_scale=%.4f locked across %d clips (%s)"
+              % (figure_px_h, ortho_scale, len(clips), ", ".join(per_clip.keys())))
 
     # ── render every cell, pack per-clip sheets (rows=8 dirs × cols=frames) ──────────────────────────────
     unit_name = job["unitName"]
@@ -393,7 +441,8 @@ def main():
         os.rmdir(tmpdir)
     except OSError:
         pass
-    print("RENDER_OK unit=%s actions=%d dirs=%d" % (unit_name, len(clips), dirs))
+    print("RENDER_OK unit=%s actions=%d dirs=%d figurePxH=%.2f orthoScale=%.4f"
+          % (unit_name, len(clips), dirs, figure_px_h, ortho_scale))
 
 
 if __name__ == "__main__":
