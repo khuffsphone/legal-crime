@@ -8,7 +8,6 @@ import {
   ENV_HEIGHT_SCALE,
   PAL,
   drawIsoBuilding as drawIsoBuildingLegacy,
-  richArt,
   type BuildingStyle,
 } from './cityArtLegacy';
 import {
@@ -83,7 +82,6 @@ const FACADE = {
   bulkhead: 0x3d2b22,
   door: 0x12100e,
   doorFrame: 0x8a7a62,
-  awning: 0x2f2720,
   shadow: 0x0d0b0a,
 } as const;
 
