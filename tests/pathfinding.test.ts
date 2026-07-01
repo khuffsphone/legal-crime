@@ -19,6 +19,14 @@ describe('findPath — open grid', () => {
     expect(findPath({ gx: 2, gy: 2 }, { gx: 2, gy: 2 }, open())).toEqual([{ gx: 2, gy: 2 }]);
   });
 
+  it('start==goal ON a blocked tile is a no-op [s] (a unit may stand on / leave an un-enterable tile)', () => {
+    const grid = makeGrid(5, 5, [{ gx: 2, gy: 2 }]);
+    expect(findPath({ gx: 2, gy: 2 }, { gx: 2, gy: 2 }, grid)).toEqual([{ gx: 2, gy: 2 }]); // not null
+    expect(isValidPath([{ gx: 2, gy: 2 }], grid)).toBe(true); // the two helpers agree on the single-tile case
+    // …and it can still ESCAPE that blocked tile to a real goal:
+    expect(findPath({ gx: 2, gy: 2 }, { gx: 4, gy: 2 }, grid)).not.toBeNull();
+  });
+
   it('RTS-8way: travels the DIAGONAL on open ground — (0,0)->(2,2) is 2 diagonal steps, not a staircase', () => {
     const path = findPath({ gx: 0, gy: 0 }, { gx: 2, gy: 2 }, open());
     expect(path).toEqual([

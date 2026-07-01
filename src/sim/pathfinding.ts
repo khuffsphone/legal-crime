@@ -134,8 +134,11 @@ export function findPath(start: GridPos, goal: GridPos, grid: NavGrid): GridPos[
   const s: GridPos = { gx: Math.round(start.gx), gy: Math.round(start.gy) };
   const g: GridPos = { gx: Math.round(goal.gx), gy: Math.round(goal.gy) };
 
-  if (!walkable(grid, g.gx, g.gy)) return null; // goal blocked / out of bounds
+  // start==goal is "already there" — return [s] BEFORE the goal-walkable gate, so a unit standing ON a
+  // blocked tile (the documented "leaving an un-enterable HQ" case) whose target is its own tile is a clean
+  // no-op path, consistent with isValidPath([s])===true (not a spurious null).
   if (tileEquals(s, g)) return [s];
+  if (!walkable(grid, g.gx, g.gy)) return null; // goal blocked / out of bounds
 
   const cameFrom = new Map<string, GridPos>();
   const gScore = new Map<string, number>([[key(s.gx, s.gy), 0]]);
