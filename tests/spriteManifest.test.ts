@@ -76,6 +76,18 @@ describe('thug sprite manifest — the committed render output', () => {
     expect(new Set(clips).size).toBe(clips.length); // no clip drives two slots (the contamination signature)
     for (const a of actions) expect(a.sourceFile).not.toMatch(/merged/i); // never the merged-takes FBX
   });
+
+  // SHARED SCALE (load-bearing): the bbox pre-pass unions ALL clips into ONE ortho_scale/figurePxH, mirrored
+  // per action. Every clip must carry the SAME figurePxH as the top-level, or the thug would resize per action
+  // in-game. Conditional so older manifests (no per-action scale) stay green; enforced once the GLB render lands.
+  it('locks ONE shared scale — every action figurePxH equals the top-level (no resize-per-action)', () => {
+    const actions = Object.values(manifest.actions);
+    const withScale = actions.filter((a) => typeof a.figurePxH === 'number');
+    if (withScale.length === 0) return; // pre-GLB manifest recorded scale only at top level
+    for (const a of withScale) expect(a.figurePxH).toBe(manifest.figurePxH); // identical to the shared value
+    expect(new Set(withScale.map((a) => a.figurePxH)).size).toBe(1);         // all clips → one scale
+    expect(withScale.length).toBe(actions.length);                           // ALL actions carry it, not some
+  });
 });
 
 describe('manifest helpers — pure', () => {

@@ -166,6 +166,27 @@ Notes specific to the colour pass:
 - **PBR-through-EEVEE is new here.** If the sheet renders black/untextured, read the `MATERIAL …` diagnostic
   line in `.out` (is a base-colour image wired to the Principled BSDF?) and report it — don't force a pass.
 
+**FULL (all 5 clips) — `render_jobs/thug_gangster.json`.** Once the pilot's colour reads, render the whole set
+(idle/walk/run/hurt/attack) into the final sheets + one manifest. Stage the 5 GLBs at the exact paths in the
+job (`assets/raw/thug_glb/`), then the same split-stream run with the gangster job:
+
+```powershell
+$ErrorActionPreference='Continue'
+& $env:BLENDER_PATH -b -P tools\blender\render_iso_unit.py -- --job tools\blender\render_jobs\thug_gangster.json --engine BLENDER_EEVEE 1> thug_render.out 2> thug_render.err
+```
+
+Expect in `thug_render.out`: **5×** (`IMPORTED … [action=…]` + `DROP … 'Icosphere'` + `ROOT-STRIP` + `KEEP
+source material` + `MATERIAL … principled=True`), **5×** `SHEET … rows=8`, one **`LOCKED-SCALE … (shared by
+ALL 5 clips)`** line naming the clip/frame that drove the extent, and `RENDER_OK unit=thug actions=5 dirs=8`.
+
+- **Shared scale** is automatic: the bbox pre-pass unions all 5 clips into ONE `ortho_scale`/`figurePxH`
+  (mirrored per action in the manifest; a test asserts they're identical). No resize-per-action.
+- **Frame ranges are per-clip and explicit** (`sourceFrameStart/End`). ⚠️ `attack` (Punch_Combo_4) starts at
+  **frame 45**, not 0 — the job pins it; a 0-based render would be empty/wrong.
+- **Squeeze, then VERIFY:** `npx pngquant-bin --force --speed 1` on the 5 sheets, but photoreal bands harder
+  than flat grey — eyeball one squeezed sheet for banding before trusting 256 colours; be ready to re-run with
+  a higher count or skip aggressive quant. Don't declare the squeeze clean without the eyeball.
+
 **What to verify (the things automated tests can't):**
 1. **Walk is a real walk** — not the old hands-up boxing-guard stance (the bug that triggered the Meshy swap).
 2. **Idle / run** read as breathe / run; **attack plays once and holds** (doesn't loop) when a unit attacks;

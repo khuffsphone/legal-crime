@@ -124,6 +124,9 @@ def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, 
     deps = bpy.context.evaluated_depsgraph_get()
     min_r = min_u = float("inf")
     max_r = max_u = float("-inf")
+    # which (clip, frame) set each extreme — so we can LOG what drove the ONE locked shared scale (e.g. a wide
+    # punch pose). Diagnostic only; the scale itself is the union, unchanged.
+    drivers = {"minR": None, "maxR": None, "minU": None, "maxU": None}
     for clip in clips:
         if multi_model:
             set_only_visible(clips, clip)
@@ -144,12 +147,12 @@ def bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, 
                         w = mw @ v.co
                         r = w.dot(right)
                         u = w.dot(up)
-                        if r < min_r: min_r = r
-                        if r > max_r: max_r = r
-                        if u < min_u: min_u = u
-                        if u > max_u: max_u = u
+                        if r < min_r: min_r = r; drivers["minR"] = (clip["name"], f)
+                        if r > max_r: max_r = r; drivers["maxR"] = (clip["name"], f)
+                        if u < min_u: min_u = u; drivers["minU"] = (clip["name"], f)
+                        if u > max_u: max_u = u; drivers["maxU"] = (clip["name"], f)
                     ev.to_mesh_clear()
-    return (min_r, max_r, min_u, max_u)
+    return (min_r, max_r, min_u, max_u), drivers
 
 
 def render_cell(scene, path_base):
@@ -300,13 +303,20 @@ def main():
     basis = ic.camera_basis(cam_x, cam_z)
 
     # ── bbox pre-pass -> lock ONE framing across ALL clips (feet on bottom edge, shared scale) ───────────
-    bounds = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
+    bounds, drivers = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
     ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad)
     px_per_bu = canvas / ortho_scale
     figure_px_h = proj_h * px_per_bu
     figure_px_w = proj_w * px_per_bu
     print("CAM mode=%s cameraXDeg=%.4f cameraZDeg=%.1f ortho_scale=%.4f figurePx=%.1fx%.1f source=%s"
           % (mode, cam_x, cam_z, ortho_scale, figure_px_w, figure_px_h, source))
+    # LOCKED-SCALE: ONE shared scale across ALL clips (union bbox). Name the clip/frame that drove each extent,
+    # so a suspicious resize is diagnosable from the log (e.g. attack's wide punch driving the width).
+    def _drv(k):
+        d = drivers.get(k)
+        return "%s@f%.0f" % (d[0], d[1]) if d else "n/a"
+    print("LOCKED-SCALE ortho_scale=%.4f figurePxH=%.2f (shared by ALL %d clips) | widthSpan=%.3f [minR=%s maxR=%s] heightSpan=%.3f [minU=%s maxU=%s]"
+          % (ortho_scale, figure_px_h, len(clips), proj_w, _drv("minR"), _drv("maxR"), proj_h, _drv("minU"), _drv("maxU")))
 
     # ── render every cell, pack per-clip sheets (rows=8 dirs × cols=frames) ──────────────────────────────
     unit_name = job["unitName"]
@@ -348,6 +358,9 @@ def main():
             "frameW": canvas, "frameH": canvas, "rows": dirs, "cols": cols,
             "playbackFps": clip["fps"], "loop": clip["loop"],
             "sourceFile": clip.get("sourceFile"), "sourceAction": clip.get("sourceAction"),
+            # SHARED scale mirrored per action (identical for every clip — the union bbox locks one scale).
+            # A test asserts these are all equal + match the top-level, so a future per-clip-resize regression fails.
+            "figurePxH": round(figure_px_h, 2), "orthoScale": round(ortho_scale, 4),
             "frames": frames_meta,
         }
         print("SHEET %s rows=%d cols=%d source=%s action=%r"
