@@ -304,7 +304,14 @@ def main():
 
     # ── bbox pre-pass -> lock ONE framing across ALL clips (feet on bottom edge, shared scale) ───────────
     bounds, drivers = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
-    ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad)
+    # FIXED-SCALE (kit tiling): a job may lock ONE ortho_scale shared across separate renders so many subjects
+    # (the 25-asset kit) render at the same world-unit->pixel scale and TILE. 0/absent -> per-subject bbox
+    # auto-fit (the character default). GPT-Pro Phase-0 lock: 2.8284 for a 256 canvas at 8 px/ft (density
+    # canvas/ortho = 90.51 = 64*sqrt(2) px per tile-unit). Source-agnostic (works for glb/fbx/blockout alike).
+    fixed_ortho = float(out_cfg.get("fixedOrthoScale", 0) or 0)
+    ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad, force_ortho_scale=fixed_ortho)
+    if fixed_ortho > 0:
+        print("FIXED-SCALE ortho_scale=%.6f (job override — bbox auto-fit BYPASSED; shared across renders) source=%s" % (ortho_scale, source))
     px_per_bu = canvas / ortho_scale
     figure_px_h = proj_h * px_per_bu
     figure_px_w = proj_w * px_per_bu
