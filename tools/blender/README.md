@@ -132,6 +132,40 @@ npm run dev
 - Optional `?spritescale=N` (0.25–6, e.g. `?sprites&spritescale=2`) enlarges the on-screen unit so you can
   scrutinise frames; it's a display zoom only, not a re-render.
 
+## Textured GLB render — colour (`source: "glb"`)
+
+The FBX pass renders **flat grey** because FBX export dropped the Meshy texture. The GLB pass keeps it: a
+`source: "glb"` job imports via `import_scene.gltf` and — with `shader.keepSourceMaterial: true` — renders the
+GLB's own PBR material (its 4096² base-colour texture) instead of the toon-grey override. Everything else
+(camera 60/45, 256 canvas, 8 dirs, anchors, `inPlace` root-strip, the bbox scale-lock, the manifest schema)
+is identical to the FBX pass, so it drops into the loader unchanged.
+
+**PILOT (one clip, walk).** Prove colour on ONE sheet before wiring all five: `render_jobs/thug_walk.json`.
+Stage the textured GLB (gitignored input) at the exact path in the job, then:
+
+```powershell
+# Windows PowerShell — SPLIT STREAMS (Meshy meshes throw heavy edge-warning spam on stderr; keep it OFF the
+# gate stream so it can't abort a *> capture). ErrorActionPreference Continue keeps going past the warnings.
+$ErrorActionPreference='Continue'
+& $env:BLENDER_PATH -b -P tools\blender\render_iso_unit.py -- --job tools\blender\render_jobs\thug_walk.json --engine BLENDER_EEVEE 1> thug_walk.out 2> thug_walk.err
+# then paste thug_walk.out (the gate log). thug_walk.err is just the mesh-warning noise.
+```
+
+Expect in `thug_walk.out`: `IMPORTED walk <- …Walking_withSkin.glb`, a `DROP non-character mesh … 'Icosphere'`
+line (the stray un-skinned sphere is excluded), `ROOT-STRIP applied (in-place)`, `KEEP source material`, a
+`MATERIAL 'Material_1': principled=True images=[…4096x4096]` diagnostic, `TEXTURE downscaled … 4096 -> 1024`,
+`SHEET …/thug_walk.png rows=8 cols=10`, and `RENDER_OK`.
+
+Notes specific to the colour pass:
+- **Do NOT `pngquant`/squeeze the pilot output.** Photoreal bands harder than flat grey and may need >256
+  colours — hold the squeeze until K confirms the colour reads.
+- `output.viewTransform: "Standard"` renders true texture colour (EEVEE's default AgX tone-maps what you're
+  judging). Override in the job if you want the filmic look.
+- The pilot writes a **walk-only** `thug_manifest.json` (it overwrites the grey one — intended for the eval).
+  The full 5-clip GLB render re-locks ONE shared scale across all clips and rewrites the full manifest.
+- **PBR-through-EEVEE is new here.** If the sheet renders black/untextured, read the `MATERIAL …` diagnostic
+  line in `.out` (is a base-colour image wired to the Principled BSDF?) and report it — don't force a pass.
+
 **What to verify (the things automated tests can't):**
 1. **Walk is a real walk** — not the old hands-up boxing-guard stance (the bug that triggered the Meshy swap).
 2. **Idle / run** read as breathe / run; **attack plays once and holds** (doesn't loop) when a unit attacks;
