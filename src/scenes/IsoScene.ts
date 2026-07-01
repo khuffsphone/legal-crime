@@ -313,6 +313,7 @@ import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
 import { spritesRequested, spriteScaleParam, spriteDisplayScale } from './render/unitSpriteState';
 import { preloadUnitSprites, registerUnitAnims, availableActions, THUG_SPRITE_CONFIG } from './render/unitSpriteLoader';
 import { ensureUnitSprite, driveUnitSprite } from './render/unitSpriteView';
+import { THUG_FACING_OFFSET } from './render/unitFacingQuantize';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -1920,6 +1921,7 @@ export class IsoScene extends Phaser.Scene {
           driveUnitSprite(v.spriteSheet, {
             unitName: THUG_SPRITE_CONFIG.unitName,
             facing: unitFacing(v.unit),
+            dirOffset: THUG_FACING_OFFSET, // Mixamo FBX forward=-Y, rows baked modelForwardDeg=0 → rotate 180° (4 octants) to stop the moonwalk
             attacking: !!v.attackUntil && now < v.attackUntil,
             moving, loco: v.loco ?? 0,
             availableActions: this.spriteActions, // desired action degrades to a rendered clip (run→walk→idle)
