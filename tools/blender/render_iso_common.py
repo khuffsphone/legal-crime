@@ -73,10 +73,16 @@ def orient_camera(cam_obj, cam_x_deg, cam_z_deg):
     cam_obj.rotation_euler = (math.radians(cam_x_deg), 0.0, math.radians(cam_z_deg))
 
 
-def frame_camera(cam_obj, basis, bounds, frame_canvas, target_max_h, pad):
+def frame_camera(cam_obj, basis, bounds, frame_canvas, target_max_h, pad, force_ortho_scale=None):
     """Lock ortho_scale + camera location so the figure fits with a top/side pad and the FEET sit on the
     bottom edge of the cell (Phaser origin 0.5,1.0 => the placement point is the foot baseline).
-    `bounds` is (minR, maxR, minU, maxU) of all posed verts projected onto the camera right/up axes."""
+    `bounds` is (minR, maxR, minU, maxU) of all posed verts projected onto the camera right/up axes.
+
+    `force_ortho_scale`: when set (>0), SKIP the per-subject bbox auto-fit and lock this EXACT ortho_scale — a
+    world-unit->pixel scale shared across separate renders so many subjects (e.g. a building kit) tile at ONE
+    consistent size. The bbox is still used for horizontal centre + foot anchor, just not for the zoom. Leave
+    None (default) for the character path's auto-fit. At a forced scale a subject bigger than the cell overflows
+    — intended: the shared scale is authoritative, not the framing."""
     right, up, forward = basis
     min_r, max_r, min_u, max_u = bounds
     proj_w = max(1e-6, max_r - min_r)
@@ -84,7 +90,7 @@ def frame_camera(cam_obj, basis, bounds, frame_canvas, target_max_h, pad):
     # height fits with a TOP pad only (feet ride the bottom); width fits with a pad on both sides.
     scale_by_h = proj_h * frame_canvas / (frame_canvas - pad)
     scale_by_w = proj_w * frame_canvas / (frame_canvas - 2 * pad)
-    ortho_scale = max(scale_by_h, scale_by_w)
+    ortho_scale = float(force_ortho_scale) if (force_ortho_scale and force_ortho_scale > 0) else max(scale_by_h, scale_by_w)
     cam_obj.data.ortho_scale = ortho_scale
     # camLoc in the orthonormal {right,up,forward} basis: centre horizontally on the figure; place so the
     # lowest projected point (feet) maps to the bottom edge (sU = -ortho_scale/2); push back along forward.

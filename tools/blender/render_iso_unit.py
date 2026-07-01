@@ -276,7 +276,13 @@ def main():
 
     # ── bbox pre-pass -> lock ONE framing across ALL clips (feet on bottom edge, shared scale) ───────────
     bounds = bbox_prepass(scene, clips, dirs, basis, dir_start, dir_step, model_forward, multi_model, inplace)
-    ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad)
+    # FIXED-SCALE (kit tiling): a job may lock ONE ortho_scale shared across separate renders so many subjects
+    # render at the same world-unit->pixel scale (buildings must tile). 0/absent -> per-subject bbox auto-fit
+    # (the character default). See render_iso_common.frame_camera.
+    fixed_ortho = float(out_cfg.get("fixedOrthoScale", 0) or 0)
+    ortho_scale, proj_w, proj_h = ic.frame_camera(cam, basis, bounds, canvas, target_h, pad, force_ortho_scale=fixed_ortho)
+    if fixed_ortho > 0:
+        print("FIXED-SCALE ortho_scale=%.6f (job override — bbox auto-fit BYPASSED; shared across renders)" % ortho_scale)
     px_per_bu = canvas / ortho_scale
     figure_px_h = proj_h * px_per_bu
     figure_px_w = proj_w * px_per_bu
