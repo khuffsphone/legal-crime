@@ -7,6 +7,8 @@
 import Phaser from 'phaser';
 import { parseArtMode } from './artMode';
 import type { LandmarkKind } from './art/districtIdentity';
+import { composeLowTierFacade, type LowTierOptions } from './env/facadeKit';
+import { skewBands, skewOpenings, type WallFace } from './env/facadeSkew';
 
 /** RTS-26 — rich (elevated gangster figures) vs lean (pre-rts26 shapes). Read once from the URL. */
 export function richArt(): boolean {
@@ -780,12 +782,16 @@ export function drawIsoBuilding(
   cy: number,
   style: BuildingStyle,
   depth: number,
-  opts: { rich?: boolean; lit?: boolean; sign?: number; faction?: 'player' | 'rival'; accent?: number } = {},
+  opts: { rich?: boolean; lit?: boolean; sign?: number; faction?: 'player' | 'rival'; accent?: number; facadeKit?: boolean } = {},
 ): { roofX: number; roofY: number; gfx: Phaser.GameObjects.Graphics } {
   const rich = opts.rich ?? richArt();
   const lit = opts.lit ?? true;
   const hw = style.footHalfW ?? 54;
   const hh = style.footHalfH ?? 27;
+  // ★ Phase-2 reversible facade kit (?facadekit): REPLACE the low-tier lit-wall look with the composed vector
+  // storefront. Massing (base diamond + walls + roof + eave) is unchanged; only the lit-wall content swaps, and
+  // ONLY for low-tier kinds. Flag OFF → every block below runs exactly as before (the rollback valve).
+  const useKit = !!opts.facadeKit && (style.kind === 'storefront' || style.kind === 'speakeasy');
   // RTS-30c-scale: grow the VERTICAL massing (the whole facade — walls/windows/cornice/trim derive from
   // `h`, so they scale together); the footprint hw/hh stays so the building keeps its parcel.
   const h = style.height * ENV_HEIGHT_SCALE;
@@ -814,39 +820,43 @@ export function drawIsoBuilding(
     ],
     true,
   );
-  if (rich) {
-    // running-bond BRICK on the lit wall: mortar courses every ~5px + offset vertical ticks (texture)
-    g.lineStyle(1, PAL.mortar, 0.35);
-    for (let yy = cy - 4; yy > cy - h; yy -= 5) {
-      g.beginPath(); g.moveTo(bBottom.x, yy + hh - 1); g.lineTo(bRight.x, yy - 1); g.strokePath();
+  // ── lit-wall CONTENT — the current procedural look; SKIPPED wholesale for low-tier when ?facadekit is ON
+  // (the composed vector facade replaces it below). Massing/roof/eave stay either way.
+  if (!useKit) {
+    if (rich) {
+      // running-bond BRICK on the lit wall: mortar courses every ~5px + offset vertical ticks (texture)
+      g.lineStyle(1, PAL.mortar, 0.35);
+      for (let yy = cy - 4; yy > cy - h; yy -= 5) {
+        g.beginPath(); g.moveTo(bBottom.x, yy + hh - 1); g.lineTo(bRight.x, yy - 1); g.strokePath();
+      }
+      g.lineStyle(1, PAL.mortar, 0.22);
+      for (let f = 0.2; f < 1; f += 0.2) {
+        const sx = bBottom.x + (bRight.x - bBottom.x) * f, sy = (bBottom.y - hh) + (bRight.y - (bBottom.y - hh)) * f;
+        g.beginPath(); g.moveTo(sx, sy - h + 6); g.lineTo(sx, sy - 2); g.strokePath();
+      }
+      // soot streaks under the cornice
+      g.fillStyle(PAL.sootDeep, 0.2); g.fillRect(cx + hw * 0.3, cy - h + 4, hw * 0.5, 4);
+    } else {
+      g.lineStyle(1, style.wallDark, 0.5);
+      for (let i = 1; i < style.windows + 2; i++) {
+        const yy = cy - (h * i) / (style.windows + 2);
+        g.beginPath(); g.moveTo(bBottom.x, yy + hh); g.lineTo(bRight.x, yy); g.strokePath();
+      }
     }
-    g.lineStyle(1, PAL.mortar, 0.22);
-    for (let f = 0.2; f < 1; f += 0.2) {
-      const sx = bBottom.x + (bRight.x - bBottom.x) * f, sy = (bBottom.y - hh) + (bRight.y - (bBottom.y - hh)) * f;
-      g.beginPath(); g.moveTo(sx, sy - h + 6); g.lineTo(sx, sy - 2); g.strokePath();
-    }
-    // soot streaks under the cornice
-    g.fillStyle(PAL.sootDeep, 0.2); g.fillRect(cx + hw * 0.3, cy - h + 4, hw * 0.5, 4);
-  } else {
-    g.lineStyle(1, style.wallDark, 0.5);
-    for (let i = 1; i < style.windows + 2; i++) {
-      const yy = cy - (h * i) / (style.windows + 2);
-      g.beginPath(); g.moveTo(bBottom.x, yy + hh); g.lineTo(bRight.x, yy); g.strokePath();
+
+    // windows on the right wall — warm amber when lit, dead-dark when shut (the lit/shut read).
+    // The speakeasy is discreet (no big windows); its read is the peephole + basement grate below.
+    if (style.kind !== 'speakeasy') {
+      for (let r = 0; r < style.windows; r++) {
+        const wy = cy - h + 10 + r * ((h - 14) / Math.max(1, style.windows));
+        g.fillStyle(lit ? PAL.glassGlow : PAL.glass, 1); g.fillRect(cx + hw * 0.42, wy, 8, 7);
+        g.fillStyle(lit ? PAL.glassGlow : PAL.glass, 1); g.fillRect(cx + hw * 0.68, wy + 2, 8, 7);
+        if (lit) { g.fillStyle(PAL.bone, 0.25); g.fillRect(cx + hw * 0.42, wy, 8, 1.5); g.fillRect(cx + hw * 0.68, wy + 2, 8, 1.5); } // warm sill hi
+      }
     }
   }
 
-  // windows on the right wall — warm amber when lit, dead-dark when shut (the lit/shut read).
-  // The speakeasy is discreet (no big windows); its read is the peephole + basement grate below.
-  if (style.kind !== 'speakeasy') {
-    for (let r = 0; r < style.windows; r++) {
-      const wy = cy - h + 10 + r * ((h - 14) / Math.max(1, style.windows));
-      g.fillStyle(lit ? PAL.glassGlow : PAL.glass, 1); g.fillRect(cx + hw * 0.42, wy, 8, 7);
-      g.fillStyle(lit ? PAL.glassGlow : PAL.glass, 1); g.fillRect(cx + hw * 0.68, wy + 2, 8, 7);
-      if (lit) { g.fillStyle(PAL.bone, 0.25); g.fillRect(cx + hw * 0.42, wy, 8, 1.5); g.fillRect(cx + hw * 0.68, wy + 2, 8, 1.5); } // warm sill hi
-    }
-  }
-
-  // brass deco eave trim
+  // brass deco eave trim (roof outline — massing, kept either way)
   g.lineStyle(2, style.trim, 0.9);
   g.strokePoints([{ x: bTop.x, y: bTop.y - h }, { x: bRight.x, y: bRight.y - h }, { x: bBottom.x, y: bBottom.y - h }, { x: bLeft.x, y: bLeft.y - h }], true);
   // CITY DEPTH (Lane C) — a faint district-identity ACCENT course just below the cornice on the lit eave.
@@ -856,10 +866,12 @@ export function drawIsoBuilding(
     g.lineStyle(1, opts.accent, 0.3);
     g.strokePoints([{ x: bBottom.x, y: bBottom.y - h + 7 }, { x: bRight.x, y: bRight.y - h + 7 }], false);
   }
-  g.fillStyle(PAL.ink, 1);
-  g.fillRect(cx - 5, cy + hh - 16, 10, 16); // door at the front base
+  if (!useKit) {
+    g.fillStyle(PAL.ink, 1);
+    g.fillRect(cx - 5, cy + hh - 16, 10, 16); // door at the front base
+  }
 
-  if (rich) {
+  if (rich && !useKit) {
     // ── stepped art-deco CORNICE along the lit eave (two courses) ──
     g.fillStyle(style.trim, 0.85);
     g.fillPoints([{ x: bBottom.x, y: bBottom.y - h }, { x: bRight.x, y: bRight.y - h }, { x: bRight.x, y: bRight.y - h + 3 }, { x: bBottom.x, y: bBottom.y - h + 3 }], true);
@@ -868,6 +880,9 @@ export function drawIsoBuilding(
 
     drawFacade(g, cx, cy, hw, hh, h, style, lit, opts.faction);
   }
+
+  // ★ the composed vector storefront, skewed onto the lit wall (low-tier + ?facadekit only).
+  if (useKit) drawFacadeKit(g, cx, cy, hw, hh, h, style, lit);
 
   return { roofX: cx, roofY: cy - h - hh, gfx: g };
 }
@@ -985,5 +1000,47 @@ function drawFacade(
     g.fillStyle(PAL.brass, 1); g.fillRect(doorX - 6, doorY - 3, 12, 17); // grand brass door surround
     g.fillStyle(PAL.sootDeep, 1); g.fillRect(doorX - 4, doorY - 1, 8, 15);
     g.fillStyle(crest, 1); g.fillTriangle(doorX, doorY - 9, doorX - 4, doorY - 4, doorX + 4, doorY - 4); // faction crest plate
+  }
+}
+
+/**
+ * ★ Phase-2 vector facade — compose the low-tier plan (facadeKit) and SKEW it onto the lit wall (facadeSkew),
+ * painting the storefront stack (bulkhead→glass→transom→sign→cornice/parapet) + openings. Faction-NEUTRAL by
+ * canon (ownership stays on the base-plate ring, never the facade). NO-X-RAY safe: this only paints the
+ * building's own art when the building is already being drawn — it reveals nothing hidden.
+ */
+function drawFacadeKit(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number, hw: number, hh: number, h: number,
+  style: BuildingStyle, lit: boolean,
+): void {
+  const optsForKind: LowTierOptions = style.kind === 'speakeasy'
+    ? { floors: 2, frontageTiles: 2, storefront: 'bar', door: 'residential' }
+    : { floors: 2, frontageTiles: 2, storefront: 'glass', door: 'commercial' };
+  const plan = composeLowTierFacade(optsForKind);
+  const wall: WallFace = { cx, cy, hw, hh, h };
+  const fill = (pts: { x: number; y: number }[], color: number, alpha = 1): void => { g.fillStyle(color, alpha); g.fillPoints(pts, true); };
+
+  // horizontal bands (roof→ground): flat brick/masonry base, glass/transom read the lit/shut state.
+  for (const b of skewBands(plan, wall)) {
+    let c = style.wall; // brickUpper + bulkhead default to the wall brick
+    if (b.role === 'parapet') c = PAL.charcoal;
+    else if (b.role === 'signHost') c = PAL.sootDeep;
+    else if (b.role === 'transom') c = lit ? PAL.glass : PAL.soot;
+    else if (b.role === 'glass') c = lit ? PAL.glassGlow : PAL.glass;
+    else if (b.role === 'storefrontBar') c = style.wallDark;
+    fill(b.pts, c, 1);
+    g.lineStyle(1, PAL.mortar, 0.28); g.strokePoints(b.pts, true); // faint course seam
+  }
+
+  // openings: door (ink), display glass panes (glow/shut), upper windows, and the fascia sign board (bay −1).
+  for (const o of skewOpenings(plan, wall)) {
+    let c: number;
+    if (o.role.startsWith('door')) c = PAL.ink;
+    else if (o.role === 'glass') c = lit ? PAL.glassGlow : PAL.glass;
+    else if (o.bayIndex === -1) c = PAL.slate; // fascia sign board
+    else c = lit ? PAL.glassGlow : PAL.glass;  // upper double-hung windows
+    fill(o.pts, c, 1);
+    g.lineStyle(1, PAL.brassDark, 0.7); g.strokePoints(o.pts, true); // brass frame/mullion
   }
 }
