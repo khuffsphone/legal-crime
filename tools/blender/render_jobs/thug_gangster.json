@@ -26,5 +26,5 @@
   "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
   "shader": { "keepSourceMaterial": true, "maxTextureSize": 1024, "outlineEnabled": true, "outlineThicknessPx": 1.75, "outlineColorHex": "#1E1713" },
   "light": { "keyEnergy": 1200, "fillEnergy": 500, "rimEnergy": 220, "ambientStrength": 0.08 },
-  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "viewTransform": "Standard", "emitManifestJson": true }
+  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "viewTransform": "Standard", "emitManifestJson": true, "fixedOrthoScale": 2.8284 }
 }

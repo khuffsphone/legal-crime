@@ -1,14 +1,14 @@
 {
   "unitName": "thug",
   "placeholder": false,
-  "generator": "tools/blender/render_iso_unit.py (real model render (fbx))",
+  "generator": "tools/blender/render_iso_unit.py (real model render (glb))",
   "camera": {
     "mode": "dimetric2to1",
     "cameraXDeg": 60.0,
     "cameraZDeg": 45.0,
     "tileW": 128.0,
     "tileH": 64.0,
-    "orthoScale": 2.0125
+    "orthoScale": 2.8284
   },
   "anchor": {
     "anchorX": 0.5,
@@ -18,8 +18,8 @@
   "dirStartDeg": 0.0,
   "dirStepDeg": 45.0,
   "modelForwardDeg": 0.0,
-  "figurePxH": 240.0,
-  "figurePxW": 211.16,
+  "figurePxH": 197.87,
+  "figurePxW": 153.6,
   "frameCanvas": 256,
   "pad": 16,
   "actions": {
@@ -32,8 +32,10 @@
       "cols": 6,
       "playbackFps": 6,
       "loop": true,
-      "sourceFile": "idle.fbx",
-      "sourceAction": "Armature|Armature|Armature|Short_Breathe_and_Look_Around|baselayer",
+      "sourceFile": "Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Long_Breathe_and_Look_Around_withSkin.glb",
+      "sourceAction": "Armature|Long_Breathe_and_Look_Around|baselayer",
+      "figurePxH": 197.87,
+      "orthoScale": 2.8284,
       "frames": [
         {
           "name": "thug_idle_dir0_f00",
@@ -622,8 +624,10 @@
       "cols": 10,
       "playbackFps": 10,
       "loop": true,
-      "sourceFile": "walk.fbx",
-      "sourceAction": "Armature.001|Armature|Armature|walking_man|baselayer",
+      "sourceFile": "Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Walking_withSkin.glb",
+      "sourceAction": "Armature|walking_man|baselayer",
+      "figurePxH": 197.87,
+      "orthoScale": 2.8284,
       "frames": [
         {
           "name": "thug_walk_dir0_f00",
@@ -1596,8 +1600,10 @@
       "cols": 10,
       "playbackFps": 12,
       "loop": true,
-      "sourceFile": "run.fbx",
-      "sourceAction": "Armature.002|Armature|Armature|running|baselayer",
+      "sourceFile": "Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Running_withSkin.glb",
+      "sourceAction": "Armature|running|baselayer",
+      "figurePxH": 197.87,
+      "orthoScale": 2.8284,
       "frames": [
         {
           "name": "thug_run_dir0_f00",
@@ -2570,8 +2576,10 @@
       "cols": 10,
       "playbackFps": 9,
       "loop": true,
-      "sourceFile": "hurt.fbx",
-      "sourceAction": "Armature.003|Armature|Armature|Slap_Reaction|baselayer",
+      "sourceFile": "Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Gunshot_Reaction_withSkin.glb",
+      "sourceAction": "Armature|Gunshot_Reaction|baselayer",
+      "figurePxH": 197.87,
+      "orthoScale": 2.8284,
       "frames": [
         {
           "name": "thug_hurt_dir0_f00",
@@ -3544,8 +3552,10 @@
       "cols": 8,
       "playbackFps": 12,
       "loop": false,
-      "sourceFile": "attack.fbx",
-      "sourceAction": "Armature.004|Armature|Armature|Boxing_Guard_Prep_Straight_Punch|baselayer",
+      "sourceFile": "Meshy_AI_Chicago_Gangster_A_Po_biped_Animation_Punch_Combo_4_withSkin.glb",
+      "sourceAction": "Armature|Punch_Combo_4|baselayer",
+      "figurePxH": 197.87,
+      "orthoScale": 2.8284,
       "frames": [
         {
           "name": "thug_attack_dir0_f00",
