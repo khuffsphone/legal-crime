@@ -31,17 +31,17 @@ export interface DistrictComposition {
 export const DISTRICTS: Readonly<Record<StreetscapeDistrict, DistrictComposition>> = {
   FINANCIAL: {
     id: 'FINANCIAL', label: 'Financial district',
-    description: 'Dense downtown: formal lamps + signals anchor the corners, parked autos set the rhythm, mail/bollards fill.',
+    description: 'Dense downtown: kiosks + formal trees anchor, lamps + parked autos set the rhythm, mail boxes/bollards fill, a signal tower the rare.',
     densityCaps: { anchor: 2, rhythm: 6, filler: 6, rare: 1 },
   },
   MARKET: {
     id: 'MARKET', label: 'Market district',
-    description: 'Busy retail: newsstands anchor, stalls + awnings set the beat, carts + refuse crowd the filler.',
+    description: 'Busy retail: newsstands anchor, stalls + awnings set the beat, refuse cans + a-frames fill, the pushcart vendor is the signature rare.',
     densityCaps: { anchor: 2, rhythm: 5, filler: 8, rare: 2 },
   },
   THEATRE: {
     id: 'THEATRE', label: 'Theatre / vice row',
-    description: 'Entertainment strip: bright lamps anchor, awnings rhythm, blade/neon signs are the signature rare.',
+    description: 'Entertainment strip: a kiosk anchors, bright lamps + awnings set the rhythm, blade/neon signs are the signature rare.',
     densityCaps: { anchor: 2, rhythm: 4, filler: 5, rare: 2 },
   },
   TENEMENT: {
@@ -66,7 +66,7 @@ export const DISTRICTS: Readonly<Record<StreetscapeDistrict, DistrictComposition
   },
   RIVERSIDE: {
     id: 'RIVERSIDE', label: 'Riverside / park',
-    description: 'Leisure green: trees anchor, hedges + benches rhythm, planters filler, a fountain the rare feature.',
+    description: 'Leisure green: trees (and the odd fountain) anchor, hedges + benches rhythm, planters filler, a plaza cart the rare.',
     densityCaps: { anchor: 2, rhythm: 5, filler: 5, rare: 1 },
   },
 };
