@@ -8,6 +8,7 @@ import type { EmbodiedExtortionAct } from './extortionEmbodied';
 import type { DownedBody } from './downedBodies';
 import type { CrewTie } from './crew';
 import type { RunStats } from './runStats';
+import type { BeatCop } from './beatCops';
 
 export type GameStatus = 'playing' | 'won' | 'lost';
 export type LossReason = 'bankrupt' | 'dead' | 'busted';
@@ -277,6 +278,13 @@ export interface GameState {
    * ensureRunStats), so createInitialState stays byte-identical and determinism/save-load are untouched.
    * The shape + helpers live in src/sim/runStats.ts (a type-only import, so there is no runtime cycle). */
   runStats?: RunStats;
+  /** BEAT-COP P0 — the law-patrol layer (neutral markers on the sidewalk graph). Additive; absent ⇒
+   * no cops, so prior states/saves/tests are byte-identical. Driven by the real-time wrapper
+   * (advanceBeatCops), NOT the tick; cops are never MovableUnits (state.units untouched). */
+  beatCops?: BeatCop[];
+  /** BEAT-COP P0 — the SEPARATE law-layer PRNG cursor. Cop draws never touch the shared rngState
+   * (existing outcome order stays bit-identical). Absent ⇒ derived lazily from seed on first draw. */
+  lawRngState?: number;
   log: GameEvent[];
 }
 

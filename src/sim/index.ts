@@ -170,6 +170,12 @@ export {
   recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
 } from './downedBodies';
 export {
+  spawnBeatCops, advanceBeatCops, desiredCopCount, copDistrictWeights, buildPatrolWorld,
+  copsRequested, debugCopsRequested, copMarkerVisible,
+  COP_PATROL_SPEED, COP_CAP_CLEAR,
+  type BeatCop, type BeatCopMode, type PatrolWorld, type CopDistrictWeight,
+} from './beatCops';
+export {
   previewAttackRival, previewExtortFront, previewRetakeFront, previewFederalAction, type IsVisible,
 } from './opPreview';
 export {
