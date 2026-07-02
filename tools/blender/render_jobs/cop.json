@@ -1,0 +1,28 @@
+{
+  "unitName": "cop",
+  "source": "glb",
+  "inPlace": true,
+  "outputDir": "public/assets/sprites/units",
+  "_inputs": "Track B COP sprite — PARTIAL 3-clip set (walk/run/attack; NO idle, NO hurt — deferred Meshy gen). Reuses the PROVEN thug GLB pipeline. Stage the 3 textured GLBs in assets/raw/cop_glb/ (gitignored); the A-pose Character_output.glb can stay in the folder (it has no walk/run/attack keyword, so keyword-resolve ignores it). Filenames: leave the Meshy '..._Animation_Walking/Running/Punch_Combo_1_withSkin.glb' names OR rename to walk.glb/run.glb/attack.glb — the literals below are short; if missing, the renderer keyword-resolves (walk / run / punch) within the folder. source=glb keeps each GLB's PBR Material_1 (keepSourceMaterial); viewTransform=Standard = true colour. inPlace strips locomotion travel (Z bob kept). SHARED SCALE across the 3 clips via the bbox union AND locked to fixedOrthoScale 2.8284 (output) so the cop matches props/kit at 8 px/ft. STEP 0: run inspect_fbx (GLB mode) FIRST and confirm each action name + frame range (watch a non-zero start); pin actions[].actionName / sourceFrameStart / sourceFrameEnd here ONLY if inspect shows a multi-action file or a dead lead-in. dirOffset reuse THUG_FACING_OFFSET(+4) is applied at runtime, not here — K eyeballs facing (fresh model, axis may differ).",
+  "_run": "Windows PowerShell, SPLIT STREAMS: $ErrorActionPreference='Continue'; & $env:BLENDER_PATH -b -P tools\\blender\\render_iso_unit.py -- --job tools\\blender\\render_jobs\\cop.json --engine BLENDER_EEVEE 1> cop_render.out 2> cop_render.err ; then paste cop_render.out. Expect 3x IMPORTED/DROP Icosphere/KEEP source material/MATERIAL principled=True, a LOCKED-SCALE + FIXED-SCALE ortho_scale=2.8284 line, 3x SHEET rows=8, RENDER_OK actions=3 dirs=8. Commit RAW — NO pngquant (destroys photoreal).",
+  "camera": {
+    "tileW": 128,
+    "tileH": 64,
+    "cameraMode": "dimetric2to1",
+    "cameraZDeg": 45,
+    "directions": 8,
+    "dirStartDeg": 0,
+    "dirStepDeg": 45,
+    "modelForwardDeg": 0,
+    "_note": "Same lock as the thug: 2:1 tiles -> dimetric2to1 (60deg from top-down), Z=45. Facing corrected at runtime via unitSpriteView dirOffset (THUG_FACING_OFFSET=4); if the cop faces wrong, that offset may need its own value — K eyeballs (fresh model)."
+  },
+  "actions": [
+    { "name": "walk",   "glb": "assets/raw/cop_glb/walk.glb",   "outputFrameCount": 10, "playbackFps": 10, "loop": true },
+    { "name": "run",    "glb": "assets/raw/cop_glb/run.glb",    "outputFrameCount": 10, "playbackFps": 12, "loop": true },
+    { "name": "attack", "glb": "assets/raw/cop_glb/attack.glb", "outputFrameCount": 8,  "playbackFps": 12, "loop": false }
+  ],
+  "framing": { "frameCanvasW": 256, "frameCanvasH": 256, "targetFigureMaxH": 224, "pad": 16, "anchorX": 0.5, "anchorY": 1.0 },
+  "shader": { "keepSourceMaterial": true, "maxTextureSize": 1024, "outlineEnabled": true, "outlineThicknessPx": 1.75, "outlineColorHex": "#1E1713" },
+  "light": { "keyEnergy": 1200, "fillEnergy": 500, "rimEnergy": 220, "ambientStrength": 0.08 },
+  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "transparentBackground": true, "viewTransform": "Standard", "emitManifestJson": true, "fixedOrthoScale": 2.8284 }
+}
