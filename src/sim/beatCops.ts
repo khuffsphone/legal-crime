@@ -11,7 +11,7 @@
 
 import { Rng, seedToCursor } from './rng';
 import { buildCityGraph, pickStep, STEP_DIRS, type CityGraph } from './cityGraph';
-import { generateWorld, type WorldLayout } from './worldgen';
+import { generateWorld, tileKindAt, type WorldLayout } from './worldgen';
 import { isRevealed, type FogState } from './fog';
 import { WORLD_SIZE } from './constants';
 import type { GridPos } from './iso';
@@ -72,19 +72,82 @@ export function buildPatrolWorld(layout: WorldLayout): PatrolWorld {
   return { layout, graph: buildCityGraph(layout) };
 }
 
-// One memoized default substrate (the scene's WORLD_SIZE map). generateWorld is deterministic from
-// (seed, districts), so rebuilding after a save/load or across states with the same key is exact.
+// One memoized default substrate (the scene's WORLD_SIZE map). ⚠ generateWorld is NOT a function of
+// (seed, districts) alone — it also draws parcel placements per district BUSINESS and stamps
+// player/rival HQs, and business lists mutate in normal play (open/raid/sabotage/shock). Two modes:
+//  • PRIMED (the live scene): primePatrolWorld pins the substrate to the layout the scene actually
+//    RENDERS for this create/load epoch, keyed by the game session (seed + district ids). Mid-session
+//    business churn does NOT re-shape the rendered map until the next create, so the patrol graph
+//    must not re-shape either — cops keep walking the sidewalks the player can see.
+//  • FALLBACK (headless: tests, tools): rebuilt on demand, keyed by a fingerprint of EVERY mutable
+//    input generateWorld consumes — the memo can never serve a stale substrate, so advance stays a
+//    pure function of the state regardless of process history.
+// Displaced cops (saved coords from a since-re-rolled layout) are HEALED onto the current graph —
+// deterministically and without touching any RNG cursor — by healBeatCops/healCop below.
 // NB: pass the SAME explicit `world` to spawn AND advance, or neither — mixing a custom world with
 // the memoized default would patrol cops on mismatched graphs.
-let worldMemo: { key: string; world: PatrolWorld } | null = null;
+let worldMemo: { key: string; primed: boolean; world: PatrolWorld } | null = null;
+
+/** The stable identity of a game session (a new create() re-primes, so churn within it is fine). */
+function sessionKey(state: GameState): string {
+  return `${state.seed}:${state.districts.map((d) => d.id).join(',')}`;
+}
+
+/** Every mutable input generateWorld consumes: businesses shift the shared parcel-placement RNG
+ * stream (one added/removed business relocates every later building), player/rivals stamp HQs. */
+function worldFingerprint(state: GameState): string {
+  const biz = state.districts.map((d) => d.businesses.map((b) => b.id).join('+')).join(';');
+  return `${sessionKey(state)}|${state.player.id}|${state.rivals.map((r) => r.id).join(',')}|${biz}`;
+}
 
 function resolvePatrolWorld(state: GameState, world?: PatrolWorld): PatrolWorld {
   if (world) return world;
-  const key = `${state.seed}:${state.districts.map((d) => d.id).join(',')}`;
-  if (!worldMemo || worldMemo.key !== key) {
-    worldMemo = { key, world: buildPatrolWorld(generateWorld(state, { size: WORLD_SIZE })) };
+  if (worldMemo?.primed && worldMemo.key === sessionKey(state)) return worldMemo.world;
+  const fp = worldFingerprint(state);
+  if (!worldMemo || worldMemo.primed || worldMemo.key !== fp) {
+    worldMemo = { key: fp, primed: false, world: buildPatrolWorld(generateWorld(state, { size: WORLD_SIZE })) };
   }
   return worldMemo.world;
+}
+
+/** Pin the patrol substrate to the layout the scene RENDERS for this create/load epoch (call it in
+ * create(), before any spawn), and heal any saved cop whose coords fell off the freshly regenerated
+ * sidewalk graph (business churn between save and load re-rolls parcels, so a saved node can now be
+ * a building). Deterministic; draws nothing from any RNG cursor. */
+export function primePatrolWorld(state: GameState, layout: WorldLayout): PatrolWorld {
+  const world = buildPatrolWorld(layout);
+  worldMemo = { key: sessionKey(state), primed: true, world };
+  healBeatCops(state, world);
+  return world;
+}
+
+function healBeatCops(state: GameState, world: PatrolWorld): void {
+  for (const cop of state.beatCops ?? []) healCop(cop, world);
+}
+
+/** Re-snap a cop the current graph no longer carries: off-sidewalk pos ⇒ nearest sidewalk node
+ * (deterministic; first-wins tie-break in node order); off-sidewalk waypoint ⇒ drop the path so the
+ * next arrival re-picks. Keeps a stranded marker from freezing forever inside a re-rolled building. */
+function healCop(cop: BeatCop, { layout, graph }: PatrolWorld): void {
+  if (tileKindAt(layout, cop.pos.gx, cop.pos.gy) !== 'sidewalk') {
+    let best = -1;
+    let bestD = Infinity;
+    for (const ti of graph.sidewalkNodes) {
+      const dx = (ti % graph.size) - cop.pos.gx;
+      const dy = Math.floor(ti / graph.size) - cop.pos.gy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = ti; }
+    }
+    if (best < 0) return; // a map with no sidewalks at all — nothing to heal onto
+    cop.pos = { gx: best % graph.size, gy: Math.floor(best / graph.size) };
+    cop.path = [];
+    cop.headingDir = -1;
+    cop.mode = 'patrol';
+    cop.loiterSec = 0;
+  } else if (cop.path.length > 0 && tileKindAt(layout, cop.path[0].gx, cop.path[0].gy) !== 'sidewalk') {
+    cop.path = [];
+    cop.headingDir = -1;
+  }
 }
 
 /** The law cursor to draw from: the persisted one, else freshly derived from the game seed. */
@@ -162,9 +225,12 @@ export function spawnBeatCops(state: GameState, world?: PatrolWorld): BeatCop[] 
 export function advanceBeatCops(state: GameState, dt: number, world?: PatrolWorld): void {
   const cops = state.beatCops;
   if (!cops || cops.length === 0 || !(dt > 0)) return;
-  const { graph } = resolvePatrolWorld(state, world);
+  const resolved = resolvePatrolWorld(state, world);
   const rng = new Rng(lawCursor(state));
-  for (const cop of cops) advanceCop(cop, graph, rng, dt);
+  for (const cop of cops) {
+    healCop(cop, resolved); // cheap no-op while on-graph; re-snaps coords a substrate rebuild displaced
+    advanceCop(cop, resolved.graph, rng, dt);
+  }
   state.lawRngState = rng.state;
 }
 

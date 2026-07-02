@@ -9,9 +9,10 @@ import { createInitialState } from '../src/sim/state';
 import { generateWorld, tileKindAt } from '../src/sim/worldgen';
 import {
   spawnBeatCops, advanceBeatCops, desiredCopCount, copDistrictWeights, buildPatrolWorld,
-  copsRequested, debugCopsRequested, copMarkerVisible,
+  primePatrolWorld, copsRequested, debugCopsRequested, copMarkerVisible,
   COP_PATROL_SPEED, COP_CAP_CLEAR, type BeatCop, type PatrolWorld,
 } from '../src/sim/beatCops';
+import { WORLD_SIZE } from '../src/sim/constants';
 import { update } from '../src/sim/realtime';
 import { serializeGame, deserializeGame } from '../src/sim/saveLoad';
 import { createFog, revealAround } from '../src/sim/fog';
@@ -126,16 +127,22 @@ describe('beat-cop P0 — patrol (Ticket 3)', () => {
 });
 
 describe('beat-cop P0 — RNG isolation (the load-bearing invariant)', () => {
-  it('a copped game and its cop-less twin stay BYTE-identical outside the cop slice through update()', () => {
+  it('a copped game and its cop-less twin stay BYTE-identical outside the cop slice — ACROSS settlements', () => {
     const a = big(7), b = big(7);
     spawnBeatCops(a); // memoized default world — the same substrate realtime advances on
+    const spawnPositions = json(a.beatCops!.map((c) => c.pos));
+    const lawAfterSpawn = a.lawRngState;
+    const sharedCursor0 = a.rngState;
     for (let i = 0; i < 30; i++) {
-      update(a, 0.1, 1e9);
-      update(b, 0.1, 1e9);
+      update(a, 0.5, 2); // short weeks — settlements FIRE, so the shared cursor actually draws
+      update(b, 0.5, 2);
     }
-    expect(a.rngState).toBe(b.rngState);          // shared cursor: not one extra draw
-    expect(json(stripCops(a))).toBe(json(b));     // everything else: bit-identical
-    expect(a.beatCops!.length).toBeGreaterThan(0); // and the cops actually ran
+    expect(a.rngState).not.toBe(sharedCursor0);   // the invariant is exercised, not vacuous
+    expect(a.rngState).toBe(b.rngState);          // shared cursor: not one extra draw, same order
+    expect(json(stripCops(a))).toBe(json(b));     // every game number: bit-identical
+    // and the REALTIME WIRING did the patrolling — cops moved through update(), not direct calls
+    expect(json(a.beatCops!.map((c) => c.pos))).not.toBe(spawnPositions);
+    expect(a.lawRngState).not.toBe(lawAfterSpawn);
   });
 
   it('spawn + patrol never touch the shared rngState cursor', () => {
@@ -182,6 +189,52 @@ describe('beat-cop P0 — save safety (Ticket 1)', () => {
     expect(back1.state.beatCops).toEqual(back2.state.beatCops); // the law cursor resumes exactly
     expect(back1.state.lawRngState).toBe(back2.state.lawRngState);
   });
+
+  it('business churn between save and load re-rolls the parcels — loaded cops HEAL onto the new graph', () => {
+    const s = big(21);
+    spawnBeatCops(s);
+    for (let i = 0; i < 20; i++) update(s, 0.2, 1e9);
+    // open-operation analogue: one more business shifts every later parcel draw, re-shaping sidewalks
+    const proto = s.districts[0].businesses[0];
+    s.districts[0].businesses.push({ ...proto, id: 'biz-churn-test' });
+    const back = deserializeGame(serializeGame(s));
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    for (let i = 0; i < 10; i++) update(back.state, 0.25, 1e9); // advance rebuilds from the MUTATED state
+    const w = buildPatrolWorld(generateWorld(back.state, { size: WORLD_SIZE })); // the post-churn substrate
+    for (const cop of back.state.beatCops!) {
+      // never stranded frozen inside a re-rolled building — always back on (or still on) the graph
+      expect(tileKindAt(w.layout, Math.round(cop.pos.gx), Math.round(cop.pos.gy))).toBe('sidewalk');
+      for (const wp of cop.path) expect(tileKindAt(w.layout, wp.gx, wp.gy)).toBe('sidewalk');
+    }
+    // and the churned resume is itself deterministic (two loads of the same save agree)
+    const twin = deserializeGame(serializeGame(s));
+    if (!twin.ok) return;
+    for (let i = 0; i < 10; i++) update(twin.state, 0.25, 1e9);
+    expect(twin.state.beatCops).toEqual(back.state.beatCops);
+  });
+
+  it('primePatrolWorld pins the scene layout for the epoch and re-snaps stale saved coords onto it', () => {
+    const s = big(23);
+    const w = world(s);
+    spawnBeatCops(s, w);
+    // a saved coord from a layout that no longer exists: shove cop 0 onto a non-sidewalk tile
+    const badTi = w.layout.tiles.findIndex((k) => k === 'building');
+    const stale = { gx: badTi % w.layout.size, gy: Math.floor(badTi / w.layout.size) };
+    s.beatCops![0].pos = { ...stale };
+    s.beatCops![0].path = [{ ...stale }];
+    primePatrolWorld(s, w.layout);
+    const healed = s.beatCops![0];
+    expect(tileKindAt(w.layout, healed.pos.gx, healed.pos.gy)).toBe('sidewalk'); // re-snapped
+    expect(healed.path).toEqual([]);       // dropped the stale waypoint — next arrival re-picks
+    expect(healed.headingDir).toBe(-1);
+    expect(healed.mode).toBe('patrol');
+    // the primed substrate then drives advance (no explicit world passed) without re-stranding
+    for (let i = 0; i < 40; i++) advanceBeatCops(s, 0.25);
+    for (const cop of s.beatCops!) {
+      expect(tileKindAt(w.layout, Math.round(cop.pos.gx), Math.round(cop.pos.gy))).toBe('sidewalk');
+    }
+  });
 });
 
 describe('beat-cop P0 — layer flag + fog gate (Ticket 6)', () => {
@@ -217,5 +270,15 @@ describe('beat-cop P0 — layer flag + fog gate (Ticket 6)', () => {
     expect(body).toContain('copMarkerVisible(');   // the pure fog predicate, not an ad-hoc check
     expect(body).toContain('this.worldFx(');       // fixed HUD camera partition (no double-render)
     expect(body).not.toContain('setInteractive');  // cops are never selectable
+    // NO-X-RAY on the QA overlay too: the patrol edge draws only once the WAYPOINT tile is revealed
+    expect(body).toMatch(/debugRevealAll \|\| isRevealed\(this\.fog, wp\.gx, wp\.gy\)/);
+  });
+
+  it('the scene create() gate: stale views cleared, substrate primed, spawn strictly behind ?cops=1', () => {
+    const src = readFileSync(join(process.cwd(), 'src', 'scenes', 'IsoScene.ts'), 'utf8');
+    expect(src).toContain('this.copViews.clear()');                    // scene.restart() corpse purge
+    expect(src).toContain('primePatrolWorld(this.state, this.world)'); // patrol graph = RENDERED layout
+    // spawn is guarded by BOTH the opt-in flag and slice absence — un-flagged games never grow cops
+    expect(src).toMatch(/if \(this\.copsEnabled && !this\.state\.beatCops\?\.length\) spawnBeatCops\(this\.state\)/);
   });
 });

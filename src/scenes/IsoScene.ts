@@ -199,6 +199,7 @@ import {
   downedBodyDecay,
   type DownedBody,
   spawnBeatCops,
+  primePatrolWorld,
   copsRequested,
   debugCopsRequested,
   copMarkerVisible,
@@ -944,10 +945,20 @@ export class IsoScene extends Phaser.Scene {
     // its pre-allocated sprites land in the world-camera partition (ignored by the fixed HUD camera).
     const caps = LIVELINESS_CAPS[parseLiveliness(typeof window !== 'undefined' ? (window.location?.search ?? '') : '')];
     this.ambient = new AmbientLife(this, this.world, caps, this.state.seed);
-    // BEAT-COP P0 — spawn the marker patrol ONLY behind ?cops=1 (a loaded save that already carries
-    // cops keeps them). Draws from the separate lawRngState cursor; state.rngState is never touched,
-    // so flagged and unflagged runs of the same seed play out identically everywhere else.
-    if (this.copsEnabled && !this.state.beatCops?.length) spawnBeatCops(this.state);
+    // BEAT-COP P0 — scene.restart() (load/endgame-restart) destroys display objects but NOT these
+    // instance maps: drop the stale handles or the get-or-create in syncBeatCops would reuse the
+    // corpses and markers would silently never render again after an in-session load.
+    this.copViews.clear();
+    this.copDebugGfx = undefined;
+    // Pin the patrol substrate to THIS create/load epoch's RENDERED layout (business churn between
+    // save and load re-rolls parcels, so primePatrolWorld also heals any saved cop coords that fell
+    // off the regenerated sidewalk graph). Then spawn ONLY behind ?cops=1 (a loaded save that already
+    // carries cops keeps them). Cop draws use the separate lawRngState cursor; state.rngState is
+    // never touched, so flagged and unflagged runs of the same seed play out identically elsewhere.
+    if (this.copsEnabled || this.state.beatCops?.length) {
+      primePatrolWorld(this.state, this.world);
+      if (this.copsEnabled && !this.state.beatCops?.length) spawnBeatCops(this.state);
+    }
     this.spawnUnits();
     // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
     // the opening pocket around the HQ + starting units into the revealed set.
@@ -3374,14 +3385,19 @@ export class IsoScene extends Phaser.Scene {
       const sp = gridToScreen(c.pos.gx, c.pos.gy);
       g.setPosition(sp.x, sp.y).setDepth(depthValue(Math.round(c.pos.gx), Math.round(c.pos.gy)) * 10 + 3);
       if (this.debugCops && c.path.length > 0) {
-        const dbg = this.copDebugGfx ?? (this.copDebugGfx = (() => {
-          const gr = this.add.graphics().setDepth(100000);
-          this.worldFx(gr);
-          return gr;
-        })());
-        const tp = gridToScreen(c.path[0].gx, c.path[0].gy);
-        dbg.lineStyle(1.5, 0x8fa3b8, 0.85).lineBetween(sp.x, sp.y, tp.x, tp.y);
-        dbg.fillStyle(0x8fa3b8, 0.85).fillCircle(tp.x, tp.y, 2.5);
+        // NO-X-RAY: the patrol edge can point INTO the shroud — draw it only once the WAYPOINT tile
+        // is revealed too (?debugCops does not imply ?reveal; the veil discloses nothing).
+        const wp = c.path[0];
+        if (this.debugRevealAll || isRevealed(this.fog, wp.gx, wp.gy)) {
+          const dbg = this.copDebugGfx ?? (this.copDebugGfx = (() => {
+            const gr = this.add.graphics().setDepth(100000);
+            this.worldFx(gr);
+            return gr;
+          })());
+          const tp = gridToScreen(wp.gx, wp.gy);
+          dbg.lineStyle(1.5, 0x8fa3b8, 0.85).lineBetween(sp.x, sp.y, tp.x, tp.y);
+          dbg.fillStyle(0x8fa3b8, 0.85).fillCircle(tp.x, tp.y, 2.5);
+        }
       }
     }
   }

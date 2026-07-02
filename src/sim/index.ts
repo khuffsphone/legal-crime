@@ -171,7 +171,7 @@ export {
 } from './downedBodies';
 export {
   spawnBeatCops, advanceBeatCops, desiredCopCount, copDistrictWeights, buildPatrolWorld,
-  copsRequested, debugCopsRequested, copMarkerVisible,
+  primePatrolWorld, copsRequested, debugCopsRequested, copMarkerVisible,
   COP_PATROL_SPEED, COP_CAP_CLEAR,
   type BeatCop, type BeatCopMode, type PatrolWorld, type CopDistrictWeight,
 } from './beatCops';
