@@ -1,0 +1,29 @@
+name: Merge guard
+# Blocks gated PRs from merging once K marks this check REQUIRED on the base
+# branch: FAIL when the title carries a DO-NOT-MERGE marker or the PR has the
+# do-not-merge label; pass otherwise. No other behavior.
+on:
+  pull_request:
+    types: [opened, edited, labeled, unlabeled, synchronize]
+permissions: {}
+jobs:
+  merge-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on DO-NOT-MERGE title or label
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'do-not-merge') }}
+        run: |
+          shopt -s nocasematch
+          # Catches every gate spelling in use: "[DO NOT MERGE]", "[DO NOT MERGE — …]", "DO-NOT-MERGE:".
+          marker='DO[ _-]NOT[ _-]MERGE'
+          if [[ "$PR_TITLE" =~ $marker ]]; then
+            echo "::error::PR title carries a DO-NOT-MERGE marker — this PR is gated."
+            exit 1
+          fi
+          if [[ "$HAS_LABEL" == "true" ]]; then
+            echo "::error::PR carries the do-not-merge label — this PR is gated."
+            exit 1
+          fi
+          echo "merge-guard: no DO-NOT-MERGE marker, PR is clear."
