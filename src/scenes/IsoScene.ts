@@ -810,7 +810,75 @@ export class IsoScene extends Phaser.Scene {
     if (this.spritesEnabled) preloadUnitSprites(this, THUG_SPRITE_CONFIG);
   }
 
+  /** RESTART TEARDOWN — scene.restart() (F9/menu quickload, slot/file load, endgame restart) destroys
+   * every display object and re-runs create(), but does NOT re-run the constructor: instance fields that
+   * cache GameObject handles survive holding corpses. The create-time builders then APPEND fresh objects
+   * next to the stale ones, and the first update() frame re-drives a destroyed handle — with ?sprites on,
+   * updateUnits hits the old UnitView.spriteSheet (`sprite.anims.getName()` on undefined `.anims`); with
+   * ?sprites off, refreshHud hits the old topCells Texts (`setText` on a null frame). That was the F9
+   * quickload crash. Drop EVERY retained display cache here, first thing in create(), before any builder
+   * runs. The objects themselves were already destroyed by the shutdown — dropping the handles is all
+   * that's needed, and on first boot everything is already empty so this is a no-op. */
+  private resetRestartCaches(): void {
+    // unit views (addUnit appends; updateUnits drives every entry each frame) — Signature α.
+    this.units = [];
+    // drawHud() appenders (refreshHud/refreshChannels/refreshFeed/refreshCrew iterate these) — Signature β.
+    this.topCells = [];
+    this.channelRows = [];
+    this.feedLines = [];
+    this.crewRows = [];
+    this.crewWrong = [];
+    this.toolbarBtns = [];
+    this.actionChips = [];
+    // drawCity()/drawSetDressing() appenders + keyed building/marker views.
+    this.buildingHulls = [];
+    this.dressing = [];
+    this.dressingDark = [];
+    this.bizMarkers.clear();
+    this.bizPlates.clear();
+    this.bizOwnerGlow.clear();
+    this.bizDistrict.clear();
+    this.bizBuildings.clear();
+    this.districtLabels.clear();
+    this.downedBodyViews.clear();
+    // lazily-created (get-or-create) display singletons — undefined makes each creator rebuild a live one
+    // instead of silently reusing a corpse (the copViews lesson, applied to every sibling).
+    this.marqueeGfx = undefined;
+    this.selCountText = undefined;
+    this.collectorInfo = undefined;
+    this.extortOverlay = undefined;
+    this.minimapG = undefined;
+    this.edgeAlertG = undefined;
+    this.wireLogG = undefined;
+    this.advisorG = undefined;
+    this.statusDashG = undefined;
+    this.reticleG = undefined;
+    this.opPreviewG = undefined;
+    this.reticleNames = [];
+    this.ctxMenu = undefined;
+    this.ctxRect = undefined;
+    this.ctxRows = [];
+    // the old fixed HUD camera died with the shutdown — worldFx() must not register objects against its
+    // corpse during create; setupUiCamera() builds the new one and re-splits the whole display list.
+    this.uiCam = undefined;
+    // retained per-run FLAGS that must not leak across a load/restart: a stale endgameShown hijacks ESC
+    // (exitEndgame) and suppresses the next real endgame; stale alerts pin Infinity-lived edge markers at
+    // pre-load coords; cashInit=false re-seeds the top-bar count-up to the loaded totals (no ghost roll);
+    // lastFogSize forces one prop-reveal rescan against the restored fog; robbedCollectors/lastAutosaveTick
+    // are pre-load run state.
+    this.endgameShown = false;
+    this.alerts = [];
+    this.pings = [];
+    this.cashInit = false;
+    this.lastFogSize = -1;
+    this.robbedCollectors = new Set<string>();
+    this.lastAutosaveTick = -1;
+  }
+
   create(): void {
+    // Quickload/restart lifecycle — drop stale display-object handles BEFORE any builder appends (see
+    // resetRestartCaches above; this is what makes F9 quickload survive scene.restart()).
+    this.resetRestartCaches();
     // Floor polish — adopt the persisted UI-scale BEFORE any HUD is built, so every create-time hudW()/hudH()
     // lays out in the correct logical space (setupUiCamera then applies the matching uiCam zoom).
     this.uiScaleFactor = clampUiScale(this.shellSettings.uiScale);
