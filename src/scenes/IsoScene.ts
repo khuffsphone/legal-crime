@@ -320,6 +320,7 @@ import { spritesRequested, spriteScaleParam, spriteDisplayScale } from './render
 import { preloadUnitSprites, registerUnitAnims, availableActions, THUG_SPRITE_CONFIG } from './render/unitSpriteLoader';
 import { ensureUnitSprite, driveUnitSprite } from './render/unitSpriteView';
 import { THUG_FACING_OFFSET } from './render/unitFacingQuantize';
+import { facadeKitRequested } from './env/facadeKitFlag';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -717,6 +718,9 @@ export class IsoScene extends Phaser.Scene {
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
   // ?sprites — opt-in 3D iso atlas swap (default OFF). spriteSheetReady gates it on the sheets loading.
   private spritesEnabled = spritesRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
+  // ?facadekit — opt-in Phase-2 vector storefronts on LOW-TIER buildings (OFF by default; the old drawFacade
+  // look is untouched when off). Reversible rollback valve for the all-at-once replace.
+  private facadeKitEnabled = facadeKitRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private spriteScaleMul = spriteScaleParam(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private spriteSheetReady = false;
   private spriteScale = 0.25; // display scale (manifest figurePxH → FIGURE_PX), recomputed in create()
@@ -1193,6 +1197,7 @@ export class IsoScene extends Phaser.Scene {
         const roof = drawIsoBuilding(this, c.x, c.y, bstyle, bdepth, {
           lit: !isShutDown(biz),
           accent: facadeAccentFor(ident.accent, buildingVariantFor(hashKey(biz.id))), // Lane C — neighbourhood facade variety
+          facadeKit: this.facadeKitEnabled, // ?facadekit — low-tier vector storefront (no-op for non-low-tier kinds)
         });
         this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth, shut: isShutDown(biz) });
         const glow = this.add
@@ -2212,7 +2217,7 @@ export class IsoScene extends Phaser.Scene {
     rec.gfx.destroy();
     rec.boards?.destroy();
     const c = gridToScreen(rec.gx, rec.gy);
-    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[rec.styleKey], rec.depth, { lit: !shut });
+    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[rec.styleKey], rec.depth, { lit: !shut, facadeKit: this.facadeKitEnabled });
     let boards: Phaser.GameObjects.Graphics | undefined;
     if (shut) {
       boards = this.add.graphics().setDepth(rec.depth + 1);
