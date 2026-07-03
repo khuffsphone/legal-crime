@@ -856,8 +856,10 @@ export class IsoScene extends Phaser.Scene {
     this.bizBuildings.clear();
     this.districtLabels.clear();
     this.downedBodyViews.clear();
+    this.copViews.clear(); // BEAT-COP P0 — marker pool; cop ids are stable, so corpses would pin forever
     // lazily-created (get-or-create) display singletons — undefined makes each creator rebuild a live one
     // instead of silently reusing a corpse (the copViews lesson, applied to every sibling).
+    this.copDebugGfx = undefined; // BEAT-COP P0 — the ?debugCops=1 overlay
     this.marqueeGfx = undefined;
     this.selCountText = undefined;
     this.collectorInfo = undefined;
@@ -945,11 +947,8 @@ export class IsoScene extends Phaser.Scene {
     // its pre-allocated sprites land in the world-camera partition (ignored by the fixed HUD camera).
     const caps = LIVELINESS_CAPS[parseLiveliness(typeof window !== 'undefined' ? (window.location?.search ?? '') : '')];
     this.ambient = new AmbientLife(this, this.world, caps, this.state.seed);
-    // BEAT-COP P0 — scene.restart() (load/endgame-restart) destroys display objects but NOT these
-    // instance maps: drop the stale handles or the get-or-create in syncBeatCops would reuse the
-    // corpses and markers would silently never render again after an in-session load.
-    this.copViews.clear();
-    this.copDebugGfx = undefined;
+    // BEAT-COP P0 — the cop view caches are dropped in resetRestartCaches() with every other
+    // restart-surviving display handle (the #65 teardown owns that lifecycle now).
     // Pin the patrol substrate to THIS create/load epoch's RENDERED layout (business churn between
     // save and load re-rolls parcels, so primePatrolWorld also heals any saved cop coords that fell
     // off the regenerated sidewalk graph). Then spawn ONLY behind ?cops=1 (a loaded save that already
