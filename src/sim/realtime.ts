@@ -12,6 +12,7 @@ import { resolveInterceptions, type InterceptionEvent } from './interception';
 import { resolveProximityCombat, type CombatEvent } from './combat';
 import { advanceDownedBodies, recordDownedBody } from './downedBodies';
 import { advanceEmbodiedExtortion, type EmbodiedExtortionEvent } from './extortionEmbodied';
+import { advanceBeatCops } from './beatCops';
 import { advanceStrategy, type StrategicEvent } from './strategy';
 import { evaluateEndgame, type EndgameResult } from './endgame';
 import { harvestIncidents, recordIncident } from './ledger';
@@ -63,6 +64,10 @@ export function update(
   // RTS-35b: drive the embodied-extortion acts (walk → shake down → convert via the EXISTING path).
   // Runs on the freshly-advanced positions + the combat signal; the economic tick is untouched.
   const extortion = advanceEmbodiedExtortion(state, dt);
+  // BEAT-COP P0 — patrol the neutral law markers (OBSERVATION-ONLY: no game number changes). Runs
+  // after the embodied systems, before settlement. Draws only from the separate lawRngState cursor,
+  // and no-ops when state.beatCops is absent — cop-less games stay byte-identical.
+  advanceBeatCops(state, dt);
   const weeksFired = advanceClock(state, dt, weekDuration);
   return { weeksFired, arrivedUnitIds, interceptions, combat, extortion };
 }

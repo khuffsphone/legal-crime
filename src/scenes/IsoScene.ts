@@ -198,6 +198,12 @@ import {
   enemyInRange,
   downedBodyDecay,
   type DownedBody,
+  spawnBeatCops,
+  primePatrolWorld,
+  copsRequested,
+  debugCopsRequested,
+  copMarkerVisible,
+  type BeatCop,
   type NavGrid,
   type MovableUnit,
   type ThreatView,
@@ -522,6 +528,10 @@ export class IsoScene extends Phaser.Scene {
   private occEnabled = true; // independently toggleable
   // COMBAT READABILITY (4) — persistent downed-body sprites, keyed by the downed unit's id.
   private downedBodyViews = new Map<string, Phaser.GameObjects.Image>();
+  // BEAT-COP P0 — one small NEUTRAL marker per cop (never faction-coloured, never interactive), keyed
+  // by cop id; plus the ?debugCops=1 patrol-edge overlay.
+  private copViews = new Map<string, Phaser.GameObjects.Graphics>();
+  private copDebugGfx?: Phaser.GameObjects.Graphics;
   // POLISH v2 · PKG3 — camera FEEL state (the "clunk"): a hit-stop that freezes WORLD visual time + a
   // decaying-sine screen-nudge on the WORLD camera. The fixed HUD camera is never touched.
   private hitStop: HitStopState = initHitStop();
@@ -697,6 +707,11 @@ export class IsoScene extends Phaser.Scene {
   // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
   // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
   private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
+  // BEAT-COP P0 (?cops=1): the law-patrol MARKER layer — 2-3 neutral beat cops random-walking the
+  // sidewalk graph, observation-only. OFF by default (reversible opt-in, ?facadekit-style) so normal
+  // play is untouched; ?debugCops=1 adds each cop's current patrol edge for QA.
+  private copsEnabled = typeof window !== 'undefined' && copsRequested(window.location?.search ?? '');
+  private debugCops = typeof window !== 'undefined' && debugCopsRequested(window.location?.search ?? '');
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
@@ -841,8 +856,10 @@ export class IsoScene extends Phaser.Scene {
     this.bizBuildings.clear();
     this.districtLabels.clear();
     this.downedBodyViews.clear();
+    this.copViews.clear(); // BEAT-COP P0 — marker pool; cop ids are stable, so corpses would pin forever
     // lazily-created (get-or-create) display singletons — undefined makes each creator rebuild a live one
     // instead of silently reusing a corpse (the copViews lesson, applied to every sibling).
+    this.copDebugGfx = undefined; // BEAT-COP P0 — the ?debugCops=1 overlay
     this.marqueeGfx = undefined;
     this.selCountText = undefined;
     this.collectorInfo = undefined;
@@ -930,6 +947,17 @@ export class IsoScene extends Phaser.Scene {
     // its pre-allocated sprites land in the world-camera partition (ignored by the fixed HUD camera).
     const caps = LIVELINESS_CAPS[parseLiveliness(typeof window !== 'undefined' ? (window.location?.search ?? '') : '')];
     this.ambient = new AmbientLife(this, this.world, caps, this.state.seed);
+    // BEAT-COP P0 — the cop view caches are dropped in resetRestartCaches() with every other
+    // restart-surviving display handle (the #65 teardown owns that lifecycle now).
+    // Pin the patrol substrate to THIS create/load epoch's RENDERED layout (business churn between
+    // save and load re-rolls parcels, so primePatrolWorld also heals any saved cop coords that fell
+    // off the regenerated sidewalk graph). Then spawn ONLY behind ?cops=1 (a loaded save that already
+    // carries cops keeps them). Cop draws use the separate lawRngState cursor; state.rngState is
+    // never touched, so flagged and unflagged runs of the same seed play out identically elsewhere.
+    if (this.copsEnabled || this.state.beatCops?.length) {
+      primePatrolWorld(this.state, this.world);
+      if (this.copsEnabled && !this.state.beatCops?.length) spawnBeatCops(this.state);
+    }
     this.spawnUnits();
     // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
     // the opening pocket around the HQ + starting units into the revealed set.
@@ -2113,6 +2141,7 @@ export class IsoScene extends Phaser.Scene {
 
     this.drawExtortOverlay(now);
     this.syncDownedBodies(); // COMBAT READABILITY (4) — persistent desaturated downed bodies
+    this.syncBeatCops(); // BEAT-COP P0 — neutral law markers on the sidewalk graph (fog-gated)
     // INFO-FEEDBACK — the minimap, the screen-edge alerts, and THE WIRE — LOG (all read sim state only).
     this.drawMinimap(now);
     this.drawEdgeAlerts(now);
@@ -3323,6 +3352,52 @@ export class IsoScene extends Phaser.Scene {
         this.downedBodyViews.set(b.id, img);
       }
       img.setAlpha(0.7 * (1 - downedBodyDecay(b))); // fade out toward cleanup
+    }
+  }
+
+  /** BEAT-COP P0 (?cops=1) — render each beat cop as a small NEUTRAL marker: a blue-grey dot with a
+   * bone badge pip (never faction-coloured, never interactive/selectable — cops are not units). The
+   * marker is FOG-GATED through the pure copMarkerVisible predicate (NO-X-RAY: an unrevealed cop
+   * draws NOTHING); ?reveal=1 debug boards see them all. Pools one Graphics per cop (shape drawn
+   * once; per-frame we only move/sort/gate). ?debugCops=1 overlays the current patrol edge. */
+  private syncBeatCops(): void {
+    const cops: BeatCop[] = this.copsEnabled ? (this.state.beatCops ?? []) : [];
+    const live = new Set(cops.map((c) => c.id));
+    for (const [id, g] of this.copViews) {
+      if (!live.has(id)) { g.destroy(); this.copViews.delete(id); }
+    }
+    this.copDebugGfx?.clear();
+    for (const c of cops) {
+      let g = this.copViews.get(c.id);
+      if (!g) {
+        g = this.add.graphics();
+        g.fillStyle(0x000000, 0.22).fillEllipse(0, 3, 16, 7);   // soft ground shadow
+        g.fillStyle(0x5c6b7a, 1).fillCircle(0, -3, 6);          // blue-grey coat dot (neutral law read)
+        g.lineStyle(1, 0x2c333c, 0.9).strokeCircle(0, -3, 6);   // soot rim so it reads on pale ground
+        g.fillStyle(0xd8d2c2, 1).fillCircle(3, -6, 2);          // bone badge pip
+        this.worldFx(g);
+        this.copViews.set(c.id, g);
+      }
+      const shown = copMarkerVisible(this.fog, c, this.debugRevealAll);
+      g.setVisible(shown);
+      if (!shown) continue; // hidden cop: nothing drawn, nothing leaked
+      const sp = gridToScreen(c.pos.gx, c.pos.gy);
+      g.setPosition(sp.x, sp.y).setDepth(depthValue(Math.round(c.pos.gx), Math.round(c.pos.gy)) * 10 + 3);
+      if (this.debugCops && c.path.length > 0) {
+        // NO-X-RAY: the patrol edge can point INTO the shroud — draw it only once the WAYPOINT tile
+        // is revealed too (?debugCops does not imply ?reveal; the veil discloses nothing).
+        const wp = c.path[0];
+        if (this.debugRevealAll || isRevealed(this.fog, wp.gx, wp.gy)) {
+          const dbg = this.copDebugGfx ?? (this.copDebugGfx = (() => {
+            const gr = this.add.graphics().setDepth(100000);
+            this.worldFx(gr);
+            return gr;
+          })());
+          const tp = gridToScreen(wp.gx, wp.gy);
+          dbg.lineStyle(1.5, 0x8fa3b8, 0.85).lineBetween(sp.x, sp.y, tp.x, tp.y);
+          dbg.fillStyle(0x8fa3b8, 0.85).fillCircle(tp.x, tp.y, 2.5);
+        }
+      }
     }
   }
 
