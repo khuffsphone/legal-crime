@@ -2,8 +2,12 @@
 // ⚠ SIM-ADJACENT: cops live in an ADDITIVE optional GameState slice (state.beatCops) driven by the
 // real-time WRAPPER (realtime.update), exactly like downedBodies/extortionActs — tick()/applyCommand()
 // never see them, and cops are NOT MovableUnits (they never enter state.units, so movement/interception/
-// combat/selection are structurally untouched). P0 is OBSERVATION-ONLY: a cop changes no game number.
-// Detection / suspicion / heat / reports are P1 — the fields exist as stubs only.
+// combat/selection are structurally untouched). P0 was OBSERVATION-ONLY: a cop changes no game number.
+// P1 (copBehavior.ts) ACTIVATES the reserved suspicion + focusUnitId stubs — a cop now DETECTS a witnessed
+// crime (NO-X-RAY sight), escalates patrol→respond→engage, and converges on it. That escalation still
+// changes NO game number: it mutates only the cop slice and draws no shared RNG, so a copped game stays
+// byte-identical to its cop-less twin. The ENGAGE damage RESOLUTION consumes combatResolve headlessly and
+// PURELY (copBehaviorEngage.resolveCopEngagement) — unwired here, so "numbers-frozen with cops idle" holds.
 //
 // RNG DISCIPLINE (the load-bearing invariant): every cop draw comes from a SEPARATE law cursor
 // (state.lawRngState, seeded from state.seed with a fresh XOR salt) — never the shared state.rngState.
@@ -13,6 +17,7 @@ import { Rng, seedToCursor } from './rng';
 import { buildCityGraph, pickStep, STEP_DIRS, type CityGraph } from './cityGraph';
 import { generateWorld, tileKindAt, type WorldLayout } from './worldgen';
 import { isRevealed, type FogState } from './fog';
+import { updateCopDetection, advanceCopResponse } from './copBehavior';
 import { WORLD_SIZE } from './constants';
 import type { GridPos } from './iso';
 import type { GameState } from './types';
@@ -32,7 +37,10 @@ export const COP_STRANDED_RETRY_SEC = 1.5;
 /** XOR salt deriving the law cursor from state.seed (0x30a / 0x30b0 / 0x11fe are taken elsewhere). */
 const LAW_RNG_SALT = 0xbc0;
 
-export type BeatCopMode = 'patrol' | 'loiter';
+// P0 modes are 'patrol' | 'loiter' (the beat). P1 (copBehavior) adds the escalation: 'respond' (left the
+// beat, converging on a witnessed crime) and 'engage' (in contact — the confrontation resolveCopEngagement
+// runs through combatResolve). Widening only; every P0 consumer of a cop's mode reads a superset now.
+export type BeatCopMode = 'patrol' | 'loiter' | 'respond' | 'engage';
 
 /** One beat cop (spec §2.1). Plain JSON data — saves round-trip it wholesale. */
 export interface BeatCop {
@@ -47,10 +55,14 @@ export interface BeatCop {
   mode: BeatCopMode;
   /** Incoming heading as a STEP_DIRS bit 0..3 (N,E,S,W); −1 before the first step. */
   headingDir: number;
-  /** P1 stub — always 0 in P0 (no detection). */
+  /** P1 (copBehavior) — witnessing accumulator in [0, COP_SUSPICION_MAX]. 0 in P0 / while nothing is seen;
+   * climbs while a crime is in sight, crosses COP_RESPOND_THRESHOLD to commit, drains to 0 to stand down. */
   suspicion: number;
-  /** P1 stub — never set in P0 (no focus target). */
+  /** P1 (copBehavior) — the suspect the cop has locked onto (a state.units id). Undefined in P0 / on patrol. */
   focusUnitId?: string;
+  /** P1 (copBehavior) — the last TILE the cop actually SAW its focus on (NO-X-RAY: a responding cop converges
+   * here, never on a live position it cannot see). Absent in P0 / on patrol. Additive, default-safe. */
+  lastSeen?: GridPos;
   /** Remaining pause when mode === 'loiter'; 0 while patrolling. */
   loiterSec: number;
 }
@@ -228,8 +240,16 @@ export function advanceBeatCops(state: GameState, dt: number, world?: PatrolWorl
   const resolved = resolvePatrolWorld(state, world);
   const rng = new Rng(lawCursor(state));
   for (const cop of cops) {
-    healCop(cop, resolved); // cheap no-op while on-graph; re-snaps coords a substrate rebuild displaced
-    advanceCop(cop, resolved.graph, rng, dt);
+    // P1 (copBehavior) — DETECT → RESPOND: deterministic, draws NO RNG, mutates ONLY the cop slice
+    // (suspicion / mode / focusUnitId / lastSeen). A cop with a crime in sight leaves the beat and
+    // converges on it; with nothing to see it runs the unchanged P0 random walk. The law cursor is
+    // therefore advanced ONLY on the patrol branch, so a crime-less game keeps its exact P0 cadence.
+    if (updateCopDetection(cop, state, resolved.layout, dt)) {
+      advanceCopResponse(cop, resolved.layout, dt); // off the sidewalk graph — cut straight to the trouble
+    } else {
+      healCop(cop, resolved); // cheap no-op while on-graph; re-snaps coords a substrate rebuild displaced
+      advanceCop(cop, resolved.graph, rng, dt);
+    }
   }
   state.lawRngState = rng.state;
 }
