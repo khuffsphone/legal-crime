@@ -9,6 +9,7 @@ import { parseArtMode } from './artMode';
 import type { LandmarkKind } from './art/districtIdentity';
 import { composeLowTierFacade, type LowTierOptions } from './env/facadeKit';
 import { skewBands, skewOpenings, type WallFace } from './env/facadeSkew';
+import { CITIZEN_MARKER_TONES, citizenMarkerTexKey } from './citizens/markers';
 
 /** RTS-26 — rich (elevated gangster figures) vs lean (pre-rts26 shapes). Read once from the URL. */
 export function richArt(): boolean {
@@ -550,6 +551,32 @@ function bakeCarLite(scene: Phaser.Scene, key: string, taxi: boolean): void {
   g.fillStyle(PAL.lamp, 0.85); g.fillCircle(24, 7.5, 1); // faint warm headlamp (warm, never danger)
   g.generateTexture(key, W, H);
   g.destroy();
+}
+
+// ── Citizen Life P0 (Rider R4): debug citizen MARKERS — one warm-neutral tone per role (see markers.ts). ──
+// A foot-anchored tone dot: contact shadow + body capsule (the role tone) + a muted head dot. Muted + flat,
+// subordinate to the 56px unit, and — by the R4 law — never brass (player), never blood/danger (rival), never
+// the cop blue-grey. Debug occupation LETTERS are a scene-side Text overlay (ambientLife), not baked in, so
+// these textures stay a dead-simple Graphics bake (the proven bakePed pattern). Baked lazily only when
+// ?citizens=1 (via ensureCitizenMarkers), so a flag-off boot pays nothing.
+function bakeCitizenMarker(scene: Phaser.Scene, roleIdx: number): void {
+  const key = citizenMarkerTexKey(roleIdx, false);
+  if (scene.textures.exists(key)) return;
+  const tone = CITIZEN_MARKER_TONES[roleIdx] ?? CITIZEN_MARKER_TONES[0];
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const W = 12, H = 18, cx = W / 2;
+  g.fillStyle(PAL.sootDeep, 0.25); g.fillEllipse(cx, H - 2, 8, 3);          // contact shadow
+  g.fillStyle(tone, 1); g.fillRoundedRect(cx - 2.5, H - 13, 5, 9, 2);       // body capsule (role tone = the read)
+  g.fillStyle(PAL.sootDeep, 0.30); g.fillRect(cx, H - 13, 2.5, 9);          // subtle SE shadow half
+  g.fillStyle(PAL.fleshDark, 1); g.fillCircle(cx, H - 14, 2);               // head dot (muted flesh, no face)
+  g.generateTexture(key, W, H);
+  g.destroy();
+}
+
+/** Bake all 13 citizen marker tones once (exists-guarded). Called lazily by AmbientLife only when ?citizens=1
+ * is set — the default flag-off boot never bakes these. */
+export function ensureCitizenMarkers(scene: Phaser.Scene): void {
+  for (let i = 0; i < CITIZEN_MARKER_TONES.length; i++) bakeCitizenMarker(scene, i);
 }
 
 // ── RTS-30c-2b: contextual ACTION ICONS (art-deco brass-line glyph on an aged-paper chip) ──────────
