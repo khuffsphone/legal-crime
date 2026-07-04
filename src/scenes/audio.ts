@@ -97,6 +97,9 @@ const LIBRARY: ClipDef[] = [
 ];
 
 const DEFS = new Map(LIBRARY.map((d) => [d.key, d]));
+// AUDIO E-H (F2) — registration-ordering + bus-validity guards for the public register() seam.
+const VALID_BUSES: ReadonlySet<AudioBus> = new Set(['sfx', 'vo', 'music', 'ambience']);
+let preloadSnapshotTaken = false;
 const URGENT_DEBOUNCE = 120; // ms — don't stack/retrigger an urgent cue inside this window
 const SAME_CLIP_DEBOUNCE = 70; // ms — swallow a retrigger of the SAME clip inside this window
 // ── soft-SFX/VO governor knobs (mirrors the urgent governor). The CAP, priority table, and burst
@@ -139,6 +142,7 @@ export class AudioManager {
    * not-yet-real paths), so a fresh load logs ZERO "Unable to decode audio data" errors. */
   static preload(scene: Phaser.Scene): void {
     // synth clips carry no file — they're generated at boot (ready()), so they're never queued on the loader.
+    preloadSnapshotTaken = true; // registration after this point misses the loader queue (see register())
     registerAudioPreload(scene.load, LIBRARY.filter((d) => !d.synth));
   }
 
@@ -146,12 +150,26 @@ export class AudioManager {
    * here (BEFORE the scene's preload, so the files queue); they never reach into the private LIBRARY /
    * DEFS. An already-registered key is SKIPPED, never overridden — a lane cannot re-voice a shipped clip
    * (e.g. the federal_notice/watch/raid parity entries). play()'s unknown-key no-op is unchanged for
-   * anything left unregistered. Returns what was added vs skipped so the caller can assert parity. */
+   * anything left unregistered. Returns what was added vs skipped so the caller can assert parity.
+   *
+   * ORDERING IS ENFORCED, not just documented: registering AFTER a preload() already snapshotted the
+   * library would leave the key catalogued but its file never queued — isRegistered() true, has() false,
+   * permanently silent. That mis-ordering logs a loud console warning (it self-heals on the next scene
+   * preload, e.g. a restart, which makes the bug maddening to reproduce otherwise).
+   *
+   * A def with a bus outside the real AudioBus set is REJECTED (skipped + warned): an unknown bus would
+   * make busVolume() compute NaN, and NaN is not `<= 0` — it would sail through the mute gate and hand
+   * Web Audio a non-finite volume. */
   static register(defs: readonly RegisteredClipDef[]): { added: string[]; skipped: string[] } {
     const added: string[] = [];
     const skipped: string[] = [];
     for (const d of defs) {
       if (DEFS.has(d.key)) { skipped.push(d.key); continue; }
+      if (!VALID_BUSES.has(d.bus)) {
+        skipped.push(d.key);
+        console.warn(`AudioManager.register: clip ${d.key} has unknown bus '${String(d.bus)}' — rejected (would NaN the volume math)`);
+        continue;
+      }
       const def: ClipDef = { key: d.key, file: d.file, bus: d.bus };
       if (d.loop !== undefined) def.loop = d.loop;
       if (d.vol !== undefined) def.vol = d.vol;
@@ -159,6 +177,13 @@ export class AudioManager {
       LIBRARY.push(def);
       DEFS.set(def.key, def);
       added.push(def.key);
+    }
+    if (added.length > 0 && preloadSnapshotTaken) {
+      console.warn(
+        `AudioManager.register: ${added.length} clip(s) registered AFTER preload already ran — their files were ` +
+        `never queued and they will stay silent until the next scene preload. Register before AudioManager.preload(). ` +
+        `Late keys: ${added.join(', ')}`,
+      );
     }
     return { added, skipped };
   }

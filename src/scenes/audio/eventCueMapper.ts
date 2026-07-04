@@ -106,7 +106,10 @@ export function mapExtortionEvents(
     if (outcome === null) continue; // in-progress state churn is silent
     const key = `extortion_${ev.kind}_${outcome}`;
     const tile = tileOfFront ? tileOfFront(ev.frontId) : undefined;
-    out.push(cue(key, `extortion:${ev.kind}:${outcome}`, `evt:extortion:${ev.frontId}`, tile));
+    // dedupe identity carries kind+outcome: two DIFFERENT extortion results on the same front inside the
+    // duplicate window (e.g. thug A's shakedown fails, thug B's sabotage lands 0.8 s later) are distinct
+    // sounds, not spam — only a repeat of the SAME outcome on the same front is suppressed.
+    out.push(cue(key, `extortion:${ev.kind}:${outcome}`, `evt:extortion:${ev.frontId}:${ev.kind}:${outcome}`, tile));
   }
   return out;
 }

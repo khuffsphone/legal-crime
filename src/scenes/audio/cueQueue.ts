@@ -1,3 +1,6 @@
+// ⚠ SUPERSEDED (A-D era) — the E-H lane's mixGovernance.admitCue owns duplicate/rate governance on
+// the live coordinator path (different windows/constants). Tuning THIS module changes nothing the
+// coordinator plays. Kept only until H3 lands; retire with the A-D lane.
 // cueQueue.ts — AUDIO ATMOSPHERE lane, Ticket D: the pure PRIORITY + COOLDOWN queue reducer. Phaser-free,
 // clock-free (the caller passes nowMs — deterministic and testable). Sits AFTER the no-x-ray gate
 // (Ticket C) and decides, for one frame's gated cues, WHICH actually reach the (deferred) playback layer:

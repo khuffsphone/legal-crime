@@ -78,6 +78,59 @@ describe('H2 — coordinator (mutation table)', () => {
     }
   });
 
+  it('REGRESSION gate-order: a HIGH-priority cue mapped LAST still wins the H.4 budget over earlier low-priority cues', () => {
+    // 7 low-priority extortion outcomes on distinct fronts + police_raid_bust (90) mapped LAST via the
+    // log — admission runs on the priority-ORDERED list, so the police cue is admitted and the excess
+    // low-priority cues are the ones rate-dropped (EVENT_ONESHOTS_PER_SEC = 6).
+    const extortion = Array.from({ length: 7 }, (_, i) => ({
+      actId: `a${i}`, thugId: 't', frontId: `front-${i}`, kind: 'shakedown' as const,
+      state: 'resolve' as const, prevState: 'shakedown' as const, progress: 1,
+      converted: true, retook: false, sabotaged: false, failed: false,
+    }));
+    const step = stepAtmosphere(createAtmosphereState(1), frame({
+      observation: { logEvents: [log('raid-bust')], extortion },
+    }));
+    const shots = step.intents.filter((i) => i.op === 'playOneShot').map((i) => (i as { key: string }).key);
+    expect(shots[0]).toBe('police_raid_bust'); // priority 90 admitted first
+    expect(shots.length).toBeLessThanOrEqual(6);
+    expect(step.rejected.filter((r) => r.reason === 'rate').every((r) => r.key.startsWith('extortion_'))).toBe(true);
+  });
+
+  it('REGRESSION no-x-ray downgrade: a tiled event cue on a hidden/off-screen tile plays NON-positionally', () => {
+    const converted = [{
+      actId: 'a', thugId: 't', frontId: 'front-9', kind: 'shakedown' as const,
+      state: 'resolve' as const, prevState: 'shakedown' as const, progress: 1,
+      converted: true, retook: false, sabotaged: false, failed: false,
+    }];
+    const hidden = stepAtmosphere(createAtmosphereState(1), frame({
+      observation: { extortion: converted, tileOfFront: () => ({ gx: 9, gy: 9 }) },
+      eligibility: () => ({ revealed: false, onScreen: false }),
+    }));
+    const shot = hidden.intents.find((i) => i.op === 'playOneShot') as { positional: boolean; tile?: unknown; key: string };
+    expect(shot.key).toBe('extortion_shakedown_converted'); // the player still hears their own outcome…
+    expect(shot.positional).toBe(false);                    // …but no position can leak
+    expect(shot.tile).toBeUndefined();
+    const visible = stepAtmosphere(createAtmosphereState(1), frame({
+      observation: { extortion: converted, tileOfFront: () => ({ gx: 9, gy: 9 }) },
+    }));
+    const vshot = visible.intents.find((i) => i.op === 'playOneShot') as { positional: boolean; tile?: unknown };
+    expect(vshot.positional).toBe(true); // eligible tile stays positional
+  });
+
+  it('REGRESSION force flags: forceEmitterPlan stops FAR emitters immediately, off-cadence', () => {
+    let st = createAtmosphereState(1);
+    const sources = [{ id: 's:fountain', family: 'fountain' as const, gx: 5, gy: 5 }];
+    let r = stepAtmosphere(st, frame({ nowMs: 0, emitterSources: sources, camera: { centerTile: { gx: 5, gy: 5 }, audioZoom: 1.0 } }));
+    st = r.state;
+    expect(r.intents.some((i) => i.op === 'playLoop')).toBe(true);
+    // 100 ms later (inside the 500 ms cadence) the player zooms straight past FAR — without the force
+    // flag nothing happens; with it the stopLoop lands NOW.
+    const unforced = stepAtmosphere(st, frame({ nowMs: 100, emitterSources: sources, camera: { centerTile: { gx: 5, gy: 5 }, audioZoom: 0.4 } }));
+    expect(unforced.intents.filter((i) => i.op === 'stopLoop')).toHaveLength(0);
+    const forced = stepAtmosphere(st, frame({ nowMs: 100, emitterSources: sources, camera: { centerTile: { gx: 5, gy: 5 }, audioZoom: 0.4 }, forceEmitterPlan: true }));
+    expect(forced.intents.filter((i) => i.op === 'stopLoop')).toHaveLength(1);
+  });
+
   it('combat side-chain ducks the beds without emitting any combat cue', () => {
     const step = stepAtmosphere(createAtmosphereState(1), frame({ observation: { combatEventCount: 2 } }));
     const duck = step.intents.find((i) => i.op === 'duck' && (i as { trigger: string }).trigger === 'combat');

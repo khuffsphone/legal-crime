@@ -9,7 +9,6 @@
 // never to the beds themselves.
 
 import type { DistrictArchetype } from '../art/districtIdentity';
-import type { StreetscapeDistrict } from '../env/streetscapeTypes';
 
 /** The two MVP bed layers. NO third layer ships in E-H (spec E.2). */
 export type BedLayer = 'base' | 'color';
@@ -77,12 +76,9 @@ export function bedFor(archetype: string): DistrictBed | undefined {
   return (DISTRICT_BEDS as Record<string, DistrictBed>)[archetype];
 }
 
-/** QUARTER -> TENEMENT fallback — ONLY for systems bound to the StreetscapeDistrict set (prop-emitter
- * district styling). Every other archetype maps to itself; the compile-time return type guarantees the
- * result is a member of the 8-value streetscape set. Beds NEVER route through this. */
-export function emitterStyleDistrict(archetype: DistrictArchetype): StreetscapeDistrict {
-  return archetype === 'QUARTER' ? 'TENEMENT' : archetype;
-}
+// NB the QUARTER→TENEMENT fallback for STREETSCAPE-bound styling lives in propEmitterCatalog
+// (emitterStyleDistrict) — it is an emitter concern; beds never route through it (QUARTER keeps
+// bed_quarter_base/color above).
 
 // ── E.6 volume law (dB, applied before the H duck offsets) ───────────────────────────────────────
 /** Layer trims relative to the bed bus. */

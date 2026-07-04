@@ -11,7 +11,7 @@
 // federalCueKey) and the F2 registrar SKIPS already-registered keys rather than overriding them.
 
 import type { AtmosphereBus } from './atmosphereIntents';
-import { ALL_BED_KEYS, DISTRICT_BEDS, DISTRICT_BED_ARCHETYPES } from './districtBedCatalog';
+import { DISTRICT_BEDS, DISTRICT_BED_ARCHETYPES } from './districtBedCatalog';
 import { PROP_CLIP_KEYS } from './propEmitterCatalog';
 
 export interface AtmosphereClipDef {
@@ -20,6 +20,9 @@ export interface AtmosphereClipDef {
   file: string;
   bus: AtmosphereBus;
   loop: boolean;
+  /** rides the manager's urgent governor pre-H3 (one-at-a-time + bed duck) — the alarm-class cues,
+   * matching the shipped federal family's treatment so siblings never diverge. */
+  urgent?: boolean;
   /** production brief (F.3). */
   spec: string;
   /** target duration, seconds. */
@@ -30,8 +33,8 @@ export interface AtmosphereClipDef {
 
 const wav = (key: string): string => `${key}.wav`;
 
-const def = (key: string, bus: AtmosphereBus, loop: boolean, lenHint: readonly [number, number], vol: number, spec: string): AtmosphereClipDef =>
-  ({ key, file: wav(key), bus, loop, spec, lenHint, vol });
+const def = (key: string, bus: AtmosphereBus, loop: boolean, lenHint: readonly [number, number], vol: number, spec: string, urgent?: boolean): AtmosphereClipDef =>
+  ({ key, file: wav(key), bus, loop, ...(urgent ? { urgent } : {}), spec, lenHint, vol });
 
 // ── bed loops (18) — stereo seamless; base = broad low tone, color = sparse identity detail ───────
 const BED_CLIPS: AtmosphereClipDef[] = DISTRICT_BED_ARCHETYPES.flatMap((a) => {
@@ -45,14 +48,14 @@ const BED_CLIPS: AtmosphereClipDef[] = DISTRICT_BED_ARCHETYPES.flatMap((a) => {
 // ── federal / police / collector / interception / player-offense one-shots (12) ──────────────────
 const EVENT_CLIPS: AtmosphereClipDef[] = [
   def('player_offense_raid', 'oneshots', false, [0.8, 1.8], 0.8, "The PLAYER's offensive op landing — muscle, not police-coded (no siren/whistle)."),
-  def('police_raid_cash', 'oneshots', false, [1.0, 2.5], 0.85, 'Police raid seizes cash — stereo HUD cue, distinct from the federal bell family.'),
-  def('police_raid_operation', 'oneshots', false, [1.0, 2.5], 0.85, 'Police raid shuts an operation — same family as raid_cash, its own read.'),
-  def('police_raid_bust', 'oneshots', false, [1.0, 2.5], 0.9, 'Police bust — the heaviest of the police trio.'),
-  def('federal_notice', 'oneshots', false, [1.2, 2.2], 0.8, 'Federal NOTICE (50) — already shipped as sfx_federal_50_notice.wav; manifest parity entry.'),
-  def('federal_watch', 'oneshots', false, [1.4, 2.5], 0.8, 'Federal WATCH (70) — already shipped as sfx_federal_70_watch.wav; manifest parity entry.'),
-  def('federal_raid', 'oneshots', false, [1.8, 3.0], 0.8, 'Federal RAID (85) — already shipped as sfx_federal_85_raid.wav; manifest parity entry.'),
-  def('federal_cooldown', 'oneshots', false, [0.8, 1.8], 0.7, 'Federal pressure easing — a settling, de-escalation cue.'),
-  def('federal_armed', 'oneshots', false, [1.5, 2.8], 0.85, 'Federal warrant ARMED — tenser than watch, short of the raid klaxon.'),
+  def('police_raid_cash', 'oneshots', false, [1.0, 2.5], 0.85, 'Police raid seizes cash — stereo HUD cue, distinct from the federal bell family.', true),
+  def('police_raid_operation', 'oneshots', false, [1.0, 2.5], 0.85, 'Police raid shuts an operation — same family as raid_cash, its own read.', true),
+  def('police_raid_bust', 'oneshots', false, [1.0, 2.5], 0.9, 'Police bust — the heaviest of the police trio.', true),
+  def('federal_notice', 'oneshots', false, [1.2, 2.2], 0.8, 'Federal NOTICE (50) — already shipped as sfx_federal_50_notice.wav; manifest parity entry.', true),
+  def('federal_watch', 'oneshots', false, [1.4, 2.5], 0.8, 'Federal WATCH (70) — already shipped as sfx_federal_70_watch.wav; manifest parity entry.', true),
+  def('federal_raid', 'oneshots', false, [1.8, 3.0], 0.8, 'Federal RAID (85) — already shipped as sfx_federal_85_raid.wav; manifest parity entry.', true),
+  def('federal_cooldown', 'oneshots', false, [0.8, 1.8], 0.7, 'Federal pressure easing — a settling, de-escalation cue.', true),
+  def('federal_armed', 'oneshots', false, [1.5, 2.8], 0.85, 'Federal warrant ARMED — tenser than watch, short of the raid klaxon.', true),
   def('interception_collector_robbed', 'oneshots', false, [0.9, 1.8], 0.85, "Player's collector robbed — non-positional (the event carries no tile)."),
   def('collector_arrival', 'oneshots', false, [0.5, 1.2], 0.6, 'Collector reaches HQ — light arrival beat.'),
   def('collector_deposit', 'oneshots', false, [0.6, 1.4], 0.7, 'Take banked — a heavier coin/ledger beat than arrival.'),
@@ -111,10 +114,6 @@ export function isAtmosphereClipKey(key: string): boolean {
   return KEY_SET.has(key);
 }
 
-// compile-shape guard: the manifest must stay in one-to-one agreement with the catalogs it derives from.
-if (ATMOSPHERE_CLIP_KEYS.length !== new Set(ATMOSPHERE_CLIP_KEYS).size) {
-  throw new Error('atmosphere clip manifest contains duplicate keys');
-}
-if (ALL_BED_KEYS.some((k) => !KEY_SET.has(k))) {
-  throw new Error('atmosphere clip manifest is missing a district bed key');
-}
+// The duplicate-freeness + catalog-agreement invariants are enforced by the test suite
+// (audioAtmosphereCoordinator.test.ts, F2 parity block) — pre-ship, not as an import-time throw that
+// would turn a static-data slip CI already catches into a player-facing boot crash.

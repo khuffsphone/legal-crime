@@ -3,8 +3,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   ALL_BED_KEYS, BED_FADE_IN_MS, BED_FADE_OUT_MS, BED_HYSTERESIS_MS, BED_LAYERS, BED_XFADE_MS,
-  DISTRICT_BEDS, DISTRICT_BED_ARCHETYPES, MAX_BED_LOOPS, bedFor, bedZoomTrimDb, emitterStyleDistrict,
+  DISTRICT_BEDS, DISTRICT_BED_ARCHETYPES, MAX_BED_LOOPS, bedFor, bedZoomTrimDb,
 } from '../src/scenes/audio/districtBedCatalog';
+import { emitterStyleDistrict } from '../src/scenes/audio/propEmitterCatalog';
 import {
   createBedResolverState, planBedIntents, sampleBedDistrict, stepBedResolver, bedVoiceId,
   type BedVoice,
@@ -106,17 +107,32 @@ describe('E2 — bed resolver + crossfade planner (mutation table)', () => {
     expect(st.current).toBe('MARKET'); // still held
   });
 
-  it('MUTATION same-district-restarts-loops: a same-district re-plan emits setLoop ONLY (no restart)', () => {
-    const first = planBedIntents([], 'CIVIC', 1.0, false);
+  it('MUTATION same-district-restarts-loops: a same-district re-plan never restarts — and an UNCHANGED frame emits NOTHING', () => {
+    const first = planBedIntents([], 'CIVIC', 1.0, false, 1);
     expect(first.intents.filter((i) => i.op === 'playLoop')).toHaveLength(2); // base + color start once
-    const again = planBedIntents(first.voices, 'CIVIC', 1.0, false);
-    expect(again.intents.every((i) => i.op === 'setLoop')).toBe(true); // re-trim only
-    expect(again.voices).toEqual(first.voices); // identical voice identities — nothing restarted
+    const same = planBedIntents(first.voices, 'CIVIC', 1.0, false, 1);
+    expect(same.intents).toEqual([]); // nothing moved ⇒ no fade-stomping setLoop churn
+    expect(same.voices).toEqual(first.voices); // identical voice identities — nothing restarted
+    const zoomed = planBedIntents(first.voices, 'CIVIC', 1.3, false, 1); // zoom band changed ⇒ re-trim only
+    expect(zoomed.intents.every((i) => i.op === 'setLoop')).toBe(true);
+    expect(zoomed.intents).toHaveLength(2);
+  });
+
+  it('a RETURNING district gets a FRESH voice generation (no collision with its own fading tail)', () => {
+    const a1 = planBedIntents([], 'CIVIC', 1.0, false, 1);
+    const b = planBedIntents(a1.voices, 'DOCKS', 1.0, false, 2); // A→B: CIVIC fading out for 2.8 s
+    const a2 = planBedIntents(b.voices, 'CIVIC', 1.0, false, 3); // …→A inside the fade window
+    const ids1 = a1.voices.map((v) => v.voiceId).sort();
+    const ids2 = a2.voices.map((v) => v.voiceId).sort();
+    expect(ids2).not.toEqual(ids1); // generation-stamped: never reuses the still-fading ids
+    for (const i of a2.intents.filter((x) => x.op === 'playLoop')) {
+      expect(ids1).not.toContain((i as { voiceId: string }).voiceId);
+    }
   });
 
   it('MUTATION budget-exceeded: a district crossfade keeps ≤4 audible loops (2 out + 2 in)', () => {
-    const live = planBedIntents([], 'CIVIC', 1.0, false).voices;
-    const cross = planBedIntents(live, 'DOCKS', 1.0, false);
+    const live = planBedIntents([], 'CIVIC', 1.0, false, 1).voices;
+    const cross = planBedIntents(live, 'DOCKS', 1.0, false, 2);
     const stops = cross.intents.filter((i) => i.op === 'stopLoop');
     const plays = cross.intents.filter((i) => i.op === 'playLoop');
     expect(stops).toHaveLength(2);
@@ -134,15 +150,15 @@ describe('E2 — bed resolver + crossfade planner (mutation table)', () => {
       const p = plan.intents.find((i) => i.op === 'playLoop' && (i as { key: string }).key === key) as { gain: number };
       return p.gain;
     };
-    const far = planBedIntents([], 'CIVIC', 0.5, false);   // FAR: +0
-    const mid = planBedIntents([], 'CIVIC', 1.0, false);   // MID: -1.5
-    const near = planBedIntents([], 'CIVIC', 1.3, false);  // NEAR: -3
+    const far = planBedIntents([], 'CIVIC', 0.5, false, 1);   // FAR: +0
+    const mid = planBedIntents([], 'CIVIC', 1.0, false, 1);   // MID: -1.5
+    const near = planBedIntents([], 'CIVIC', 1.3, false, 1);  // NEAR: -3
     expect(gainOf(far, 'base')).toBeCloseTo(dbToGain(-18), 6);
     expect(gainOf(mid, 'base')).toBeCloseTo(dbToGain(-19.5), 6);
     expect(gainOf(near, 'base')).toBeCloseTo(dbToGain(-21), 6);
     expect(gainOf(far, 'color')).toBeCloseTo(dbToGain(-24), 6);
     // hold-previous penalty −6 dB stacks on top
-    const held = planBedIntents([], 'CIVIC', 1.0, true);
+    const held = planBedIntents([], 'CIVIC', 1.0, true, 1);
     expect(gainOf(held, 'base')).toBeCloseTo(dbToGain(-25.5), 6);
     expect(bedZoomTrimDb(0.64)).toBe(0);
     expect(bedZoomTrimDb(0.65)).toBe(-1.5);
@@ -150,14 +166,14 @@ describe('E2 — bed resolver + crossfade planner (mutation table)', () => {
   });
 
   it('first bed fades in at 1.5 s; losing everything fades out at 1.5 s; unknown district starts nothing', () => {
-    const first = planBedIntents([], 'CIVIC', 1.0, false);
+    const first = planBedIntents([], 'CIVIC', 1.0, false, 1);
     for (const p of first.intents) expect((p as { fadeInMs: number }).fadeInMs).toBe(BED_FADE_IN_MS);
     const live: BedVoice[] = first.voices;
-    const gone = planBedIntents(live, null, 1.0, false);
+    const gone = planBedIntents(live, null, 1.0, false, 1);
     expect(gone.voices).toHaveLength(0);
     for (const s of gone.intents) expect((s as { fadeOutMs: number }).fadeOutMs).toBe(BED_FADE_OUT_MS);
-    const unknown = planBedIntents(live, 'NOT_A_DISTRICT', 1.0, false);
+    const unknown = planBedIntents(live, 'NOT_A_DISTRICT', 1.0, false, 1);
     expect(unknown.intents.filter((i) => i.op === 'playLoop')).toHaveLength(0); // never start unknown keys
-    expect(bedVoiceId('CIVIC', 'base')).toBe('bed:CIVIC:base'); // stable pooling identity
+    expect(bedVoiceId('CIVIC', 'base', 7)).toBe('bed:CIVIC:base#7'); // generation-stamped pooling identity
   });
 });

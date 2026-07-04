@@ -54,9 +54,10 @@ export type SpatialClass = 'local' | 'global' | 'hud';
 /** The base city ambience bed that already ships (audioPreload catalog). */
 export const AMBIENT_BED_BASE = 'ambience_city';
 
-/** District ambience-bed key per canonical district archetype (districtIdentity.ts). Ticket E (the bed
- * SELECTOR — deferred) will crossfade these by camera district; this is just the stable key list so
- * asset/synth work can start against fixed names. Naming follows the shipped `ambience_*` convention. */
+/** ⚠ SUPERSEDED (A-D era): the approved E-H spec locked the district-bed contract to TWO layers per
+ * archetype under `bed_<archetype>_{base,color}` — districtBedCatalog.DISTRICT_BEDS + the F.3 manifest
+ * (atmosphereClipManifest) are the ONLY bed-key contract. Do NOT produce assets against the
+ * `ambience_*` names below; kept solely so the A-D tests stay meaningful until that lane retires at H3. */
 export const DISTRICT_BED_KEYS: Readonly<Record<DistrictArchetype, string>> = {
   FINANCIAL: 'ambience_financial',
   DOCKS: 'ambience_docks',

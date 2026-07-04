@@ -1,3 +1,7 @@
+// ⚠ SUPERSEDED (A-D era) — the E-H lane's eventCueMapper.ts owns event→cue mapping now, with a
+// DIFFERENT key vocabulary (police_raid_* / federal_armed / interception_collector_robbed …).
+// Do NOT wire both: one 'raid-cash' would fire 'siren' here AND 'police_raid_cash' there.
+// Kept only until H3 lands; retire with the A-D lane.
 // sfxEventMapper.ts — AUDIO ATMOSPHERE lane, Ticket B: map the sim's REAL event outputs to audio-cue
 // DESCRIPTORS. Pure, Phaser-free, read-only — it consumes the realtime wrapper's outputs and state.log
 // entries and MUTATES NOTHING (/src/sim, tick(), applyCommand() untouched). Nothing here plays a sound;

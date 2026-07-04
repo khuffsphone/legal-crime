@@ -99,6 +99,20 @@ describe('H1 — steal policy (mutation table)', () => {
     expect(chooseSteal(olds, { priority: 60 })?.key).toBe('door_b'); // oldest non-positional
     expect(chooseSteal(olds, { priority: 40 })).toBeNull(); // equal priority is NOT stealable
   });
+
+  it('an UNKNOWN distance sorts as farthest (stolen first), never as the most protected voice', () => {
+    const active = [
+      voice('prop_awning_flap', 35, { positional: true, distPx: 500, startedMs: 10 }),
+      voice('prop_bench_creak', 35, { positional: true, startedMs: 20 }), // distPx unknown
+    ];
+    expect(chooseSteal(active, { priority: 55 })?.key).toBe('prop_bench_creak'); // unknown ⇒ assume farthest
+    // both unknown ⇒ fall back to oldest
+    const both = [
+      voice('prop_awning_flap', 35, { positional: true, startedMs: 30 }),
+      voice('prop_bench_creak', 35, { positional: true, startedMs: 20 }),
+    ];
+    expect(chooseSteal(both, { priority: 55 })?.key).toBe('prop_bench_creak');
+  });
 });
 
 describe('H1 — H.4 master rate caps (mutation table)', () => {
@@ -143,6 +157,15 @@ describe('H1 — H.4 master rate caps (mutation table)', () => {
     expect(fifth.verdict).toBe('drop-rate');
     const event = admitCue(fifth.state, { key: 'collector_deposit' }, 1011);
     expect(event.verdict).toBe('admit'); // the event budget is separate
+  });
+
+  it('the dedupe ledger is BOUNDED: entries older than the longest window are pruned on admit', () => {
+    let s = createRateLimiterState();
+    s = admitCue(s, { key: 'extortion_shakedown_converted', dedupeKey: 'evt:extortion:front-1:shakedown:converted' }, 1000).state;
+    expect(Object.keys(s.lastByKey)).toHaveLength(1);
+    // 10 s later (beyond every dup window) a new admit prunes the stale front entry
+    s = admitCue(s, { key: 'collector_deposit' }, 11_000).state;
+    expect(Object.keys(s.lastByKey)).toEqual(['collector_deposit']);
   });
 
   it('orderCues plays highest priority first, stable within a rank', () => {

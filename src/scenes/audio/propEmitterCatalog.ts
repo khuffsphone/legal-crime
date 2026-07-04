@@ -14,9 +14,18 @@
 // when T4 placement records arrive (they already speak PropFamilyId).
 
 import type { PropKind, PropPlacement } from '../../sim';
-import type { PlacementZoneId } from '../env/streetscapeTypes';
+import type { DistrictArchetype } from '../art/districtIdentity';
+import type { PlacementZoneId, StreetscapeDistrict } from '../env/streetscapeTypes';
 import type { PropFamilyId } from '../env/streetscapeTaxonomy';
 import { FAMILY_IDS } from '../env/streetscapeTaxonomy';
+
+/** QUARTER → TENEMENT fallback (E.1) — ONLY for systems bound to the StreetscapeDistrict set (this
+ * catalog's district styling / preferDistrict). Every other archetype maps to itself; the compile-time
+ * return type guarantees the result is a member of the 8-value streetscape set. District BEDS never
+ * route through this — QUARTER keeps its own bed pair (districtBedCatalog). */
+export function emitterStyleDistrict(archetype: DistrictArchetype): StreetscapeDistrict {
+  return archetype === 'QUARTER' ? 'TENEMENT' : archetype;
+}
 
 export type EmitterKind = 'anchorLoop' | 'rhythmOneShot' | 'silent';
 

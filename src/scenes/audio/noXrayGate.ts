@@ -1,3 +1,6 @@
+// ⚠ SUPERSEDED (A-D era) — the E-H pipeline routes positional gating through weaponFeedback's
+// shouldEmitFeedback directly (propEmitterPlanner for emitters; atmosphereCoordinator downgrades
+// tiled event cues). Kept only until H3 lands; retire with the A-D lane.
 // noXrayGate.ts — AUDIO ATMOSPHERE lane, Ticket C: the NO-X-RAY gate for positional audio cues. Pure,
 // Phaser-free. Audio is an information surface like the minimap — a sound tied to a world tile can leak a
 // hidden actor's position, so a LOCAL cue may only play when its tile passes the SAME reveal predicate the

@@ -117,7 +117,7 @@ describe('G2 — LOD / gating / attenuation (mutation table)', () => {
     expect(fams).toEqual(['fountain', 'news_stand', 'statue_monument', 'street_tree']); // one each — diversity before duplicates
   });
 
-  it('keeps a stable existing anchor over an equivalent closer newcomer (anti-churn), re-trimming without restart', () => {
+  it('keeps a stable existing anchor over an equivalent closer newcomer (anti-churn), with NO no-op churn', () => {
     let st = createEmitterPlannerState(1);
     const treeA = src('street_tree', 4, 4);
     ({ state: st } = planEmitters(st, inputs({ sources: [treeA] })));
@@ -127,7 +127,25 @@ describe('G2 — LOD / gating / attenuation (mutation table)', () => {
     const plan = planEmitters(st, inputs({ sources: [treeA, treeB] }));
     expect(plan.state.anchors.map((a) => a.voiceId)).toContain(va);
     expect(plan.intents.filter((i) => i.op === 'stopLoop')).toHaveLength(0);
-    expect(plan.intents.find((i) => i.op === 'setLoop' && (i as { voiceId: string }).voiceId === va)).toBeTruthy();
+    // camera unchanged ⇒ A's gain/pan unchanged ⇒ NO setLoop for A (never hand the adapter a fade-stomper)
+    expect(plan.intents.find((i) => i.op === 'setLoop' && (i as { voiceId: string }).voiceId === va)).toBeUndefined();
+    expect(plan.intents.filter((i) => i.op === 'playLoop')).toHaveLength(1); // only B starts
+    // a camera move DOES re-trim the kept voice
+    const moved = planEmitters(plan.state, inputs({ sources: [treeA, treeB], screenCenter: { gx: 1, gy: 0 } }));
+    expect(moved.intents.some((i) => i.op === 'setLoop')).toBe(true);
+  });
+
+  it('a source flapping back into range mints a FRESH voiceId (no collision with its fading tail)', () => {
+    let st = createEmitterPlannerState(1);
+    const fountain = src('fountain', 0, 0);
+    ({ state: st } = planEmitters(st, inputs({ sources: [fountain] })));
+    const firstId = st.anchors[0].voiceId;
+    // flap out (ineligible) — stopLoop with a 900 ms fade
+    ({ state: st } = planEmitters(st, inputs({ sources: [fountain], eligibility: () => ({ revealed: false, onScreen: true }), nowMs: 500 })));
+    expect(st.anchors).toHaveLength(0);
+    // flap back in at +500 ms (inside the fade window) — a NEW generation id
+    const back = planEmitters(st, inputs({ sources: [fountain], nowMs: 1000 }));
+    expect(back.state.anchors[0].voiceId).not.toBe(firstId);
   });
 
   it('G.5 attenuation curve + pan clamp', () => {
@@ -135,7 +153,8 @@ describe('G2 — LOD / gating / attenuation (mutation table)', () => {
     expect(emitterGainDb(96)).toBe(0);
     expect(emitterGainDb(360)).toBeCloseTo(-9, 6);
     expect(emitterGainDb(640)).toBeCloseTo(-24, 6);
-    expect(emitterGainDb(721)).toBeNull(); // hard kill
+    expect(emitterGainDb(720)).toBeNull(); // hard kill AT the 720 px edge (spec: silence by 720)
+    expect(emitterGainDb(721)).toBeNull();
     expect(emitterGainDb(228)).toBeCloseTo(-4.5, 6); // linear between knots
     expect(emitterPan(0)).toBe(0);
     expect(emitterPan(10_000)).toBe(0.65);

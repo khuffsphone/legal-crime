@@ -71,17 +71,24 @@ const FEDERAL_WARNING_KEYS = new Set(['federal_notice', 'federal_watch', 'federa
 /**
  * Pick the victim when `incoming` needs a voice and the group is full, per H.3:
  * never steal an active federal warning; prop rhythms go before event one-shots (their priorities 35 <
- * events already encode this); lowest priority first; ties: positional → farthest from screen center,
- * non-positional → oldest. Returns null when nothing may be stolen (the incoming cue is dropped instead).
+ * events already encode this); lowest priority first; ties: positional → farthest from screen center
+ * (an UNKNOWN distance sorts as farthest — an adapter that skipped distance bookkeeping must not make
+ * that voice the most protected in its rank), non-positional → oldest. Returns null when nothing may be
+ * stolen (the incoming cue is dropped instead).
  */
 export function chooseSteal(active: readonly ActiveVoice[], incoming: { priority: number }): ActiveVoice | null {
   const stealable = active.filter((v) => !FEDERAL_WARNING_KEYS.has(v.key) && v.priority < incoming.priority);
   if (stealable.length === 0) return null;
-  return [...stealable].sort((a, b) =>
-    a.priority - b.priority
-    || Number(b.positional) - Number(a.positional) // positional victims considered within a rank...
-    || (a.positional && b.positional ? (b.distPx ?? 0) - (a.distPx ?? 0) : a.startedMs - b.startedMs),
-  )[0];
+  return [...stealable].sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    if (a.positional !== b.positional) return Number(b.positional) - Number(a.positional);
+    if (a.positional && b.positional) {
+      const da = a.distPx ?? Infinity; // unknown distance = assume farthest, steal it first
+      const db = b.distPx ?? Infinity;
+      if (da !== db) return db - da;
+    }
+    return a.startedMs - b.startedMs; // oldest loses (also the both-Infinity fallback)
+  })[0];
 }
 
 export { cuePriority, BUS_BUDGETS };
@@ -119,11 +126,23 @@ function isFederal(key: string): boolean { return FEDERAL_WARNING_KEYS.has(key) 
 function isPolice(key: string): boolean { return key.startsWith('police_raid_'); }
 function isProp(key: string): boolean { return key.startsWith('prop_'); }
 
+/** The longest duplicate window — lastByKey entries older than this can never influence a verdict, so
+ * they are pruned on every admit (the dedupe ledger stays bounded over a long session instead of
+ * accreting a key per front/event ever heard). */
+const MAX_DUP_WINDOW_MS = Math.max(DUP_EVENT_COOLDOWN_MS, DUP_PROP_COOLDOWN_MS, DUP_POLICE_COOLDOWN_MS, DUP_FEDERAL_SAME_TIER_MS);
+
 /**
  * Admit or drop one cue start, per H.4. FEDERAL LAW: a federal tier crossing is NEVER dropped by rate
- * or by prop/bed pressure — only an exact same-key repeat within 2 s is suppressed (duplicate, not a
- * crossing). Duplicate windows: event keys 1 s, police keys 1.5 s, prop keys 8 s. Absolute cap 10/s;
- * event one-shots 6/s; non-critical atmosphere 4/s. Pure — returns a new state.
+ * or by prop/bed pressure — the spec's "federal tier crossings must never be dropped" is read as a
+ * bypass of EVERY rate cap including the absolute 10/s (only an exact same-key repeat within 2 s is
+ * suppressed — a duplicate, not a crossing). Duplicate windows: event keys 1 s, police keys 1.5 s,
+ * prop keys 8 s. Absolute cap 10/s; event one-shots 6/s; non-critical atmosphere 4/s.
+ *
+ * PROP PRECEDENCE NOTE: in the shipped pipeline prop one-shots are throttled at the SOURCE by the
+ * planner's seeded scheduler (G.5: 1 per 1.5 s + 4 per 10 s + per-source/family cooldowns) and do NOT
+ * route through this gate; the prop lane here (4/s + the 8 s dup window) is the H.4 governance backstop
+ * that becomes live if a future adapter routes emitter one-shots through admitCue. The planner is
+ * authoritative for prop cadence tuning. Pure — returns a new state.
  */
 export function admitCue(state: RateLimiterState, cue: { key: string; dedupeKey?: string }, nowMs: number): RateDecision {
   const prune = (arr: number[], win: number): number[] => arr.filter((t) => nowMs - t < win);
@@ -132,40 +151,41 @@ export function admitCue(state: RateLimiterState, cue: { key: string; dedupeKey?
   const atmos = prune(state.atmosphereStarts, 1000);
   const dupKey = cue.dedupeKey ?? cue.key;
   const last = state.lastByKey[dupKey];
+  const drop = (verdict: RateVerdict): RateDecision =>
+    ({ state: { allStarts: all, eventStarts: events, atmosphereStarts: atmos, lastByKey: state.lastByKey }, verdict });
 
   const federal = isFederal(cue.key);
   const prop = isProp(cue.key);
   const dupWindow = federal ? DUP_FEDERAL_SAME_TIER_MS : isPolice(cue.key) ? DUP_POLICE_COOLDOWN_MS : prop ? DUP_PROP_COOLDOWN_MS : DUP_EVENT_COOLDOWN_MS;
-  if (last !== undefined && nowMs - last < dupWindow) {
-    return { state: { allStarts: all, eventStarts: events, atmosphereStarts: atmos, lastByKey: state.lastByKey }, verdict: 'drop-duplicate' };
-  }
+  if (last !== undefined && nowMs - last < dupWindow) return drop('drop-duplicate');
 
   if (!federal) { // a federal crossing bypasses every rate cap (never dropped)
-    if (all.length >= ABSOLUTE_STARTS_PER_SEC) {
-      return { state: { allStarts: all, eventStarts: events, atmosphereStarts: atmos, lastByKey: state.lastByKey }, verdict: 'drop-rate' };
-    }
-    if (prop && atmos.length >= ATMOSPHERE_STARTS_PER_SEC) {
-      return { state: { allStarts: all, eventStarts: events, atmosphereStarts: atmos, lastByKey: state.lastByKey }, verdict: 'drop-rate' };
-    }
-    if (!prop && events.length >= EVENT_ONESHOTS_PER_SEC) {
-      return { state: { allStarts: all, eventStarts: events, atmosphereStarts: atmos, lastByKey: state.lastByKey }, verdict: 'drop-rate' };
-    }
+    if (all.length >= ABSOLUTE_STARTS_PER_SEC) return drop('drop-rate');
+    if (prop && atmos.length >= ATMOSPHERE_STARTS_PER_SEC) return drop('drop-rate');
+    if (!prop && events.length >= EVENT_ONESHOTS_PER_SEC) return drop('drop-rate');
   }
+
+  // bound the dedupe ledger: entries beyond the longest window are dead weight.
+  const lastByKey: Record<string, number> = {};
+  for (const [k, t] of Object.entries(state.lastByKey)) {
+    if (nowMs - t < MAX_DUP_WINDOW_MS) lastByKey[k] = t;
+  }
+  lastByKey[dupKey] = nowMs;
 
   return {
     state: {
       allStarts: [...all, nowMs],
       eventStarts: prop ? events : [...events, nowMs],
       atmosphereStarts: prop ? [...atmos, nowMs] : atmos,
-      lastByKey: { ...state.lastByKey, [dupKey]: nowMs },
+      lastByKey,
     },
     verdict: 'admit',
   };
 }
 
-/** Order one frame's admitted event cues for playback: priority desc, then stable input order. Pure. */
+/** Order one frame's event cues for playback/admission: priority desc, stable within a rank
+ * (Array.prototype.sort is spec-stable since ES2019, so input order survives ties). Pure. */
 export function orderCues<T extends Pick<EventCueIntent, 'priority'>>(cues: readonly T[]): T[] {
-  return cues.map((c, i) => [c, i] as const)
-    .sort((a, b) => b[0].priority - a[0].priority || a[1] - b[1])
-    .map(([c]) => c);
+  if (cues.length <= 1) return [...cues];
+  return [...cues].sort((a, b) => b.priority - a.priority);
 }

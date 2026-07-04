@@ -93,17 +93,24 @@ export function stepBedResolver(state: BedResolverState, sample: BedSample, nowM
 }
 
 // ── E.5 crossfade planner (intents only; never restarts a same-district loop) ─────────────────────
-/** A bed loop voice the planner intends live. voiceId is stable per (district, layer) so a re-plan of
- * the SAME district can only re-trim gain (setLoop), never restart (playLoop). */
+/** A bed loop voice the planner intends live. voiceId is stable per (district, layer, GENERATION):
+ * within one residency of a district, re-plans reuse the exact voice (setLoop re-trims only, no
+ * restart); when a district RETURNS after being faded out (A→B→A border oscillation inside the 2.8 s
+ * crossfade), the generation stamp mints a FRESH id, so the new playLoop can never collide with its own
+ * still-fading predecessor (an adapter honoring "same id ⇒ never restart" would otherwise skip the play
+ * and the bed would fade to permanent silence). `lastGain` suppresses no-op setLoop churn so a re-trim
+ * intent is only emitted when the target actually moved — an adapter never receives a reason to stomp an
+ * in-flight fade with an identical target. */
 export interface BedVoice {
   voiceId: string;
   district: string;
   layer: BedLayer;
   key: string;
+  lastGain: number;
 }
 
-export function bedVoiceId(district: string, layer: BedLayer): string {
-  return `bed:${district}:${layer}`;
+export function bedVoiceId(district: string, layer: BedLayer, generation: number): string {
+  return `bed:${district}:${layer}#${generation}`;
 }
 
 function bedGain(layer: BedLayer, audioZoom: number, holdPenalty: boolean): number {
@@ -118,10 +125,15 @@ export interface BedPlan {
 
 /**
  * Plan the bed intents for the resolver's current district. `active` is the voice set from the previous
- * plan (thread it through). Behaviour:
- * - same district           → setLoop gain re-trims only (zoom / hold penalty) — NO restart.
+ * plan (thread it through); `generation` is a caller-held monotonic counter stamped onto NEW voices (the
+ * coordinator bumps it per district start) so a returning district never reuses a fading voice id.
+ * Behaviour:
+ * - same district           → setLoop re-trims ONLY when the target gain moved (zoom / hold penalty);
+ *                             an unchanged frame emits nothing — no restart, no fade-stomping churn.
  * - district changed        → stopLoop the old pair + playLoop the new pair, both at the 2.8 s
- *                             equal-power crossfade (≤ MAX_BED_LOOPS voices audible during the fade).
+ *                             equal-power crossfade (≤ MAX_BED_LOOPS voices audible during the fade;
+ *                             an adapter receiving playLoop for a KEY that still has a fading tail
+ *                             hard-cuts that tail first — the shipped conductor's crossfade-lock rule).
  * - first district          → playLoop with the 1.5 s fade-in.
  * - resolved null (never resolved / lost with no previous) → stopLoop everything at the 1.5 s fade-out.
  * Pure & total.
@@ -131,6 +143,7 @@ export function planBedIntents(
   resolved: string | null,
   audioZoom: number,
   holdPenalty: boolean,
+  generation: number,
 ): BedPlan {
   const intents: AtmosphereIntent[] = [];
 
@@ -163,10 +176,15 @@ export function planBedIntents(
     const gain = bedGain(layer, audioZoom, holdPenalty);
     const existing = keep.find((v) => v.layer === layer);
     if (existing) {
-      voices.push(existing);
-      intents.push({ op: 'setLoop', bus: 'beds', voiceId: existing.voiceId, gain }); // re-trim, never restart
+      if (gain === existing.lastGain) {
+        voices.push(existing); // nothing moved — emit NOTHING (never hand the adapter a fade-stomper)
+      } else {
+        const updated: BedVoice = { ...existing, lastGain: gain };
+        voices.push(updated);
+        intents.push({ op: 'setLoop', bus: 'beds', voiceId: existing.voiceId, gain }); // re-trim, never restart
+      }
     } else {
-      const voice: BedVoice = { voiceId: bedVoiceId(resolved, layer), district: resolved, layer, key };
+      const voice: BedVoice = { voiceId: bedVoiceId(resolved, layer, generation), district: resolved, layer, key, lastGain: gain };
       voices.push(voice);
       intents.push({
         op: 'playLoop', bus: 'beds', key, voiceId: voice.voiceId, gain,

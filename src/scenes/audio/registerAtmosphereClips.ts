@@ -13,7 +13,9 @@ import { AudioManager, type RegisteredClipDef } from '../audio';
 import { ATMOSPHERE_CLIP_KEYS, ATMOSPHERE_CLIP_MANIFEST } from './atmosphereClipManifest';
 import { BUS_TO_AUDIO_BUS } from './atmosphereIntents';
 
-/** The manifest projected onto the manager's registration shape (R3: conceptual bus → real bus). Pure. */
+/** The manifest projected onto the manager's registration shape (R3: conceptual bus → real bus). The
+ * urgent flag carries through so alarm-class cues (police trio, federal family) ride the manager's
+ * urgent governor exactly like their shipped federal siblings — never the soft-sfx cap. Pure. */
 export function atmosphereClipDefs(): RegisteredClipDef[] {
   return ATMOSPHERE_CLIP_MANIFEST.map((c) => ({
     key: c.key,
@@ -21,6 +23,7 @@ export function atmosphereClipDefs(): RegisteredClipDef[] {
     bus: BUS_TO_AUDIO_BUS[c.bus],
     loop: c.loop,
     vol: c.vol,
+    ...(c.urgent ? { urgent: true } : {}),
   }));
 }
 
