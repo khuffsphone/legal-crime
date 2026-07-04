@@ -184,6 +184,18 @@ describe('OUTCOMES', () => {
     expect(res.casualties).toEqual([]);
   });
 
+  it('maxTicks: Infinity cannot disable the backstop — a stalemate still terminates at the default cap', () => {
+    // Review finding: opts.maxTicks > 0 was true for Infinity, so an equal-speed flee/chase (net separation
+    // invariant → never in reach, never clear) would spin forever. Number.isFinite now rejects Infinity, so
+    // the default RESOLVE_MAX_TICKS backstop fires and the stalemate ends as a bounded 'timeout'.
+    const s = withUnits(fighter('p1', 'player', 10, 10), fighter('r1', 'rival-a', 13, 10));
+    s.combatOrders = { r1: { stance: 'DISENGAGE' } }; // r1 flees at p1's exact speed, in the 1.3–6 stalemate band
+    const res = resolveEngagement(s, ['p1', 'r1'], { maxTicks: Infinity });
+    expect(res.outcome).toEqual({ kind: 'timeout' });
+    expect(res.durationTicks).toBe(RESOLVE_MAX_TICKS); // Infinity was rejected → the finite default bounded it
+    expect(res.casualties).toEqual([]);
+  });
+
   it('draw: an empty / degenerate engagement resolves to a no-tick draw', () => {
     const s = withUnits(fighter('p1', 'player', 5, 5));
     expect(resolveEngagement(s, []).outcome).toEqual({ kind: 'draw' }); // nobody in the fight
@@ -293,6 +305,15 @@ describe('tickLog compactness', () => {
     const res = resolveEngagement(s, ['p1', 'r1'], { logCap: 2 });
     expect(res.tickLog.length).toBeLessThanOrEqual(2);
     if (res.durationTicks > 2) expect(res.logTruncated).toBe(true);
+  });
+
+  it('logCap: 0 is HONORED — no beats, truncation flagged (review finding: 0 was silently replaced)', () => {
+    const s = withUnits(fighter('p1', 'player', 5, 5, { weapon: 'hitman', skill: 6 }), fighter('r1', 'rival-a', 5.3, 5));
+    const res = resolveEngagement(s, ['p1', 'r1'], { logCap: 0 });
+    expect(res.durationTicks).toBeGreaterThan(0); // a real fight ran…
+    expect(res.tickLog).toEqual([]);              // …but the caller asked for zero beats
+    expect(res.logTruncated).toBe(true);          // and that drop is reported, not silent
+    expect(res.casualties).toContain('r1');       // the OUTCOME is unaffected by the log opt-out
   });
 
   it('RESOLVE_DT and RESOLVE_MAX_TICKS are the documented defaults', () => {

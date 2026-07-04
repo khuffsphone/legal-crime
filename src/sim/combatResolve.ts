@@ -12,9 +12,10 @@
 // melee, or flee on a DISENGAGE order) — the off-screen abstraction of "walk in and trade / break off".
 //
 // PURITY (numbers-frozen): resolveEngagement NEVER mutates the passed-in state or its units — it clones the
-// participants and operates on a scratch GameState (a spread copy with a throwaway log). It reads, but never
-// writes, state.rngState / any shared cursor (the exchange draws no RNG at all). So invoking it leaves the
-// live game bit-identical: existing outcomes are byte-for-byte the same whether or not the resolver ran.
+// participants and operates on a scratch GameState (a spread copy with a throwaway log). It never reads or
+// writes state.rngState / any shared cursor (the exchange draws no RNG; the opt-in jitter cursor is seeded
+// from state.seed only). So invoking it leaves the live game bit-identical: existing outcomes are
+// byte-for-byte the same whether or not the resolver ran.
 //
 // RNG: the exchange is deterministic (no miss roll). The ONLY randomness is an OPT-IN initiative jitter,
 // drawn from a resolver-LOCAL cursor seeded off state.seed via a FRESH salt (never state.rngState, never
@@ -217,9 +218,12 @@ export function resolveEngagement(
   participantIds: readonly string[],
   opts: ResolveOptions = {},
 ): ResolveResult {
-  const dt = opts.dt && opts.dt > 0 ? opts.dt : RESOLVE_DT;
-  const maxTicks = opts.maxTicks && opts.maxTicks > 0 ? opts.maxTicks : RESOLVE_MAX_TICKS;
-  const logCap = opts.logCap && opts.logCap >= 0 ? opts.logCap : RESOLVE_LOG_CAP;
+  // Option validation — require FINITE values (Number.isFinite rejects NaN/±Infinity, so maxTicks can never
+  // disable the anti-hang backstop), and admit logCap 0 (a caller that opts out of the newsreel seed). The
+  // `typeof === 'number'` narrows for the comparison; undefined falls to the default.
+  const dt = typeof opts.dt === 'number' && Number.isFinite(opts.dt) && opts.dt > 0 ? opts.dt : RESOLVE_DT;
+  const maxTicks = typeof opts.maxTicks === 'number' && Number.isFinite(opts.maxTicks) && opts.maxTicks > 0 ? opts.maxTicks : RESOLVE_MAX_TICKS;
+  const logCap = typeof opts.logCap === 'number' && Number.isFinite(opts.logCap) && opts.logCap >= 0 ? opts.logCap : RESOLVE_LOG_CAP;
   const orders: CombatOrders | undefined = state.combatOrders;
 
   // Gather the participants (dedupe ids; skip missing) and CLONE them — the fight never touches the caller's
