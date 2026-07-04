@@ -1,0 +1,13 @@
+{
+  "pieceId": "storefront_low_2bay",
+  "tier": "low",
+  "outputDir": "public/assets/sprites/env",
+  "_inputs": "ENV KIT PHASE 1 — PROOF PIECE (kit inventory #4): low-tier storefront ground floor, 2-tile frontage, procedural bpy geometry (no external model). Corrected canon stack (facadeKit.ts, screen px): bulkhead 20 / display glass 56 / transom 20 / fascia sign band 36 = FLOOR_GROUND 132; commercial door 76 px in the LEFT bay (clears the 56 px thug). TILE-CALIBRATED FIXED SCALE per docs/env-kit/DECISION_KIT_RENDER_SCALE.md: density canvas/ortho = 64*sqrt(2) = 90.5097 px/BU (2.8284 @256-canvas equivalent), 1 BU = 1 tile edge, vertical px/BU = 78.3846. Single view (no dirs/frames), anchor (0.5, 1.0) base-on-bottom-edge. Palette: warm noir neutrals only — scenery never carries brass/red/green.",
+  "_run": "Container (bpy module): python3 tools/blender/render_iso_kit.py -- --job tools/blender/render_jobs/kit_storefront_low.json 1> kit_proof.out 2> kit_proof.err · Windows Blender: & $env:BLENDER_PATH -b -P tools\\blender\\render_iso_kit.py -- --job tools\\blender\\render_jobs\\kit_storefront_low.json 1> kit_proof.out 2> kit_proof.err. Expect GEOMETRY, FIXED-SCALE density=90.5097, PIECE ~138x~202 px, SHEET, MANIFEST, RENDER_OK. Commit RAW — pngquant BANNED.",
+  "geometry": { "builder": "storefront_low", "frontageTiles": 2 },
+  "camera": { "tileW": 128, "tileH": 64, "cameraMode": "dimetric2to1", "cameraZDeg": 45 },
+  "framing": { "pad": 12, "anchorX": 0.5, "anchorY": 1.0 },
+  "shader": { "outlineEnabled": true, "outlineThicknessPx": 1.75, "outlineColorHex": "#1E1713" },
+  "light": { "keyEnergy": 1200, "fillEnergy": 500, "rimEnergy": 220, "ambientStrength": 0.08 },
+  "output": { "renderEngine": "BLENDER_EEVEE", "eeveeSamples": 24, "pngCompression": 100 }
+}

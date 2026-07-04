@@ -1,0 +1,8 @@
+GEOMETRY builder=storefront_low objects=14 frontageTiles=2
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=228 ortho_scale=2.519068
+PIECE storefront_low_2bay projected 141.2 x 202.6 px (pad 12)
+00:04.609  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_storefront_low_2bay.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_storefront_low_2bay.png (single view, RAW PNG)
+VERIFY-STACK column=46 alpha-run=137px expect~132px (FLOOR_GROUND; +1..3px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_storefront_low_2bay_manifest.json
+RENDER_OK piece=storefront_low_2bay canvas=228 density=90.5097

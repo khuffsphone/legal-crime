@@ -1,0 +1,55 @@
+{
+  "pieceId": "storefront_low_2bay",
+  "kind": "kit-piece",
+  "tier": "low",
+  "image": "kit_storefront_low_2bay.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 2.519068,
+  "canvas": 228,
+  "spriteWPx": 141.18,
+  "spriteHPx": 202.59,
+  "frontageTiles": 2,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [
+    {
+      "role": "signHost",
+      "hPx": 36
+    },
+    {
+      "role": "transom",
+      "hPx": 20
+    },
+    {
+      "role": "glass",
+      "hPx": 56
+    },
+    {
+      "role": "bulkhead",
+      "hPx": 20
+    }
+  ],
+  "baseEdgePx": {
+    "left": {
+      "xPx": -68.93,
+      "yPx": -64.83
+    },
+    "right": {
+      "xPx": 59.07,
+      "yPx": -0.83
+    }
+  }
+}
