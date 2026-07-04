@@ -1,0 +1,43 @@
+{
+  "pieceId": "cornice_simple_28",
+  "kind": "kit-piece",
+  "tier": "all",
+  "image": "kit_cornice_simple_28.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.900349,
+  "canvas": 172,
+  "spriteWPx": 145.28,
+  "spriteHPx": 98.72,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [
+    {
+      "role": "cornice",
+      "hPx": 28
+    }
+  ],
+  "frontageTiles": 2,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -68.16,
+      "yPx": -64.32
+    },
+    "right": {
+      "xPx": 59.84,
+      "yPx": -0.32
+    }
+  }
+}

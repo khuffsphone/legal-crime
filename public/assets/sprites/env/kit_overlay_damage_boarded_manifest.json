@@ -1,0 +1,40 @@
+{
+  "pieceId": "overlay_damage_boarded",
+  "kind": "kit-piece",
+  "tier": "all",
+  "image": "kit_overlay_damage_boarded.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.635184,
+  "canvas": 148,
+  "spriteWPx": 116.55,
+  "spriteHPx": 122.67,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [],
+  "frontageTiles": 2,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -63.32,
+      "yPx": -39.42
+    },
+    "right": {
+      "xPx": 64.68,
+      "yPx": 24.58
+    }
+  },
+  "overlay": true,
+  "compositesOverPx": 132
+}

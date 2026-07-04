@@ -1,0 +1,40 @@
+{
+  "pieceId": "overlay_fortified_bars",
+  "kind": "kit-piece",
+  "tier": "all",
+  "image": "kit_overlay_fortified_bars.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.767767,
+  "canvas": 160,
+  "spriteWPx": 113.92,
+  "spriteHPx": 133.86,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [],
+  "frontageTiles": 2,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -64.64,
+      "yPx": -64.16
+    },
+    "right": {
+      "xPx": 63.36,
+      "yPx": -0.16
+    }
+  },
+  "overlay": true,
+  "compositesOverPx": 132
+}

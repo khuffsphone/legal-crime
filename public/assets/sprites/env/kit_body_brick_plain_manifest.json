@@ -1,0 +1,43 @@
+{
+  "pieceId": "body_brick_plain",
+  "kind": "kit-piece",
+  "tier": "all",
+  "image": "kit_body_brick_plain.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 2.342291,
+  "canvas": 212,
+  "spriteWPx": 140.42,
+  "spriteHPx": 185.76,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [
+    {
+      "role": "brickUpper",
+      "hPx": 116
+    }
+  ],
+  "frontageTiles": 2,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -69.31,
+      "yPx": -64.0
+    },
+    "right": {
+      "xPx": 58.69,
+      "yPx": -0.0
+    }
+  }
+}

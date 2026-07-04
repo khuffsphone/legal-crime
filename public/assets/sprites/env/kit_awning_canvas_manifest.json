@@ -1,0 +1,40 @@
+{
+  "pieceId": "awning_canvas",
+  "kind": "kit-piece",
+  "tier": "low-mid",
+  "image": "kit_awning_canvas.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.856155,
+  "canvas": 168,
+  "spriteWPx": 142.07,
+  "spriteHPx": 97.25,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [],
+  "frontageTiles": 2,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -56.18,
+      "yPx": -1.42
+    },
+    "right": {
+      "xPx": 71.82,
+      "yPx": 62.58
+    }
+  },
+  "overlay": true,
+  "mountsAtPx": 96
+}
