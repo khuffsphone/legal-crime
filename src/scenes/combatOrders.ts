@@ -7,7 +7,7 @@
 // and dispatches the chosen action to the existing issueMove / stopUnit. Selection stays authoritative — the
 // scene decides WHICH units carry an order; this only names the stance + resolves it.
 
-import type { GridPos } from '../sim';
+import type { CombatDenial, GridPos } from '../sim';
 
 /** A render-side acquisition radius (tiles) for ATTACK-MOVE: a hostile this close is engaged before it
  * reaches melee, so the advance "converts to attack on contact". Deliberately wider than the 35a engage
@@ -107,4 +107,19 @@ export function resolveAutoOrder(
     return { kind: 'hold' }; // arrived / nothing to chase — stand
   }
   return { kind: 'none' };
+}
+
+/** COMBAT PR A — the status-line text for a refused ?combat=1 order (no silent denials). Pure +
+ * total, so a new denial without a line is a compile error. NO-X-RAY: the sim collapses a fogged
+ * target and an empty tile into ONE denial value upstream ('no-visible-target'), so there is no
+ * text here that could distinguish them — the specific lines only ever describe VISIBLE things. */
+export function combatDenialText(denial: CombatDenial): string {
+  switch (denial) {
+    case 'no-selection': return 'select crew first';
+    case 'bad-destination': return "can't path there";
+    case 'no-visible-target': return 'no rival in sight there — scout it first';
+    case 'not-a-fighter': return "collectors aren't attack targets — ambush them in transit";
+    case 'not-hostile': return 'that is not an enemy fighter';
+    case 'not-engaged': return 'no visible threat to break from';
+  }
 }
