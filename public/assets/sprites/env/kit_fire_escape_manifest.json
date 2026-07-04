@@ -1,0 +1,28 @@
+{
+  "pieceId": "fire_escape",
+  "kind": "kit-piece",
+  "tier": "mid-large",
+  "image": "kit_fire_escape.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.988738,
+  "canvas": 180,
+  "spriteWPx": 64.64,
+  "spriteHPx": 152.96,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [],
+  "overlay": true
+}

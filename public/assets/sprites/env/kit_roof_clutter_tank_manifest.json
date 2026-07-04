@@ -1,0 +1,38 @@
+{
+  "pieceId": "roof_clutter_tank",
+  "kind": "kit-piece",
+  "tier": "mid-large",
+  "image": "kit_roof_clutter_tank.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.370019,
+  "canvas": 124,
+  "spriteWPx": 99.84,
+  "spriteHPx": 70.17,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [],
+  "frontageTiles": 1,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -69.12,
+      "yPx": -11.26
+    },
+    "right": {
+      "xPx": -5.12,
+      "yPx": 20.74
+    }
+  }
+}

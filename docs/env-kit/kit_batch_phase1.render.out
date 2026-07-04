@@ -1,0 +1,204 @@
+GEOMETRY piece=body_brick_plain builder=facade_body objects=4 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=212 ortho_scale=2.342291
+PIECE body_brick_plain projected 140.4 x 185.8 px (pad 12)
+00:05.143  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_body_brick_plain.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_body_brick_plain.png (single view, RAW PNG)
+VERIFY-STACK piece=body_brick_plain column=38 alpha-run=120px expect~116px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_body_brick_plain_manifest.json
+RENDER_OK piece=body_brick_plain canvas=212 density=90.5097
+GEOMETRY piece=body_brick_pilastered builder=facade_body objects=7 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=212 ortho_scale=2.342291
+PIECE body_brick_pilastered projected 141.4 x 186.7 px (pad 12)
+00:21.008  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_body_brick_pilastered.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_body_brick_pilastered.png (single view, RAW PNG)
+VERIFY-STACK piece=body_brick_pilastered column=38 alpha-run=122px expect~116px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_body_brick_pilastered_manifest.json
+RENDER_OK piece=body_brick_pilastered canvas=212 density=90.5097
+GEOMETRY piece=body_limestone builder=facade_body objects=5 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=212 ortho_scale=2.342291
+PIECE body_limestone projected 140.4 x 185.8 px (pad 12)
+00:36.936  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_body_limestone.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_body_limestone.png (single view, RAW PNG)
+VERIFY-STACK piece=body_limestone column=38 alpha-run=120px expect~116px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_body_limestone_manifest.json
+RENDER_OK piece=body_limestone canvas=212 density=90.5097
+GEOMETRY piece=body_warehouse builder=facade_body objects=4 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=212 ortho_scale=2.342291
+PIECE body_warehouse projected 140.4 x 185.8 px (pad 12)
+00:53.352  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_body_warehouse.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_body_warehouse.png (single view, RAW PNG)
+VERIFY-STACK piece=body_warehouse column=38 alpha-run=120px expect~116px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_body_warehouse_manifest.json
+RENDER_OK piece=body_warehouse canvas=212 density=90.5097
+GEOMETRY piece=wall_alley_service builder=facade_body objects=4 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=212 ortho_scale=2.342291
+PIECE wall_alley_service projected 140.4 x 185.8 px (pad 12)
+01:09.706  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_wall_alley_service.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_wall_alley_service.png (single view, RAW PNG)
+VERIFY-STACK piece=wall_alley_service column=38 alpha-run=120px expect~116px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_wall_alley_service_manifest.json
+RENDER_OK piece=wall_alley_service canvas=212 density=90.5097
+GEOMETRY piece=wall_corner_return builder=facade_body objects=4 yaw=90.0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=212 ortho_scale=2.342291
+PIECE wall_corner_return projected 140.4 x 185.8 px (pad 12)
+01:25.883  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_wall_corner_return.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_wall_corner_return.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_wall_corner_return_manifest.json
+RENDER_OK piece=wall_corner_return canvas=212 density=90.5097
+GEOMETRY piece=storefront_recessed builder=storefront_low objects=16 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=228 ortho_scale=2.519068
+PIECE storefront_recessed projected 141.2 x 202.6 px (pad 12)
+01:42.699  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_storefront_recessed.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_storefront_recessed.png (single view, RAW PNG)
+VERIFY-STACK piece=storefront_recessed column=46 alpha-run=137px expect~132px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_storefront_recessed_manifest.json
+RENDER_OK piece=storefront_recessed canvas=228 density=90.5097
+GEOMETRY piece=storefront_speakeasy builder=storefront_low objects=14 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=228 ortho_scale=2.519068
+PIECE storefront_speakeasy projected 141.2 x 202.6 px (pad 12)
+01:59.325  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_storefront_speakeasy.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_storefront_speakeasy.png (single view, RAW PNG)
+VERIFY-STACK piece=storefront_speakeasy column=46 alpha-run=137px expect~132px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_storefront_speakeasy_manifest.json
+RENDER_OK piece=storefront_speakeasy canvas=228 density=90.5097
+GEOMETRY piece=storefront_bar builder=storefront_low objects=13 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=228 ortho_scale=2.519068
+PIECE storefront_bar projected 141.2 x 202.6 px (pad 12)
+02:15.697  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_storefront_bar.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_storefront_bar.png (single view, RAW PNG)
+VERIFY-STACK piece=storefront_bar column=46 alpha-run=137px expect~132px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_storefront_bar_manifest.json
+RENDER_OK piece=storefront_bar canvas=228 density=90.5097
+GEOMETRY piece=window_single builder=window_module objects=5 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=180 ortho_scale=1.988738
+PIECE window_single projected 75.5 x 153.8 px (pad 12)
+02:31.005  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_window_single.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_window_single.png (single view, RAW PNG)
+VERIFY-STACK piece=window_single column=53 alpha-run=120px expect~116px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_window_single_manifest.json
+RENDER_OK piece=window_single canvas=180 density=90.5097
+GEOMETRY piece=window_paired builder=window_module objects=7 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=180 ortho_scale=1.988738
+PIECE window_paired projected 75.5 x 153.8 px (pad 12)
+02:46.384  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_window_paired.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_window_paired.png (single view, RAW PNG)
+VERIFY-STACK piece=window_paired column=53 alpha-run=120px expect~116px (+1..6px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_window_paired_manifest.json
+RENDER_OK piece=window_paired canvas=180 density=90.5097
+GEOMETRY piece=door_stair_residential builder=door_module objects=5 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=160 ortho_scale=1.767767
+PIECE door_stair_residential projected 75.5 x 133.8 px (pad 12)
+03:01.627  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_door_stair_residential.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_door_stair_residential.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_door_stair_residential_manifest.json
+RENDER_OK piece=door_stair_residential canvas=160 density=90.5097
+GEOMETRY piece=door_commercial_76 builder=door_module objects=3 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=148 ortho_scale=1.635184
+PIECE door_commercial_76 projected 75.5 x 121.8 px (pad 12)
+03:16.551  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_door_commercial_76.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_door_commercial_76.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_door_commercial_76_manifest.json
+RENDER_OK piece=door_commercial_76 canvas=148 density=90.5097
+GEOMETRY piece=door_residential_68 builder=door_module objects=4 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=140 ortho_scale=1.546796
+PIECE door_residential_68 projected 75.5 x 113.8 px (pad 12)
+03:31.503  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_door_residential_68.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_door_residential_68.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_door_residential_68_manifest.json
+RENDER_OK piece=door_residential_68 canvas=140 density=90.5097
+GEOMETRY piece=cornice_simple_28 builder=cap objects=2 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=172 ortho_scale=1.900349
+PIECE cornice_simple_28 projected 145.3 x 98.7 px (pad 12)
+03:46.414  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_cornice_simple_28.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_cornice_simple_28.png (single view, RAW PNG)
+VERIFY-STACK piece=cornice_simple_28 column=21 alpha-run=35px expect~28px (+1..8px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_cornice_simple_28_manifest.json
+RENDER_OK piece=cornice_simple_28 canvas=172 density=90.5097
+GEOMETRY piece=cornice_deco_40 builder=cap objects=7 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=172 ortho_scale=1.900349
+PIECE cornice_deco_40 projected 145.4 x 110.7 px (pad 12)
+04:01.669  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_cornice_deco_40.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_cornice_deco_40.png (single view, RAW PNG)
+VERIFY-STACK piece=cornice_deco_40 column=21 alpha-run=47px expect~40px (+1..8px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_cornice_deco_40_manifest.json
+RENDER_OK piece=cornice_deco_40 canvas=172 density=90.5097
+GEOMETRY piece=parapet_plain_40 builder=cap objects=2 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=168 ortho_scale=1.856155
+PIECE parapet_plain_40 projected 144.0 x 110.4 px (pad 12)
+04:16.600  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_parapet_plain_40.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_parapet_plain_40.png (single view, RAW PNG)
+VERIFY-STACK piece=parapet_plain_40 column=18 alpha-run=47px expect~40px (+1..8px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_parapet_plain_40_manifest.json
+RENDER_OK piece=parapet_plain_40 canvas=168 density=90.5097
+GEOMETRY piece=parapet_tall_56 builder=cap objects=3 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=168 ortho_scale=1.856155
+PIECE parapet_tall_56 projected 144.0 x 126.4 px (pad 12)
+04:31.791  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_parapet_tall_56.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_parapet_tall_56.png (single view, RAW PNG)
+VERIFY-STACK piece=parapet_tall_56 column=18 alpha-run=63px expect~56px (+1..8px top-face/outline slack)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_parapet_tall_56_manifest.json
+RENDER_OK piece=parapet_tall_56 canvas=168 density=90.5097
+GEOMETRY piece=sign_painted_wall builder=sign objects=3 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=124 ortho_scale=1.370019
+PIECE sign_painted_wall projected 96.8 x 96.4 px (pad 12)
+04:46.920  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_sign_painted_wall.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_sign_painted_wall.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_sign_painted_wall_manifest.json
+RENDER_OK piece=sign_painted_wall canvas=124 density=90.5097
+GEOMETRY piece=sign_blade builder=sign objects=3 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=112 ortho_scale=1.237437
+PIECE sign_blade projected 42.3 x 86.1 px (pad 12)
+05:01.869  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_sign_blade.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_sign_blade.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_sign_blade_manifest.json
+RENDER_OK piece=sign_blade canvas=112 density=90.5097
+GEOMETRY piece=awning_canvas builder=awning objects=5 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=168 ortho_scale=1.856155
+PIECE awning_canvas projected 142.1 x 97.3 px (pad 12)
+05:16.870  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_awning_canvas.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_awning_canvas.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_awning_canvas_manifest.json
+RENDER_OK piece=awning_canvas canvas=168 density=90.5097
+GEOMETRY piece=door_loading builder=loading_door objects=7 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=160 ortho_scale=1.767767
+PIECE door_loading projected 76.2 x 134.1 px (pad 12)
+05:32.385  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_door_loading.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_door_loading.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_door_loading_manifest.json
+RENDER_OK piece=door_loading canvas=160 density=90.5097
+GEOMETRY piece=fire_escape builder=fire_escape objects=8 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=180 ortho_scale=1.988738
+PIECE fire_escape projected 64.6 x 153.0 px (pad 12)
+05:47.490  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_fire_escape.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_fire_escape.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_fire_escape_manifest.json
+RENDER_OK piece=fire_escape canvas=180 density=90.5097
+GEOMETRY piece=roof_clutter_tank builder=roof_clutter objects=9 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=124 ortho_scale=1.370019
+PIECE roof_clutter_tank projected 99.8 x 70.2 px (pad 12)
+06:02.666  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_roof_clutter_tank.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_roof_clutter_tank.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_roof_clutter_tank_manifest.json
+RENDER_OK piece=roof_clutter_tank canvas=124 density=90.5097
+GEOMETRY piece=overlay_damage_boarded builder=overlay objects=6 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=148 ortho_scale=1.635184
+PIECE overlay_damage_boarded projected 116.6 x 122.7 px (pad 12)
+06:17.883  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_overlay_damage_boarded.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_overlay_damage_boarded.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_overlay_damage_boarded_manifest.json
+RENDER_OK piece=overlay_damage_boarded canvas=148 density=90.5097
+GEOMETRY piece=overlay_wealth_trim builder=overlay objects=5 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=156 ortho_scale=1.723573
+PIECE overlay_wealth_trim projected 129.3 x 128.0 px (pad 12)
+06:33.173  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_overlay_wealth_trim.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_overlay_wealth_trim.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_overlay_wealth_trim_manifest.json
+RENDER_OK piece=overlay_wealth_trim canvas=156 density=90.5097
+GEOMETRY piece=overlay_fortified_bars builder=overlay objects=15 yaw=0
+FIXED-SCALE density=90.5097 px/BU (canon 64*sqrt2=90.5097) canvas=160 ortho_scale=1.767767
+PIECE overlay_fortified_bars projected 113.9 x 133.9 px (pad 12)
+06:48.818  render           | Saved: '/home/user/legal-crime/public/assets/sprites/env/kit_overlay_fortified_bars.png'
+SHEET /home/user/legal-crime/public/assets/sprites/env/kit_overlay_fortified_bars.png (single view, RAW PNG)
+MANIFEST /home/user/legal-crime/public/assets/sprites/env/kit_overlay_fortified_bars_manifest.json
+RENDER_OK piece=overlay_fortified_bars canvas=160 density=90.5097
+BATCH_OK pieces=27 outdir=/home/user/legal-crime/public/assets/sprites/env

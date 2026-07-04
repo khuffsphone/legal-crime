@@ -1,0 +1,43 @@
+{
+  "pieceId": "door_loading",
+  "kind": "kit-piece",
+  "tier": "mid-large",
+  "image": "kit_door_loading.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.767767,
+  "canvas": 160,
+  "spriteWPx": 76.16,
+  "spriteHPx": 134.08,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [
+    {
+      "role": "serviceDoor",
+      "hPx": 96
+    }
+  ],
+  "frontageTiles": 1,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -37.44,
+      "yPx": -32.32
+    },
+    "right": {
+      "xPx": 26.56,
+      "yPx": -0.32
+    }
+  }
+}

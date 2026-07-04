@@ -1,0 +1,43 @@
+{
+  "pieceId": "door_residential_68",
+  "kind": "kit-piece",
+  "tier": "low-mid",
+  "image": "kit_door_residential_68.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.546796,
+  "canvas": 140,
+  "spriteWPx": 75.52,
+  "spriteHPx": 113.76,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [
+    {
+      "role": "doorResidential",
+      "hPx": 68
+    }
+  ],
+  "frontageTiles": 1,
+  "baseEdgePx": {
+    "left": {
+      "xPx": -37.76,
+      "yPx": -32.0
+    },
+    "right": {
+      "xPx": 26.24,
+      "yPx": -0.0
+    }
+  }
+}

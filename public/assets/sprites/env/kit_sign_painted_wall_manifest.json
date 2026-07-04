@@ -1,0 +1,33 @@
+{
+  "pieceId": "sign_painted_wall",
+  "kind": "kit-piece",
+  "tier": "all",
+  "image": "kit_sign_painted_wall.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.370019,
+  "canvas": 124,
+  "spriteWPx": 96.77,
+  "spriteHPx": 96.38,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [
+    {
+      "role": "fasciaSign",
+      "hPx": 48
+    }
+  ],
+  "overlay": true
+}

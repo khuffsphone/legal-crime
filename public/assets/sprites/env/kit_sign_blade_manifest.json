@@ -1,0 +1,33 @@
+{
+  "pieceId": "sign_blade",
+  "kind": "kit-piece",
+  "tier": "mid-large",
+  "image": "kit_sign_blade.png",
+  "generator": "tools/blender/render_iso_kit.py",
+  "camera": {
+    "mode": "dimetric2to1",
+    "cameraXDeg": 60.0,
+    "cameraZDeg": 45.0,
+    "tileW": 128,
+    "tileH": 64
+  },
+  "anchor": {
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "pxPerBu": 90.5097,
+  "vPxPerBu": 78.3837,
+  "orthoScale": 1.237437,
+  "canvas": 112,
+  "spriteWPx": 42.26,
+  "spriteHPx": 86.09,
+  "vSnapPx": 4,
+  "bayRunPx": 64,
+  "bandsPx": [
+    {
+      "role": "fasciaSign",
+      "hPx": 64
+    }
+  ],
+  "overlay": true
+}
