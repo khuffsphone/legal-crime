@@ -245,8 +245,16 @@ import {
 } from './selectionControl';
 import {
   type UnitOrder, type OrderUnit, holdOrder, attackMoveOrder, resolveAutoOrder,
-  ATTACK_MOVE_ACQUIRE_RADIUS,
+  ATTACK_MOVE_ACQUIRE_RADIUS, combatDenialText,
 } from './combatOrders';
+// COMBAT PR A — the ?combat=1 CONTROL SURFACE (attack-move / focus-fire / disengage): pure sim verbs
+// on an additive state slice, driven by the realtime wrapper. Imported from the module (not the
+// barrel) to keep the lane file-isolated, Lane-D style. Default OFF — with the flag off none of
+// these is ever called and the #17 render-side stance layer below runs exactly as before.
+import {
+  combatRequested, orderAttackMove, orderFocusFire, orderDisengage, clearCombatOrders,
+  pickVisibleHostile, type CombatCtx, type CombatOrderResult,
+} from '../sim/combatControl';
 import { applyDevDebug, isDevBuild, parseScenario, applyScenario } from './devDebug';
 import { formatPreviewLines, type PreviewPalette } from './operationPreview';
 import { initRestartGate, armRestart, confirmRestart, cancelRestart, type RestartGate } from './restartGate';
@@ -713,6 +721,10 @@ export class IsoScene extends Phaser.Scene {
   // play is untouched; ?debugCops=1 adds each cop's current patrol edge for QA.
   private copsEnabled = typeof window !== 'undefined' && copsRequested(window.location?.search ?? '');
   private debugCops = typeof window !== 'undefined' && debugCopsRequested(window.location?.search ?? '');
+  // COMBAT PR A (?combat=1): route [A]/right-click-rival/[W] through the SIM combat-order verbs
+  // (attack-move acquisition fog-gated, focus-fire designation, disengage) + spoken denials. OFF by
+  // default (?cops=1 pattern) — flag off, every input path below is the pre-existing #17 behavior.
+  private combatEnabled = typeof window !== 'undefined' && combatRequested(window.location?.search ?? '');
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
@@ -1866,7 +1878,13 @@ export class IsoScene extends Phaser.Scene {
     const gun = this.state.units.find((u) => u.id === 'rival-gun');
     if (collector && gun) issueMove(gun, unitTile(collector), this.navGrid);
 
-    const obs = observeWorld(this.state, stepDt, SCENE_WEEK_SECONDS, SCENE_PULSE_SECONDS);
+    // COMBAT PR A — hand the realtime wrapper the world ctx (nav grid + THE fog predicate) only when
+    // the flag is on: without it the combat-order hook is structurally inert, so flag-off frames are
+    // byte-identical to the pre-combat build.
+    const obs = observeWorld(
+      this.state, stepDt, SCENE_WEEK_SECONDS, SCENE_PULSE_SECONDS,
+      this.combatEnabled ? this.combatCtx() : undefined,
+    );
     this.state = obs.state;
     // RTS-24: on each settled week, run the content beat — civic INFLUENCE accrual (Mayor path),
     // market drift back toward balance, and the light event roll. WRAPS settlement; tick untouched.
@@ -2419,8 +2437,10 @@ export class IsoScene extends Phaser.Scene {
         this.commandContextual(p);
       } else if (this.attackMovePending) {
         // [A] is armed: this left-click sets the ATTACK-MOVE destination (instead of box-selecting).
+        // ?combat=1 routes through the SIM verb (fog-gated acquisition); off ⇒ the #17 render stance.
         this.attackMovePending = false;
-        this.commandAttackMove(p);
+        if (this.combatEnabled) this.commandCombatAttackMove(p);
+        else this.commandAttackMove(p);
       } else {
         this.commandSelect(p, shift);
       }
@@ -2530,6 +2550,7 @@ export class IsoScene extends Phaser.Scene {
     // accrues the shakedown only once he is AT the door (the positional gate).
     const interaction = frontInteractionPoint(tile);
     issueMove(thug, interaction, this.navGrid);
+    clearCombatOrders(this.state, [thug.id]); // a dispatch supersedes any ?combat=1 standing order (else it re-steals the path)
     // create the act through the WRAPPER (proves applyCommand is untouched) — it pushes onto state.extortionActs.
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndShakedown', familyId: 'player', thugId: thug.id, frontId: businessId }, () => {}, interaction);
     this.focusBizId = businessId;
@@ -2704,6 +2725,7 @@ export class IsoScene extends Phaser.Scene {
     const wasBusy = this.extortBusyThugIds().has(thug.id);
     const interaction = frontInteractionPoint(tile);
     issueMove(thug, interaction, this.navGrid);
+    clearCombatOrders(this.state, [thug.id]); // a dispatch supersedes any ?combat=1 standing order (else it re-steals the path)
     // create the embodied act through the WRAPPER (applyCommand untouched) — it shuts the racket down on resolve.
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndSabotage', familyId: 'player', thugId: thug.id, businessId }, () => {}, interaction);
     this.focusBizId = businessId;
@@ -2735,7 +2757,11 @@ export class IsoScene extends Phaser.Scene {
     // ⭐ DISCOVERABILITY: a LEFT-click on a RIVAL fighter (not selectable — it's the enemy) tells the player
     // the ATTACK gesture instead of silently deselecting, and KEEPS the crew selected so they can right-click
     // it straight away. (The player report was "the attack function doesn't work / is locked" — make it obvious.)
-    const foe = pickUnit(this.units.filter((v) => v.faction === 'rival' && v.unit.role !== 'collector').map((v) => v.unit), point);
+    // ?combat=1 — the hint must not fire on a FOGGED rival (a left-click fog probe: hint + kept
+    // selection vs clear both = two observables). Filter the pick with THE fog predicate; a hidden
+    // rival then clicks exactly like empty ground. Flag off ⇒ the pre-existing pick, untouched.
+    const foeCandidates = this.units.filter((v) => v.faction === 'rival' && v.unit.role !== 'collector').map((v) => v.unit);
+    const foe = pickUnit(this.combatEnabled ? foeCandidates.filter((u) => this.combatCtx().isVisible(u.pos)) : foeCandidates, point);
     if (foe) {
       this.setStatus(this.selection.ids.length > 0
         ? "that's a rival — RIGHT-CLICK it to send your crew in (they trade blows on contact)"
@@ -2764,7 +2790,13 @@ export class IsoScene extends Phaser.Scene {
    * systems. Selection gating lives in each command (consistent with 35b.1 — selection is authoritative). */
   private commandContextual(p: Phaser.Input.Pointer): void {
     const gpoint = screenToGrid(p.worldX, p.worldY);
-    const hitUnit = pickUnit(this.units.map((v) => v.unit), gpoint);
+    // ?combat=1 — the rival pick itself must be fog-safe, or the VERB ROUTING becomes an X-ray (a
+    // hidden rival under the cursor would route 'attack' where empty ground routes 'move'). The
+    // pure pickVisibleHostile applies THE fog predicate, so a fogged rival routes as plain ground.
+    // Flag off ⇒ the pre-existing pick, byte-identical behavior.
+    const hitUnit = this.combatEnabled
+      ? pickVisibleHostile(this.units.map((v) => v.unit), gpoint, this.state.player.id, this.combatCtx().isVisible)
+      : pickUnit(this.units.map((v) => v.unit), gpoint);
     const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
     // a RIVAL COMBATANT (non-collector) is the attack target; collectors stay autonomous (robbed via
     // interception, never a unit-attack target).
@@ -2776,8 +2808,12 @@ export class IsoScene extends Phaser.Scene {
         ? { kind: 'front', businessId: bizId }
         : { kind: 'ground', tile: screenToTile(p.worldX, p.worldY) };
     const verb = orderVerbFor(target);
-    if (verb === 'attack' && target.kind === 'rival') this.commandAttackUnit(target.unitId);
-    else if (verb === 'extort' && target.kind === 'front') {
+    if (verb === 'attack' && target.kind === 'rival') {
+      // ?combat=1 — a right-clicked rival is the FOCUS-FIRE mark (persistent convergence); off ⇒
+      // the one-shot #17 move-to-engage.
+      if (this.combatEnabled) this.commandFocusFire(target.unitId);
+      else this.commandAttackUnit(target.unitId);
+    } else if (verb === 'extort' && target.kind === 'front') {
       if (this.selection.ids.length > 0) this.openBizMenu(target.businessId, p.x, p.y);
       else this.commandMove(p); // no crew selected → a right-click on a building just walks there (legacy rule)
     } else this.commandMove(p);
@@ -2797,6 +2833,7 @@ export class IsoScene extends Phaser.Scene {
     const dest = unitTile(rival);
     const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, dest, this.navGrid);
     for (const id of res.moved) this.unitOrders.delete(id); // a direct ATTACK order cancels any stance
+    clearCombatOrders(this.state, res.moved); // …and any stale ?combat=1 sim order (no-op when absent)
     const from = unitScreenPos(thug), to = unitScreenPos(rival);
     this.flashAttackIntent(from.x, from.y, to.x, to.y);
     this.signalBeat('attack');
@@ -2823,8 +2860,84 @@ export class IsoScene extends Phaser.Scene {
     if (!isCommandableTile(target, this.navGrid)) { this.drawTargetMarker(target, false); return; }
     const res = resolveMoveCommand(this.units.map((v) => v.unit), this.selection.ids, target, this.navGrid);
     for (const id of res.moved) this.unitOrders.delete(id); // a fresh MOVE cancels any STOP/HOLD/ATTACK-MOVE stance
+    clearCombatOrders(this.state, res.moved); // …and any ?combat=1 sim order (no-op when the slice is absent)
     this.drawTargetMarker(target, res.moved.length > 0);
     this.setStatus(`moving ${res.moved.length} → (${target.gx},${target.gy})${res.failed.length ? ` · ${res.failed.length} blocked` : ''}`);
+  }
+
+  // ── COMBAT PR A (?combat=1) — the SIM control surface: attack-move / focus-fire / disengage ────
+  // The verbs live in src/sim/combatControl (pure, fog-gated, wrapped commands); this scene layer only
+  // resolves clicks, injects the world ctx, and SPEAKS every denial (PT2 rule: no silent refusals).
+
+  /** The world context the sim verbs need: the nav grid + THE fog predicate — the same isRevealed
+   * closure the opPreview selectors get (resolveOpPreview), so there is no parallel visibility rule. */
+  private combatCtx(): CombatCtx {
+    return {
+      grid: this.navGrid,
+      isVisible: (pos) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy)),
+    };
+  }
+
+  /** The selected commandable player-fighter ids (the same crew the #17 verbs act on). */
+  private combatOrderIds(): string[] {
+    return this.selectedCombatViews().map((v) => v.unit.id);
+  }
+
+  /** Speak + mark a sim-verb result on the status line (denials included — never silent). Returns
+   * the issued ids. Denial text is the pure combatDenialText mapping; NO-X-RAY holds because the sim
+   * already collapsed fogged-target and no-target into one denial value. */
+  private reportCombatOrder(res: CombatOrderResult, okText: (n: number) => string): string[] {
+    if (res.issued.length === 0) {
+      this.setStatus(res.denial ? combatDenialText(res.denial) : okText(0));
+      return [];
+    }
+    // a sim combat order supersedes any #17 render-side stance on the same units (single driver rule)
+    for (const id of res.issued) this.unitOrders.delete(id);
+    this.setStatus(okText(res.issued.length));
+    return res.issued;
+  }
+
+  /** [A]+click under ?combat=1 — the SIM attack-move: advance to the tile, engaging hostiles ON SIGHT
+   * (acquisition is fog-gated in the sim; a hidden rival never diverts the advance). */
+  private commandCombatAttackMove(p: Phaser.Input.Pointer): void {
+    const target = screenToTile(p.worldX, p.worldY);
+    const res = orderAttackMove(this.state, this.combatOrderIds(), target, this.combatCtx());
+    const issued = this.reportCombatOrder(res, (n) => `ATTACK-MOVE — ${n} advancing, engaging on sight`);
+    this.drawTargetMarker(target, issued.length > 0);
+    if (issued.length > 0) this.signalBeat('attack');
+  }
+
+  /** Right-click a VISIBLE rival fighter under ?combat=1 — FOCUS-FIRE: the whole selected crew
+   * converges on the mark via the existing attack verb and keeps converging while it lives and stays
+   * seen (fog demotes the order to the last-seen tile — see combatControl). */
+  private commandFocusFire(targetId: string): void {
+    const res = orderFocusFire(this.state, this.combatOrderIds(), targetId, this.combatCtx());
+    const issued = this.reportCombatOrder(res, (n) => `FOCUS — ${n > 1 ? `${n} thugs` : 'your man'} converging on the mark`);
+    if (issued.length === 0) return;
+    this.signalBeat('attack');
+    const target = this.state.units.find((u) => u.id === targetId);
+    const shooter = this.state.units.find((u) => u.id === issued[0]);
+    if (!target || !shooter) return;
+    // Reuse THE feedback gate for the target-anchored intent flash (the order only issues on a
+    // visible target, but the gate is the law — no parallel visibility check, and off-screen marks
+    // don't flash either).
+    const to = unitScreenPos(target);
+    const revealed = this.debugRevealAll || isRevealed(this.fog, Math.round(target.pos.gx), Math.round(target.pos.gy));
+    if (shouldEmitFeedback(revealed, this.onScreen(to.x, to.y))) {
+      const from = unitScreenPos(shooter);
+      this.flashAttackIntent(from.x, from.y, to.x, to.y);
+    }
+  }
+
+  /** [W] under ?combat=1 — DISENGAGE: break off and path away from every VISIBLE threat near each
+   * selected fighter (hidden hostiles never steer the retreat — no fog probe). Flag off ⇒ [W] stays
+   * the dead key it is on the base build. */
+  private commandDisengage(): void {
+    if (!this.combatEnabled) return;
+    const ids = this.combatOrderIds();
+    if (ids.length === 0) { this.setStatus('select crew first, then [W] to disengage'); return; }
+    const res = orderDisengage(this.state, ids, this.combatCtx());
+    this.reportCombatOrder(res, (n) => `DISENGAGE — ${n} breaking off`);
   }
 
   // ── COMBAT CONTROL VERBS (input-only: STOP / HOLD / ATTACK-MOVE) ───────────────────────────────
@@ -2843,6 +2956,7 @@ export class IsoScene extends Phaser.Scene {
     const sel = this.selectedCombatViews();
     if (sel.length === 0) { this.setStatus('select crew first, then [S] to stop'); return; }
     for (const v of sel) { stopUnit(v.unit); this.unitOrders.delete(v.unit.id); } // clear orders → NORMAL, held tile
+    clearCombatOrders(this.state, sel.map((v) => v.unit.id)); // ?combat=1 sim orders too (no-op when absent)
     this.attackMovePending = false;
     this.setStatus(`STOP — ${sel.length} holding position`);
   }
@@ -2852,6 +2966,7 @@ export class IsoScene extends Phaser.Scene {
     const sel = this.selectedCombatViews();
     if (sel.length === 0) { this.setStatus('select crew first, then [I] to hold'); return; }
     for (const v of sel) { stopUnit(v.unit); this.unitOrders.set(v.unit.id, holdOrder()); } // stand; 35a fights what's in range
+    clearCombatOrders(this.state, sel.map((v) => v.unit.id)); // HOLD supersedes any ?combat=1 sim order
     this.attackMovePending = false;
     this.setStatus(`HOLD — ${sel.length} stand & fight, no chase`);
   }
@@ -3781,7 +3896,12 @@ export class IsoScene extends Phaser.Scene {
     // a HUD region owns this pixel (the tooltip explains it) — don't also pop a world preview over it.
     if (this.hudRegionExplain(p.x, p.y) !== null) { this.opPreview = undefined; return; }
     const isVis = (pos: { gx: number; gy: number }) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
-    const hitUnit = pickUnit(this.units.map((v) => v.unit), screenToGrid(p.worldX, p.worldY));
+    // ?combat=1 — the hover card itself must not be a fog probe: a card appearing iff a hidden
+    // fighter sits under the cursor (VISIBLE_ONLY attack card, or the federal card naming its
+    // family) is a presence X-ray. Filter the pick to visible units so fogged rivals preview like
+    // empty ground. Flag off ⇒ the pre-existing pick, untouched.
+    const hoverable = this.units.map((v) => v.unit);
+    const hitUnit = pickUnit(this.combatEnabled ? hoverable.filter((u) => isVis(u.pos)) : hoverable, screenToGrid(p.worldX, p.worldY));
     const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
     const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
     const thug = this.selectedPlayerThug();
@@ -3833,7 +3953,11 @@ export class IsoScene extends Phaser.Scene {
 
   private hoverText(p: Phaser.Input.Pointer): string | null {
     const gpoint = screenToGrid(p.worldX, p.worldY);
-    const hit = pickUnit(this.units.map((v) => v.unit), gpoint);
+    // ?combat=1 — the tooltip must not identify a FOGGED unit (kind + family + attack hint = a full
+    // identity X-ray by mouse sweep). Filter the pick with THE fog predicate; a hidden rival then
+    // reads as the district tooltip, same as empty fog. Flag off ⇒ the pre-existing pick, untouched.
+    const hoverUnits = this.units.map((v) => v.unit);
+    const hit = pickUnit(this.combatEnabled ? hoverUnits.filter((u) => this.combatCtx().isVisible(u.pos)) : hoverUnits, gpoint);
     if (hit) {
       const view = this.units.find((v) => v.unit.id === hit.id);
       const i = inspectUnit(this.state, hit.id);
@@ -4132,6 +4256,9 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-S', () => this.commandStop());        // [S] STOP — cancel orders, hold tile
     this.input.keyboard?.on('keydown-I', () => this.commandHold());        // [I] HOLD — stand & fight, no chase ([H] = help)
     this.input.keyboard?.on('keydown-A', () => this.beginAttackMove());    // [A] then left-click — ATTACK-MOVE
+    // COMBAT PR A — [W] DISENGAGE (already in RESERVED_KEYS, unbound on the base build; the handler
+    // no-ops without ?combat=1, so flag-off [W] stays exactly the dead key it is today).
+    this.input.keyboard?.on('keydown-W', () => this.commandDisengage());
     // Lane G — [D] center-on-selection and [Z] frame-city are REMAPPABLE: they're dispatched from the
     // central keybind map (see the generic dispatcher below), not bound to a fixed literal here.
     // RTS-30a: snap through the 3 zoom stops with the +/- keys (and the on-screen buttons).

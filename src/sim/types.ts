@@ -9,6 +9,7 @@ import type { DownedBody } from './downedBodies';
 import type { CrewTie } from './crew';
 import type { RunStats } from './runStats';
 import type { BeatCop } from './beatCops';
+import type { CombatOrders } from './combatControl';
 
 export type GameStatus = 'playing' | 'won' | 'lost';
 export type LossReason = 'bankrupt' | 'dead' | 'busted';
@@ -285,6 +286,10 @@ export interface GameState {
   /** BEAT-COP P0 — the SEPARATE law-layer PRNG cursor. Cop draws never touch the shared rngState
    * (existing outcome order stays bit-identical). Absent ⇒ derived lazily from seed on first draw. */
   lawRngState?: number;
+  /** COMBAT PR A — standing combat orders (attack-move / focus-fire / disengage), unit id → order.
+   * Additive; absent ⇒ no control surface, so prior states/saves/tests are byte-identical. Driven by
+   * the real-time wrapper (advanceCombatOrders), NOT the tick; the verbs draw NO RNG (no cursor). */
+  combatOrders?: CombatOrders;
   log: GameEvent[];
 }
 

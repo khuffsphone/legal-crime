@@ -179,6 +179,13 @@ export {
   previewAttackRival, previewExtortFront, previewRetakeFront, previewFederalAction, type IsVisible,
 } from './opPreview';
 export {
+  orderAttackMove, orderFocusFire, orderDisengage, clearCombatOrders, advanceCombatOrders,
+  combatRequested, nearestVisibleHostile, visibleThreats, pickVisibleHostile,
+  COMBAT_ACQUIRE_RADIUS, COMBAT_ARRIVE_EPS, DISENGAGE_STEP_TILES,
+  type CombatStance, type CombatOrder, type CombatOrders, type CombatCtx,
+  type CombatDenial, type CombatOrderResult,
+} from './combatControl';
+export {
   UNKNOWN, VISIBLE_ONLY, MAX_GLANCE_ROWS,
   type OpVerb, type OpPreview, type PreviewRow, type PreviewTone,
 } from './opPreviewTypes';

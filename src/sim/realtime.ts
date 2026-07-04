@@ -13,6 +13,7 @@ import { resolveProximityCombat, type CombatEvent } from './combat';
 import { advanceDownedBodies, recordDownedBody } from './downedBodies';
 import { advanceEmbodiedExtortion, type EmbodiedExtortionEvent } from './extortionEmbodied';
 import { advanceBeatCops } from './beatCops';
+import { advanceCombatOrders, type CombatCtx } from './combatControl';
 import { advanceStrategy, type StrategicEvent } from './strategy';
 import { evaluateEndgame, type EndgameResult } from './endgame';
 import { harvestIncidents, recordIncident } from './ledger';
@@ -45,6 +46,7 @@ export function update(
   state: GameState,
   dt: number,
   weekDuration: number = WEEK_DURATION_SECONDS,
+  combatCtx?: CombatCtx,
 ): UpdateResult {
   // RTS-19: bleed the player's offensive cooldown so the crew regroups in real time.
   if ((state.offenseCooldown ?? 0) > 0) {
@@ -68,6 +70,11 @@ export function update(
   // after the embodied systems, before settlement. Draws only from the separate lawRngState cursor,
   // and no-ops when state.beatCops is absent — cop-less games stay byte-identical.
   advanceBeatCops(state, dt);
+  // COMBAT PR A — drive the standing combat orders (attack-move / focus-fire / disengage). Purely
+  // additive: no-ops unless BOTH state.combatOrders exists (?combat=1 issued something) AND the
+  // caller supplied the world ctx (grid + fog predicate) — headless/legacy callers pass nothing and
+  // stay byte-identical. Draws no RNG; only ordered units' paths + the slice are ever written.
+  advanceCombatOrders(state, dt, combatCtx);
   const weeksFired = advanceClock(state, dt, weekDuration);
   return { weeksFired, arrivedUnitIds, interceptions, combat, extortion };
 }
@@ -117,9 +124,10 @@ export function updateAndObserve(
   dt: number,
   weekDuration: number = WEEK_DURATION_SECONDS,
   pulseSeconds?: number,
+  combatCtx?: CombatCtx,
 ): ObserveResult {
   const before = snapshotPlayer(state);
-  const result = update(state, dt, weekDuration); // mutates state in place (logs included)
+  const result = update(state, dt, weekDuration, combatCtx); // mutates state in place (logs included)
   // RTS-16: advance the turf war (rival territorial moves). A no-op on the legacy map (no
   // adjacency), so existing 5-district tests are unaffected.
   const strategy = advanceStrategy(state, dt, pulseSeconds).events;
