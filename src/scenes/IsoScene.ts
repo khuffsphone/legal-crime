@@ -2472,6 +2472,23 @@ export class IsoScene extends Phaser.Scene {
     return businessAtTile(this.layout, screenToTile(worldX, worldY)) ?? undefined;
   }
 
+  /** A front id gated on its tile's visibility (NO-X-RAY): resolves to `undefined` when the front's tile
+   * is fogged, so a shrouded front reads exactly like empty ground on every cursor surface. */
+  private visibleFrontId(bizId: string | undefined): string | undefined {
+    if (!bizId) return undefined;
+    const tile = businessTileOf(this.layout, bizId);
+    return tile && this.isVisibleTile(tile) ? bizId : undefined;
+  }
+
+  /** The FOG-SAFE building pick — businessAtScreen restricted to a front the player can SEE. A fogged
+   * front (its tile shrouded) resolves to undefined, exactly like empty ground, so no cursor surface
+   * (hover tooltip, context card, left-click selection, right-click EXTORT menu) can name its rival
+   * earner or read the fogged economics the opPreview selectors already hide. The businessAtScreen twin
+   * of pickVisibleUnit; mirrors the resolveOpPreview fog guard so there is one visibility rule. */
+  private visibleBusinessAt(worldX: number, worldY: number): string | undefined {
+    return this.visibleFrontId(this.businessAtScreen(worldX, worldY));
+  }
+
   private closeBizMenu(): void { this.ctxMenu?.destroy(); this.ctxMenu = undefined; this.ctxRect = undefined; this.ctxRows = []; }
 
   /** The action for the menu row under screen (sx, sy), or null if the click missed the rows. */
@@ -2771,7 +2788,10 @@ export class IsoScene extends Phaser.Scene {
     }
     // RTS-28: no unit under the cursor → try a BUILDING (height-aware hit-test). A click selects the
     // building under the cursor (its card sticks in the context panel; [E]/[U] target it).
-    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    // NO-X-RAY — a FOGGED front must not be selectable: its name would surface in the status line and its
+    // sticky card would name the rival earner + fogged economics. Fog-safe pick → a shrouded front clicks
+    // like empty ground (same guard the opPreview cursor card uses).
+    const bizId = this.visibleBusinessAt(p.worldX, p.worldY);
     if (bizId) {
       this.focusBizId = bizId;
       if (!shift) this.selection = clearSelection();
@@ -2802,7 +2822,9 @@ export class IsoScene extends Phaser.Scene {
     // a RIVAL COMBATANT (non-collector) is the attack target; collectors stay autonomous (robbed via
     // interception, never a unit-attack target).
     const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
-    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    // NO-X-RAY — the front pick is fog-safe too: a fogged rival-held front must not route to EXTORT (the
+    // openBizMenu header would name the rival earner). A shrouded front routes as plain ground → MOVE.
+    const bizId = this.visibleBusinessAt(p.worldX, p.worldY);
     const target: OrderTarget = rival
       ? { kind: 'rival', unitId: rival.id }
       : bizId
@@ -3985,7 +4007,9 @@ export class IsoScene extends Phaser.Scene {
       }
     }
     const tile = screenToTile(p.worldX, p.worldY);
-    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    // NO-X-RAY — a FOGGED front must not tooltip its earner + income/uncollected (the exact economics the
+    // opPreview card hides). Fog-safe pick → a shrouded front reads as the public district tooltip beneath.
+    const bizId = this.visibleBusinessAt(p.worldX, p.worldY);
     if (bizId) {
       const b = inspectBusiness(this.state, bizId);
       if (b) {
@@ -5473,8 +5497,12 @@ export class IsoScene extends Phaser.Scene {
     const ptr = this.input.activePointer;
     const overWorld = this.hudY(ptr.y) > 60 && this.hudX(ptr.x) < this.hudW() - 320 && this.hudY(ptr.y) < this.hudH() - 96;
     // RTS-28: hovered building takes priority; otherwise the STICKY left-clicked building (focusBizId).
-    const hovered = overWorld ? this.businessAtScreen(ptr.worldX, ptr.worldY) : undefined;
-    const bizId = hovered ?? (this.focusBizId && allBusinesses(this.state).some((bb) => bb.id === this.focusBizId) ? this.focusBizId : undefined);
+    // NO-X-RAY — BOTH the hovered pick and the sticky focus are fog-gated: this persistent card names the
+    // earner + income/heat/uncollected of the front it shows, so a fogged rival-held front must resolve to
+    // nothing. The sticky id is re-checked every frame because fog can re-shroud a front clicked while lit.
+    const hovered = overWorld ? this.visibleBusinessAt(ptr.worldX, ptr.worldY) : undefined;
+    const sticky = this.focusBizId && allBusinesses(this.state).some((bb) => bb.id === this.focusBizId) ? this.focusBizId : undefined;
+    const bizId = hovered ?? this.visibleFrontId(sticky);
     if (bizId) {
       const b = inspectBusiness(this.state, bizId);
       const raw = allBusinesses(this.state).find((x2) => x2.id === bizId);

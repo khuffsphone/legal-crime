@@ -131,3 +131,48 @@ describe('fog-leak fix — SCENE WIRING (source-scan): every cursor channel funn
     expect(sceneSrc).not.toMatch(/this\.combatEnabled \? \w+\.filter\(\(u\) => (this\.combatCtx\(\)\.isVisible|isVis)\(u\.pos\)\)/);
   });
 });
+
+describe('fog-leak fix — FRONT-INFO surfaces: a fogged front names no rival earner or economics', () => {
+  // The sibling of the unit leak: businessAtScreen hit-tests ALL fronts regardless of fog, and the
+  // hover tooltip / persistent context card / left-click selection / right-click EXTORT menu each read a
+  // fogged front's earner + income/uncollected — the exact economics resolveOpPreview already suppresses.
+  // The fog-aware visibleBusinessAt (the businessAtScreen twin of pickVisibleUnit) closes all four.
+  const sceneSrc = readFileSync(join(__dirname, '../src/scenes/IsoScene.ts'), 'utf8');
+  const from = (marker: string, len: number) => {
+    const i = sceneSrc.indexOf(marker);
+    expect(i, `marker not found: ${marker}`).toBeGreaterThanOrEqual(0);
+    return sceneSrc.slice(i, i + len);
+  };
+
+  it('visibleFrontId gates a front id on its tile visibility (isVisibleTile)', () => {
+    expect(from('private visibleFrontId(', 320)).toMatch(
+      /const tile = businessTileOf\(this\.layout, bizId\);\s*\n\s*return tile && this\.isVisibleTile\(tile\) \? bizId : undefined;/,
+    );
+  });
+
+  it('visibleBusinessAt is the fog-safe businessAtScreen (delegates through visibleFrontId)', () => {
+    expect(from('private visibleBusinessAt(', 260)).toContain('this.visibleFrontId(this.businessAtScreen(worldX, worldY))');
+  });
+
+  it('hover tooltip resolves the front through the fog-safe pick', () => {
+    expect(from('private hoverText(', 2900)).toContain('this.visibleBusinessAt(p.worldX, p.worldY)');
+  });
+
+  it('left-click building selection resolves the front through the fog-safe pick', () => {
+    expect(from('private commandSelect(', 2900)).toContain('this.visibleBusinessAt(p.worldX, p.worldY)');
+  });
+
+  it('right-click verb routing resolves the front through the fog-safe pick', () => {
+    expect(from('private commandContextual(', 1400)).toContain('this.visibleBusinessAt(p.worldX, p.worldY)');
+  });
+
+  it('the persistent context card fog-gates BOTH the hovered pick and the sticky focusBizId', () => {
+    const card = from('private drawContextCard(', 1400);
+    expect(card).toContain('this.visibleBusinessAt(ptr.worldX, ptr.worldY)');
+    expect(card).toContain('this.visibleFrontId(sticky)'); // a re-shrouded sticky front drops
+  });
+
+  it('resolveOpPreview keeps its own fogged-front guard (the canonical precedent this mirrors)', () => {
+    expect(from('private resolveOpPreview(', 2200)).toContain('if (!tile || !isVis(tile))');
+  });
+});
