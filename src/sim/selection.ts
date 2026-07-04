@@ -97,6 +97,23 @@ export function pickUnit(
   return best;
 }
 
+/**
+ * The FOG-SAFE pick: the unit under `point` the player can actually SEE — pickUnit restricted to the
+ * fog-visible units. This is the NO-X-RAY primitive for every cursor read (hover tooltip, left-click
+ * hint, op-preview projection, right-click verb routing): a fogged unit is invisible to the pick, so
+ * it resolves EXACTLY like empty ground — no identity, no per-unit hint, no marker. `isVisible` is THE
+ * scene fog predicate (revealed ∨ the dev reveal-all flag), the SAME one the combat surface and the
+ * opPreview selectors take, so there is one visibility rule, not a parallel one. Pure & deterministic.
+ */
+export function pickVisibleUnit(
+  units: readonly MovableUnit[],
+  point: GridPos,
+  isVisible: (pos: GridPos) => boolean,
+  radius: number = PICK_RADIUS,
+): MovableUnit | null {
+  return pickUnit(units.filter((u) => isVisible(u.pos)), point, radius);
+}
+
 /** Ids of every unit whose position falls inside the axis-aligned grid rectangle [a, b]
  * (inclusive). Corners may be given in any order — this is the drag-box multi-select. */
 export function unitsInBox(units: readonly MovableUnit[], a: GridPos, b: GridPos): string[] {

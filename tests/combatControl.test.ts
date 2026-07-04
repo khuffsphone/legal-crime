@@ -476,15 +476,12 @@ describe('wiring exists (mutation-verified at the source): realtime hook + IsoSc
     expect(count).toBeGreaterThanOrEqual(6);
   });
 
-  it('the three legacy cursor channels are fog-gated under ?combat=1 (no hover/click presence probes)', () => {
-    // hoverText: a fogged unit must not tooltip its identity
-    const hover = sceneSrc.slice(sceneSrc.indexOf('private hoverText('));
-    expect(hover.slice(0, 700)).toMatch(/this\.combatEnabled \? hoverUnits\.filter\(\(u\) => this\.combatCtx\(\)\.isVisible\(u\.pos\)\)/);
-    // commandSelect: the "that's a rival" hint must not fire on a fogged rival
-    const select = sceneSrc.slice(sceneSrc.indexOf('private commandSelect('));
-    expect(select.slice(0, 2600)).toMatch(/this\.combatEnabled \? foeCandidates\.filter\(\(u\) => this\.combatCtx\(\)\.isVisible\(u\.pos\)\)/);
-    // resolveOpPreview: a fogged rival must preview like empty ground (no presence/faction card)
-    const preview = sceneSrc.slice(sceneSrc.indexOf('private resolveOpPreview('));
-    expect(preview.slice(0, 1600)).toMatch(/this\.combatEnabled \? hoverable\.filter\(\(u\) => isVis\(u\.pos\)\)/);
+  it('the combat surface introduces NO cursor leak — the legacy channels stay fog-safe with the flag OFF', () => {
+    // fog-leak-fix superseded #67's combat-ONLY cursor gating (`this.combatEnabled ? …filter(isVisible)`),
+    // which leaked a fogged rival's identity on hover/left-click/preview whenever ?combat=1 was off. The
+    // flagged verb routing still uses the fog-safe hostile pick; the exhaustive per-channel wiring proof
+    // lives in tests/fogLeak.test.ts. Here we only guard that the combat lane never re-adds the conditional.
+    expect(sceneSrc).toContain('? pickVisibleHostile('); // flagged right-click stays fog-safe
+    expect(sceneSrc).not.toMatch(/this\.combatEnabled \? \w+\.filter\(\(u\) => (this\.combatCtx\(\)\.isVisible|isVis)\(u\.pos\)\)/);
   });
 });

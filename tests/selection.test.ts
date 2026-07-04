@@ -9,6 +9,7 @@ import {
   isSelected,
   selectedUnits,
   pickUnit,
+  pickVisibleUnit,
   unitsInBox,
   resolveMoveCommand,
   isCommandableTile,
@@ -79,6 +80,51 @@ describe('pickUnit — hit-testing', () => {
     const us = [spawnUnit('a', 0, 0)];
     expect(pickUnit(us, { gx: PICK_RADIUS - 0.01, gy: 0 })?.id).toBe('a');
     expect(pickUnit(us, { gx: PICK_RADIUS + 0.01, gy: 0 })).toBeNull();
+  });
+});
+
+describe('pickVisibleUnit — the fog-safe pick (NO-X-RAY primitive)', () => {
+  // every scene cursor read (hover tooltip, left-click hint, op-preview, right-click routing) resolves
+  // its unit through this, so a fogged unit is invisible to the pick and collapses to empty ground.
+  const ALL = () => true;
+  const NONE = () => false;
+
+  it('matches pickUnit exactly when every tile is visible', () => {
+    expect(pickVisibleUnit(units(), { gx: 2, gy: 2 }, ALL)?.id).toBe('a');
+    expect(pickVisibleUnit(units(), { gx: 5, gy: 5 }, ALL)?.id).toBe('b');
+    expect(pickVisibleUnit(units(), { gx: 9, gy: 9 }, ALL)).toBeNull();
+  });
+
+  it('a FOGGED unit is unpickable — its tile deep-equals empty ground', () => {
+    // twin worlds: a rival sits AT the probe tile in one, nothing in the other. With the tile fogged
+    // the pick is null in BOTH — byte-identical, so hover/hint/preview cannot tell them apart.
+    const foggedRivalWorld = [spawnUnit('r1', 6, 6)];
+    const emptyGroundWorld: ReturnType<typeof spawnUnit>[] = [];
+    const probe = { gx: 6, gy: 6 };
+    expect(pickVisibleUnit(foggedRivalWorld, probe, NONE)).toBeNull();
+    expect(pickVisibleUnit(emptyGroundWorld, probe, NONE)).toBeNull();
+    expect(pickVisibleUnit(foggedRivalWorld, probe, NONE))
+      .toEqual(pickVisibleUnit(emptyGroundWorld, probe, NONE)); // deep-equal (both null)
+  });
+
+  it('MUTATION WITNESS — the fog filter is load-bearing (delete it and the fogged rival leaks)', () => {
+    // pickVisibleUnit == pickUnit with the fog filter removed. The ungated pickUnit DOES surface the
+    // fogged rival (this is the leak the fix closes); the gated pick does NOT. If pickVisibleUnit ever
+    // stopped filtering, these two would agree and this assertion would fail.
+    const foggedRival = [spawnUnit('r1', 6, 6)];
+    const probe = { gx: 6, gy: 6 };
+    expect(pickUnit(foggedRival, probe)?.id).toBe('r1');   // ungated (the leak) — picks it
+    expect(pickVisibleUnit(foggedRival, probe, NONE)).toBeNull(); // gated — does not
+  });
+
+  it('gates per-tile — a click nearest a FOGGED unit falls through to the visible one, never the hidden one', () => {
+    // 'a' at (2,2) visible, 'c' at (2,3) fogged. A click at (2, 2.6) is NEAREST 'c' (0.4) with 'a' also
+    // in the 0.7 pick radius (0.6). Ungated it would pick the hidden 'c'; the fog gate removes 'c' so
+    // the pick falls through to the visible 'a' — the hidden unit never surfaces.
+    const onlyRowTwoVisible = (pos: { gy: number }) => pos.gy < 3;
+    expect(pickUnit(units(), { gx: 2, gy: 2.6 })?.id).toBe('c');                              // ungated → the hidden one
+    expect(pickVisibleUnit(units(), { gx: 2, gy: 2.6 }, onlyRowTwoVisible)?.id).toBe('a');    // gated → the visible one
+    expect(pickVisibleUnit(units(), { gx: 2, gy: 2 }, onlyRowTwoVisible)?.id).toBe('a');
   });
 });
 
