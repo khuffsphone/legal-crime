@@ -21,6 +21,10 @@ import { registerSynthSfx } from './audioSynth';
 // cache under the same key, so there is no WAV to 404 or fail to decode (procedural SFX, Lane I).
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; synth?: boolean; }
 
+/** AUDIO E-H (F2) — the shape a feature lane hands to the PUBLIC registration seam. Deliberately the
+ * file-backed subset of ClipDef (no `synth` — synth registration stays audioSynth's own boot path). */
+export interface RegisteredClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
+
 // The catalogued library (from the Drive ASSET_MANIFEST). Files present in the current drop load and
 // sound now; the rest (grease cues, door/typewriter, wire rings, stings, VO) are wired with their
 // expected filenames and activate the moment they're dropped into public/audio/.
@@ -136,6 +140,33 @@ export class AudioManager {
   static preload(scene: Phaser.Scene): void {
     // synth clips carry no file — they're generated at boot (ready()), so they're never queued on the loader.
     registerAudioPreload(scene.load, LIBRARY.filter((d) => !d.synth));
+  }
+
+  /** AUDIO E-H (F2) — the PUBLIC clip-registration seam. Feature lanes register their catalogs through
+   * here (BEFORE the scene's preload, so the files queue); they never reach into the private LIBRARY /
+   * DEFS. An already-registered key is SKIPPED, never overridden — a lane cannot re-voice a shipped clip
+   * (e.g. the federal_notice/watch/raid parity entries). play()'s unknown-key no-op is unchanged for
+   * anything left unregistered. Returns what was added vs skipped so the caller can assert parity. */
+  static register(defs: readonly RegisteredClipDef[]): { added: string[]; skipped: string[] } {
+    const added: string[] = [];
+    const skipped: string[] = [];
+    for (const d of defs) {
+      if (DEFS.has(d.key)) { skipped.push(d.key); continue; }
+      const def: ClipDef = { key: d.key, file: d.file, bus: d.bus };
+      if (d.loop !== undefined) def.loop = d.loop;
+      if (d.vol !== undefined) def.vol = d.vol;
+      if (d.urgent !== undefined) def.urgent = d.urgent;
+      LIBRARY.push(def);
+      DEFS.set(def.key, def);
+      added.push(def.key);
+    }
+    return { added, skipped };
+  }
+
+  /** F2 test/diagnostic seam: is a key in the registration catalog (registered or shipped)? Distinct
+   * from has(), which additionally requires the ASSET to have loaded. */
+  static isRegistered(key: string): boolean {
+    return DEFS.has(key);
   }
 
   constructor(scene: Phaser.Scene) {
