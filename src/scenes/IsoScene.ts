@@ -2550,6 +2550,7 @@ export class IsoScene extends Phaser.Scene {
     // accrues the shakedown only once he is AT the door (the positional gate).
     const interaction = frontInteractionPoint(tile);
     issueMove(thug, interaction, this.navGrid);
+    clearCombatOrders(this.state, [thug.id]); // a dispatch supersedes any ?combat=1 standing order (else it re-steals the path)
     // create the act through the WRAPPER (proves applyCommand is untouched) — it pushes onto state.extortionActs.
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndShakedown', familyId: 'player', thugId: thug.id, frontId: businessId }, () => {}, interaction);
     this.focusBizId = businessId;
@@ -2724,6 +2725,7 @@ export class IsoScene extends Phaser.Scene {
     const wasBusy = this.extortBusyThugIds().has(thug.id);
     const interaction = frontInteractionPoint(tile);
     issueMove(thug, interaction, this.navGrid);
+    clearCombatOrders(this.state, [thug.id]); // a dispatch supersedes any ?combat=1 standing order (else it re-steals the path)
     // create the embodied act through the WRAPPER (applyCommand untouched) — it shuts the racket down on resolve.
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndSabotage', familyId: 'player', thugId: thug.id, businessId }, () => {}, interaction);
     this.focusBizId = businessId;
@@ -2755,7 +2757,11 @@ export class IsoScene extends Phaser.Scene {
     // ⭐ DISCOVERABILITY: a LEFT-click on a RIVAL fighter (not selectable — it's the enemy) tells the player
     // the ATTACK gesture instead of silently deselecting, and KEEPS the crew selected so they can right-click
     // it straight away. (The player report was "the attack function doesn't work / is locked" — make it obvious.)
-    const foe = pickUnit(this.units.filter((v) => v.faction === 'rival' && v.unit.role !== 'collector').map((v) => v.unit), point);
+    // ?combat=1 — the hint must not fire on a FOGGED rival (a left-click fog probe: hint + kept
+    // selection vs clear both = two observables). Filter the pick with THE fog predicate; a hidden
+    // rival then clicks exactly like empty ground. Flag off ⇒ the pre-existing pick, untouched.
+    const foeCandidates = this.units.filter((v) => v.faction === 'rival' && v.unit.role !== 'collector').map((v) => v.unit);
+    const foe = pickUnit(this.combatEnabled ? foeCandidates.filter((u) => this.combatCtx().isVisible(u.pos)) : foeCandidates, point);
     if (foe) {
       this.setStatus(this.selection.ids.length > 0
         ? "that's a rival — RIGHT-CLICK it to send your crew in (they trade blows on contact)"
@@ -3890,7 +3896,12 @@ export class IsoScene extends Phaser.Scene {
     // a HUD region owns this pixel (the tooltip explains it) — don't also pop a world preview over it.
     if (this.hudRegionExplain(p.x, p.y) !== null) { this.opPreview = undefined; return; }
     const isVis = (pos: { gx: number; gy: number }) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
-    const hitUnit = pickUnit(this.units.map((v) => v.unit), screenToGrid(p.worldX, p.worldY));
+    // ?combat=1 — the hover card itself must not be a fog probe: a card appearing iff a hidden
+    // fighter sits under the cursor (VISIBLE_ONLY attack card, or the federal card naming its
+    // family) is a presence X-ray. Filter the pick to visible units so fogged rivals preview like
+    // empty ground. Flag off ⇒ the pre-existing pick, untouched.
+    const hoverable = this.units.map((v) => v.unit);
+    const hitUnit = pickUnit(this.combatEnabled ? hoverable.filter((u) => isVis(u.pos)) : hoverable, screenToGrid(p.worldX, p.worldY));
     const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
     const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
     const thug = this.selectedPlayerThug();
@@ -3942,7 +3953,11 @@ export class IsoScene extends Phaser.Scene {
 
   private hoverText(p: Phaser.Input.Pointer): string | null {
     const gpoint = screenToGrid(p.worldX, p.worldY);
-    const hit = pickUnit(this.units.map((v) => v.unit), gpoint);
+    // ?combat=1 — the tooltip must not identify a FOGGED unit (kind + family + attack hint = a full
+    // identity X-ray by mouse sweep). Filter the pick with THE fog predicate; a hidden rival then
+    // reads as the district tooltip, same as empty fog. Flag off ⇒ the pre-existing pick, untouched.
+    const hoverUnits = this.units.map((v) => v.unit);
+    const hit = pickUnit(this.combatEnabled ? hoverUnits.filter((u) => this.combatCtx().isVisible(u.pos)) : hoverUnits, gpoint);
     if (hit) {
       const view = this.units.find((v) => v.unit.id === hit.id);
       const i = inspectUnit(this.state, hit.id);

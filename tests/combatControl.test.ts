@@ -129,6 +129,19 @@ describe('attack-move acquisition (through realtime.update — the wrapper hook 
     expect(a.rngState).toBe(b.rngState);                // and no draw anywhere
   });
 
+  it('an attack-move onto the unit\'s OWN tile clears instead of freezing it (mid-step fractional pos)', () => {
+    // Review finding: at pos (3.45,7.45) the fractional offset to tile (3,7) is ~0.636 > eps 0.6,
+    // and issueMove-to-own-tile trims to an EMPTY path — without the standing-on-dest arrival rule
+    // the order was immortal and the unit frozen.
+    const p1 = fighter('p1', 'player', 3, 7);
+    p1.pos = { gx: 3.45, gy: 7.45 }; // mid-diagonal fractional position (rounds to (3,7))
+    const s = withUnits(p1);
+    const res = orderAttackMove(s, ['p1'], { gx: 3, gy: 7 }, ctx());
+    expect(res.issued).toEqual(['p1']);
+    update(s, 0.05, 1e9, ctx());
+    expect(s.combatOrders?.p1).toBeUndefined(); // standing on the dest tile IS arrival — order spent
+  });
+
   it('resumes the advance when the foe drops, then clears itself on arrival', () => {
     const p1 = fighter('p1', 'player', 2, 2);
     const r1 = fighter('r1', 'rival-a', 4, 3);
@@ -203,14 +216,35 @@ describe('orderFocusFire — designation + NO-X-RAY denial collapse', () => {
     expect(pathEnd(p1)).toEqual({ gx: 10, gy: 8 }); // …and NOTHING tracks it (course pinned to last-seen)
   });
 
-  it('clears itself when the mark leaves play', () => {
+  it('demotes to the last-seen tile when the mark leaves play (never a bare delete)', () => {
     const p1 = fighter('p1', 'player', 2, 2);
     const r1 = fighter('r1', 'rival-a', 8, 8);
     const s = withUnits(p1, r1);
     orderFocusFire(s, ['p1'], 'r1', ctx());
     s.units = s.units.filter((u) => u.id !== 'r1'); // downed → removed
     update(s, 0.05, 1e9, ctx());
-    expect(s.combatOrders?.p1).toBeUndefined();
+    // the crew walks to where the mark last stood; the attack-move then clears on arrival
+    expect(s.combatOrders?.p1).toEqual({ stance: 'ATTACK_MOVE', dest: { gx: 8, gy: 8 } });
+  });
+
+  it('NO-X-RAY: a mark that DIES unseen in the fog plays out exactly like one still alive in it', () => {
+    // Review finding: gone-vs-fogged must be ONE branch — if "gone" deleted where "fogged" demotes,
+    // watching whether your man keeps walking would reveal whether the hidden mark died.
+    const hidden = (pos: GridPos): boolean => !(Math.round(pos.gx) >= 8); // gx≥8 is fog
+    const mk = (): GameState => withUnits(fighter('p1', 'player', 2, 2), fighter('r1', 'rival-a', 7, 8));
+    const died = mk();
+    const lives = mk();
+    orderFocusFire(died, ['p1'], 'r1', ctx(hidden));
+    orderFocusFire(lives, ['p1'], 'r1', ctx(hidden));
+    // the mark steps into the fog in both worlds…
+    for (const s of [died, lives]) s.units.find((u) => u.id === 'r1')!.pos = { gx: 9, gy: 8 };
+    died.units = died.units.filter((u) => u.id !== 'r1'); // …and dies there in ONE of them
+    for (let i = 0; i < 8; i++) {
+      update(died, 0.3, 1e9, ctx(hidden));
+      update(lives, 0.3, 1e9, ctx(hidden));
+    }
+    expect(json(died.combatOrders)).toBe(json(lives.combatOrders));
+    expect(json(died.units.find((u) => u.id === 'p1'))).toBe(json(lives.units.find((u) => u.id === 'p1')));
   });
 });
 
@@ -250,6 +284,20 @@ describe('orderDisengage — break off away from VISIBLE threats only', () => {
     }
     expect(json(a.units.find((u) => u.id === 'p1'))).toBe(json(b.units.find((u) => u.id === 'p1')));
     expect(json(a.combatOrders)).toBe(json(b.combatOrders));
+  });
+
+  it('a cornered retreat self-clears instead of re-flooding pathfinding every tick', () => {
+    // Review finding: with every retreat rung blocked, the standing order retried 3 findPath calls
+    // per tick forever. Now a failed leg clears the order — the unit stands and 35a defends.
+    const walls: GridPos[] = [];
+    for (let gy = 0; gy < 32; gy++) walls.push({ gx: 0, gy }); // wall the western edge
+    const walled = makeGrid(32, 32, walls);
+    const p1 = fighter('p1', 'player', 1, 10);
+    const r1 = fighter('r1', 'rival-a', 3, 10); // pushes the retreat due west, into the wall
+    const s = withUnits(p1, r1);
+    s.combatOrders = { p1: { stance: 'DISENGAGE' } }; // order stood before the corner closed
+    update(s, 0.05, 1e9, { grid: walled, isVisible: ALL });
+    expect(s.combatOrders.p1).toBeUndefined(); // cornered — cleared, not spinning
   });
 
   it("denies 'not-engaged' when no VISIBLE threat is in the scan radius (hidden ≡ absent)", () => {
@@ -421,8 +469,22 @@ describe('wiring exists (mutation-verified at the source): realtime hook + IsoSc
     expect(focus.slice(0, 1600)).toContain('shouldEmitFeedback('); // THE gate — no parallel visibility check
   });
 
-  it('STOP / HOLD / fresh MOVE / direct ATTACK all clear the sim orders (single-driver hygiene)', () => {
+  it('STOP / HOLD / MOVE / ATTACK / both embodied dispatches all clear the sim orders (single-driver hygiene)', () => {
     const count = (sceneSrc.match(/clearCombatOrders\(this\.state, /g) ?? []).length;
-    expect(count).toBeGreaterThanOrEqual(4); // commandStop, commandHold, commandMove, commandAttackUnit
+    // commandStop, commandHold, commandMove, commandAttackUnit, commandExtortBusiness,
+    // commandAttackBusiness — a standing order must never steal a dispatched thug's path back.
+    expect(count).toBeGreaterThanOrEqual(6);
+  });
+
+  it('the three legacy cursor channels are fog-gated under ?combat=1 (no hover/click presence probes)', () => {
+    // hoverText: a fogged unit must not tooltip its identity
+    const hover = sceneSrc.slice(sceneSrc.indexOf('private hoverText('));
+    expect(hover.slice(0, 700)).toMatch(/this\.combatEnabled \? hoverUnits\.filter\(\(u\) => this\.combatCtx\(\)\.isVisible\(u\.pos\)\)/);
+    // commandSelect: the "that's a rival" hint must not fire on a fogged rival
+    const select = sceneSrc.slice(sceneSrc.indexOf('private commandSelect('));
+    expect(select.slice(0, 2600)).toMatch(/this\.combatEnabled \? foeCandidates\.filter\(\(u\) => this\.combatCtx\(\)\.isVisible\(u\.pos\)\)/);
+    // resolveOpPreview: a fogged rival must preview like empty ground (no presence/faction card)
+    const preview = sceneSrc.slice(sceneSrc.indexOf('private resolveOpPreview('));
+    expect(preview.slice(0, 1600)).toMatch(/this\.combatEnabled \? hoverable\.filter\(\(u\) => isVis\(u\.pos\)\)/);
   });
 });

@@ -345,9 +345,17 @@ function advanceAttackMove(
     steerToward(u, unitTile(foe), ctx.grid);
     return;
   }
-  if (order.dest && dist(u.pos, order.dest) > COMBAT_ARRIVE_EPS) {
-    steerToward(u, order.dest, ctx.grid); // resume the advance (also re-aims after a foe drops)
-    return;
+  if (order.dest) {
+    const here = unitTile(u);
+    // Arrived when within eps OR standing on the dest tile: a mid-diagonal fractional offset can
+    // reach hypot(.5,.5)≈0.707 > eps while issueMove-to-own-tile trims to an EMPTY path, so the
+    // eps test alone would freeze the unit under an immortal order (review finding).
+    const arrived = dist(u.pos, order.dest) <= COMBAT_ARRIVE_EPS ||
+      (here.gx === Math.round(order.dest.gx) && here.gy === Math.round(order.dest.gy));
+    if (!arrived) {
+      steerToward(u, order.dest, ctx.grid); // resume the advance (also re-aims after a foe drops)
+      return;
+    }
   }
   delete orders[u.id]; // arrived with nothing left to fight — the order is spent
 }
@@ -360,16 +368,18 @@ function advanceFocusFire(
   ctx: CombatCtx,
 ): void {
   const target = state.units.find((t) => t.id === order.targetId);
-  if (!target || !hostile(u, target)) { delete orders[u.id]; return; } // down/gone — spent
-  if (ctx.isVisible(target.pos)) {
+  if (target && hostile(u, target) && ctx.isVisible(target.pos)) {
     const tile = unitTile(target);
     order.lastSeen = { gx: tile.gx, gy: tile.gy };
     steerToward(u, tile, ctx.grid); // converge — re-paths only when the mark changes tile
     return;
   }
-  // The mark slipped into fog. Keep ONLY the knowledge the player really had: demote to an
-  // ATTACK-MOVE on the last SEEN tile. Nothing tracks the live target through the fog (NO-X-RAY);
-  // if it resurfaces inside the acquire radius the attack-move re-engages it like any hostile.
+  // The mark is fogged OR gone — ONE branch for both, deliberately (NO-X-RAY, review finding): a
+  // mark that died unseen in the fog must play out exactly like a mark still alive in the fog, so
+  // "gone" may not delete where "fogged" demotes. Keep ONLY the knowledge the player really had:
+  // demote to an ATTACK-MOVE on the last SEEN tile. Nothing tracks a live target through the fog;
+  // if it resurfaces inside the acquire radius the attack-move re-engages it like any hostile, and
+  // a mark that died in the open just walks the crew to where the player watched it fall.
   if (order.lastSeen) {
     orders[u.id] = { stance: 'ATTACK_MOVE', dest: { gx: order.lastSeen.gx, gy: order.lastSeen.gy } };
   } else {
@@ -380,5 +390,7 @@ function advanceFocusFire(
 function advanceDisengage(state: GameState, u: MovableUnit, orders: CombatOrders, ctx: CombatCtx): void {
   const threats = visibleThreats(u, state.units, COMBAT_ACQUIRE_RADIUS, ctx.isVisible);
   if (threats.length === 0) { delete orders[u.id]; return; } // clear of every visible threat — done
-  if (u.path.length === 0) issueRetreatLeg(u, threats, ctx.grid); // keep the breakoff going
+  if (u.path.length === 0 && !issueRetreatLeg(u, threats, ctx.grid)) {
+    delete orders[u.id]; // cornered — clear rather than re-flood A* every tick (review finding);
+  }                      // the unit stands and 35a defends; the player can re-order any time
 }
