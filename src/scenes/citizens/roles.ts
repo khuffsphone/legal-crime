@@ -190,3 +190,15 @@ export function speedForRole(role: CitizenRole, roll01: number): number {
   const t = roll01 < 0 ? 0 : roll01 > 1 ? 1 : roll01;
   return lo + (hi - lo) * t;
 }
+
+/** The smallest speed an ambient citizen actually MOVES at (tiles/s). streetVendor's band floors at 0, and a
+ * perfectly-frozen agent never reaches its target tile — so its advanceNode/pause/despawn re-roll would never
+ * fire and it would pin a pool slot until it drifts offscreen. This floor keeps every citizen creeping (a
+ * vendor at 0.05 t/s reads as near-stationary loitering), so the wander/cull loop always makes progress. */
+export const MIN_CITIZEN_MOVE_SPEED = 0.05;
+
+/** The MOVEMENT speed for a citizen: the band speed, floored so no marker is ever perfectly frozen. Pure. */
+export function movementSpeedForRole(role: CitizenRole, roll01: number): number {
+  const s = speedForRole(role, roll01);
+  return s < MIN_CITIZEN_MOVE_SPEED ? MIN_CITIZEN_MOVE_SPEED : s;
+}

@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CITIZEN_ROLES, DISTRICT_COMPOSITION, DISTRICT_DENSITY, ROLE_SPEED, ROLE_LETTER, ROLE_PRIORITY,
-  compositionSum, speedForRole, type CitizenRole,
+  compositionSum, speedForRole, movementSpeedForRole, MIN_CITIZEN_MOVE_SPEED, type CitizenRole,
 } from '../src/scenes/citizens/roles';
 
 const ART_ARCHETYPES = [
@@ -79,6 +79,20 @@ describe('T1 — role metadata is complete + sane', () => {
     const mid = speedForRole('officeClerk', 0.5);
     expect(mid).toBeGreaterThan(ROLE_SPEED.officeClerk[0]);
     expect(mid).toBeLessThan(ROLE_SPEED.officeClerk[1]);
+  });
+
+  it('movementSpeedForRole never returns a perfectly-frozen speed (streetVendor floors at 0)', () => {
+    // The stuck-vendor guard: streetVendor's band is [0, 0.22]; speedForRole(streetVendor, 0) === 0.
+    expect(speedForRole('streetVendor', 0)).toBe(0);
+    // ...but the MOVEMENT speed is floored so the wander/cull loop always makes progress.
+    expect(movementSpeedForRole('streetVendor', 0)).toBe(MIN_CITIZEN_MOVE_SPEED);
+    for (const role of CITIZEN_ROLES) {
+      for (let i = 0; i <= 20; i++) {
+        expect(movementSpeedForRole(role, i / 20)).toBeGreaterThanOrEqual(MIN_CITIZEN_MOVE_SPEED);
+      }
+    }
+    // above the floor, movement speed equals the band speed (no distortion of faster roles)
+    expect(movementSpeedForRole('officeClerk', 0.5)).toBe(speedForRole('officeClerk', 0.5));
   });
 
   it('density weights are all present and in the plausible band', () => {

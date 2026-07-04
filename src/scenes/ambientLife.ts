@@ -29,7 +29,7 @@ import { districtIdentityFor } from './art/districtIdentity';
 import {
   parseCitizensEnabled, parseCitizenLetters,
   buildDistrictArchetypeMap, spawnWeightsForNodes, cumulative, weightedIndex,
-  roleForSlot, speedForRole, citizenRoll, RollSalt,
+  roleForSlot, movementSpeedForRole, citizenRoll, RollSalt,
   citizenMarkerTexKey, CITIZEN_MARKER_SCALE, roleIndex, ROLE_LETTER,
   pauseChance, pauseStateFor, stateDuration, reactionCooldown, reactionFor,
   type CitizenRole, type CitizenState, type PauseContext, type CitizenEvent,
@@ -319,7 +319,7 @@ export class AmbientLife {
       a.role = role;
       a.state = 'walk';
       a.reactCd = 0;
-      a.speed = speedForRole(role, citizenRoll(this.seed, ordinal, a.slot, a.epoch, RollSalt.Speed));
+      a.speed = movementSpeedForRole(role, citizenRoll(this.seed, ordinal, a.slot, a.epoch, RollSalt.Speed));
       s.setTexture(citizenMarkerTexKey(roleIndex(role), false)).setOrigin(0.5, 0.9);
       if (a.letterText) a.letterText.setText(ROLE_LETTER[role]).setVisible(false);
     } else {
