@@ -558,6 +558,7 @@ export {
   isSelected,
   selectedUnits,
   pickUnit,
+  pickVisibleUnit,
   unitsInBox,
   resolveMoveCommand,
   isCommandableTile,

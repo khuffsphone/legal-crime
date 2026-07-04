@@ -21,6 +21,7 @@ import {
   unitTile,
   unitScreenPos,
   pickUnit,
+  pickVisibleUnit,
   resolveMoveCommand,
   isCommandableTile,
   isCommandableUnit,
@@ -2471,6 +2472,23 @@ export class IsoScene extends Phaser.Scene {
     return businessAtTile(this.layout, screenToTile(worldX, worldY)) ?? undefined;
   }
 
+  /** A front id gated on its tile's visibility (NO-X-RAY): resolves to `undefined` when the front's tile
+   * is fogged, so a shrouded front reads exactly like empty ground on every cursor surface. */
+  private visibleFrontId(bizId: string | undefined): string | undefined {
+    if (!bizId) return undefined;
+    const tile = businessTileOf(this.layout, bizId);
+    return tile && this.isVisibleTile(tile) ? bizId : undefined;
+  }
+
+  /** The FOG-SAFE building pick — businessAtScreen restricted to a front the player can SEE. A fogged
+   * front (its tile shrouded) resolves to undefined, exactly like empty ground, so no cursor surface
+   * (hover tooltip, context card, left-click selection, right-click EXTORT menu) can name its rival
+   * earner or read the fogged economics the opPreview selectors already hide. The businessAtScreen twin
+   * of pickVisibleUnit; mirrors the resolveOpPreview fog guard so there is one visibility rule. */
+  private visibleBusinessAt(worldX: number, worldY: number): string | undefined {
+    return this.visibleFrontId(this.businessAtScreen(worldX, worldY));
+  }
+
   private closeBizMenu(): void { this.ctxMenu?.destroy(); this.ctxMenu = undefined; this.ctxRect = undefined; this.ctxRows = []; }
 
   /** The action for the menu row under screen (sx, sy), or null if the click missed the rows. */
@@ -2757,11 +2775,11 @@ export class IsoScene extends Phaser.Scene {
     // ⭐ DISCOVERABILITY: a LEFT-click on a RIVAL fighter (not selectable — it's the enemy) tells the player
     // the ATTACK gesture instead of silently deselecting, and KEEPS the crew selected so they can right-click
     // it straight away. (The player report was "the attack function doesn't work / is locked" — make it obvious.)
-    // ?combat=1 — the hint must not fire on a FOGGED rival (a left-click fog probe: hint + kept
-    // selection vs clear both = two observables). Filter the pick with THE fog predicate; a hidden
-    // rival then clicks exactly like empty ground. Flag off ⇒ the pre-existing pick, untouched.
+    // NO-X-RAY — the hint must NEVER fire on a FOGGED rival (a left-click fog probe: the hint + a kept
+    // selection vs a silent clear = two observables that betray a hidden man). Gate the pick on THE fog
+    // predicate ALWAYS — combat flag on OR off — so a fogged rival left-clicks exactly like empty ground.
     const foeCandidates = this.units.filter((v) => v.faction === 'rival' && v.unit.role !== 'collector').map((v) => v.unit);
-    const foe = pickUnit(this.combatEnabled ? foeCandidates.filter((u) => this.combatCtx().isVisible(u.pos)) : foeCandidates, point);
+    const foe = pickVisibleUnit(foeCandidates, point, (pos) => this.isVisibleTile(pos));
     if (foe) {
       this.setStatus(this.selection.ids.length > 0
         ? "that's a rival — RIGHT-CLICK it to send your crew in (they trade blows on contact)"
@@ -2770,7 +2788,10 @@ export class IsoScene extends Phaser.Scene {
     }
     // RTS-28: no unit under the cursor → try a BUILDING (height-aware hit-test). A click selects the
     // building under the cursor (its card sticks in the context panel; [E]/[U] target it).
-    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    // NO-X-RAY — a FOGGED front must not be selectable: its name would surface in the status line and its
+    // sticky card would name the rival earner + fogged economics. Fog-safe pick → a shrouded front clicks
+    // like empty ground (same guard the opPreview cursor card uses).
+    const bizId = this.visibleBusinessAt(p.worldX, p.worldY);
     if (bizId) {
       this.focusBizId = bizId;
       if (!shift) this.selection = clearSelection();
@@ -2790,18 +2811,20 @@ export class IsoScene extends Phaser.Scene {
    * systems. Selection gating lives in each command (consistent with 35b.1 — selection is authoritative). */
   private commandContextual(p: Phaser.Input.Pointer): void {
     const gpoint = screenToGrid(p.worldX, p.worldY);
-    // ?combat=1 — the rival pick itself must be fog-safe, or the VERB ROUTING becomes an X-ray (a
-    // hidden rival under the cursor would route 'attack' where empty ground routes 'move'). The
-    // pure pickVisibleHostile applies THE fog predicate, so a fogged rival routes as plain ground.
-    // Flag off ⇒ the pre-existing pick, byte-identical behavior.
+    // NO-X-RAY — the rival pick itself must be fog-safe, or the VERB ROUTING becomes an X-ray (a hidden
+    // rival under the cursor would route 'attack' — the crew marches in + a reticle blooms on the fogged
+    // tile — where empty ground routes 'move'). BOTH paths gate on THE fog predicate, combat flag on OR
+    // off, so a fogged rival routes (and looks) exactly like plain ground.
     const hitUnit = this.combatEnabled
       ? pickVisibleHostile(this.units.map((v) => v.unit), gpoint, this.state.player.id, this.combatCtx().isVisible)
-      : pickUnit(this.units.map((v) => v.unit), gpoint);
+      : pickVisibleUnit(this.units.map((v) => v.unit), gpoint, (pos) => this.isVisibleTile(pos));
     const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
     // a RIVAL COMBATANT (non-collector) is the attack target; collectors stay autonomous (robbed via
     // interception, never a unit-attack target).
     const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
-    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    // NO-X-RAY — the front pick is fog-safe too: a fogged rival-held front must not route to EXTORT (the
+    // openBizMenu header would name the rival earner). A shrouded front routes as plain ground → MOVE.
+    const bizId = this.visibleBusinessAt(p.worldX, p.worldY);
     const target: OrderTarget = rival
       ? { kind: 'rival', unitId: rival.id }
       : bizId
@@ -2869,12 +2892,22 @@ export class IsoScene extends Phaser.Scene {
   // The verbs live in src/sim/combatControl (pure, fog-gated, wrapped commands); this scene layer only
   // resolves clicks, injects the world ctx, and SPEAKS every denial (PT2 rule: no silent refusals).
 
-  /** The world context the sim verbs need: the nav grid + THE fog predicate — the same isRevealed
-   * closure the opPreview selectors get (resolveOpPreview), so there is no parallel visibility rule. */
+  /** THE fog predicate — one tile counts as visible iff it is revealed (or the dev reveal-all flag has
+   * lifted the veil). This is the SINGLE NO-X-RAY gate: the combat surface (combatCtx), the opPreview
+   * selectors, AND every hover / tooltip / cursor-preview / left-click-hint identity read all funnel
+   * through it, so a fogged rival is byte-identical to empty ground on every UI surface — combat flag
+   * ON or OFF. debugRevealAll only lifts the veil (it never fabricates a tile), so ?reveal stays a pure
+   * dev aid. Reused, never re-derived — there is no parallel visibility rule anywhere in the scene. */
+  private isVisibleTile(pos: { gx: number; gy: number }): boolean {
+    return this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
+  }
+
+  /** The world context the sim verbs need: the nav grid + THE fog predicate (isVisibleTile), the same
+   * closure the opPreview selectors and the hover/cursor reads get, so there is no parallel rule. */
   private combatCtx(): CombatCtx {
     return {
       grid: this.navGrid,
-      isVisible: (pos) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy)),
+      isVisible: (pos) => this.isVisibleTile(pos),
     };
   }
 
@@ -3895,13 +3928,13 @@ export class IsoScene extends Phaser.Scene {
     this.opCursor = { x: this.hudX(p.x), y: this.hudY(p.y) }; // the preview card is fixed-HUD → logical coords
     // a HUD region owns this pixel (the tooltip explains it) — don't also pop a world preview over it.
     if (this.hudRegionExplain(p.x, p.y) !== null) { this.opPreview = undefined; return; }
-    const isVis = (pos: { gx: number; gy: number }) => this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
-    // ?combat=1 — the hover card itself must not be a fog probe: a card appearing iff a hidden
-    // fighter sits under the cursor (VISIBLE_ONLY attack card, or the federal card naming its
-    // family) is a presence X-ray. Filter the pick to visible units so fogged rivals preview like
-    // empty ground. Flag off ⇒ the pre-existing pick, untouched.
+    const isVis = (pos: { gx: number; gy: number }) => this.isVisibleTile(pos); // THE fog gate, reused — not a parallel check
+    // NO-X-RAY — the hover card itself must not be a fog probe: a card appearing iff a hidden fighter
+    // sits under the cursor (a VISIBLE_ONLY attack card, or the federal card naming its family) is a
+    // presence X-ray. Gate the pick on THE fog predicate ALWAYS — combat flag on OR off — so a fogged
+    // rival previews as empty ground (no card).
     const hoverable = this.units.map((v) => v.unit);
-    const hitUnit = pickUnit(this.combatEnabled ? hoverable.filter((u) => isVis(u.pos)) : hoverable, screenToGrid(p.worldX, p.worldY));
+    const hitUnit = pickVisibleUnit(hoverable, screenToGrid(p.worldX, p.worldY), isVis);
     const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
     const rival = hitView && hitView.faction === 'rival' && hitView.unit.role !== 'collector' ? hitUnit : undefined;
     const thug = this.selectedPlayerThug();
@@ -3953,11 +3986,11 @@ export class IsoScene extends Phaser.Scene {
 
   private hoverText(p: Phaser.Input.Pointer): string | null {
     const gpoint = screenToGrid(p.worldX, p.worldY);
-    // ?combat=1 — the tooltip must not identify a FOGGED unit (kind + family + attack hint = a full
-    // identity X-ray by mouse sweep). Filter the pick with THE fog predicate; a hidden rival then
-    // reads as the district tooltip, same as empty fog. Flag off ⇒ the pre-existing pick, untouched.
+    // NO-X-RAY — the tooltip must NEVER identify a FOGGED unit (kind + family + attack hint = a full
+    // identity X-ray by mouse sweep). Gate the pick on THE fog predicate ALWAYS — combat flag on OR off
+    // — so a hidden rival reads as the public district tooltip beneath, same as empty fog.
     const hoverUnits = this.units.map((v) => v.unit);
-    const hit = pickUnit(this.combatEnabled ? hoverUnits.filter((u) => this.combatCtx().isVisible(u.pos)) : hoverUnits, gpoint);
+    const hit = pickVisibleUnit(hoverUnits, gpoint, (pos) => this.isVisibleTile(pos));
     if (hit) {
       const view = this.units.find((v) => v.unit.id === hit.id);
       const i = inspectUnit(this.state, hit.id);
@@ -3974,7 +4007,9 @@ export class IsoScene extends Phaser.Scene {
       }
     }
     const tile = screenToTile(p.worldX, p.worldY);
-    const bizId = this.businessAtScreen(p.worldX, p.worldY);
+    // NO-X-RAY — a FOGGED front must not tooltip its earner + income/uncollected (the exact economics the
+    // opPreview card hides). Fog-safe pick → a shrouded front reads as the public district tooltip beneath.
+    const bizId = this.visibleBusinessAt(p.worldX, p.worldY);
     if (bizId) {
       const b = inspectBusiness(this.state, bizId);
       if (b) {
@@ -5462,8 +5497,12 @@ export class IsoScene extends Phaser.Scene {
     const ptr = this.input.activePointer;
     const overWorld = this.hudY(ptr.y) > 60 && this.hudX(ptr.x) < this.hudW() - 320 && this.hudY(ptr.y) < this.hudH() - 96;
     // RTS-28: hovered building takes priority; otherwise the STICKY left-clicked building (focusBizId).
-    const hovered = overWorld ? this.businessAtScreen(ptr.worldX, ptr.worldY) : undefined;
-    const bizId = hovered ?? (this.focusBizId && allBusinesses(this.state).some((bb) => bb.id === this.focusBizId) ? this.focusBizId : undefined);
+    // NO-X-RAY — BOTH the hovered pick and the sticky focus are fog-gated: this persistent card names the
+    // earner + income/heat/uncollected of the front it shows, so a fogged rival-held front must resolve to
+    // nothing. The sticky id is re-checked every frame because fog can re-shroud a front clicked while lit.
+    const hovered = overWorld ? this.visibleBusinessAt(ptr.worldX, ptr.worldY) : undefined;
+    const sticky = this.focusBizId && allBusinesses(this.state).some((bb) => bb.id === this.focusBizId) ? this.focusBizId : undefined;
+    const bizId = hovered ?? this.visibleFrontId(sticky);
     if (bizId) {
       const b = inspectBusiness(this.state, bizId);
       const raw = allBusinesses(this.state).find((x2) => x2.id === bizId);

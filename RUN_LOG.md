@@ -2981,3 +2981,50 @@ RTS ARC — branch rts/isometric-conversion (isometric real-time conversion)
   item. The `fedoraNoirSpriteGenerator.ts` package is still absent (no sprite swap this pass).
 - Gate: typecheck ✅  build ✅  test ✅ (692).
 - Commit: rts30c-scale: unit-to-world proportion fix — green
+
+---
+
+## Lane fog-leak-fix — NO-X-RAY cursor repair — GREEN  (2026-07-04)
+- Branch: `claude/fog-leak-fix-a22e4g` off `rts/isometric-conversion` (da8f710). **base-visible
+  (changes flag-off behaviour) ⇒ under HITL CANON A1 this KEEPS a pre-merge K eyeball — DO NOT MERGE.**
+- Summary: Canon-critical NO-X-RAY repair of the pre-existing leak CC flagged on #67 — the hover
+  tooltip / left-click "that's a rival" hint / cursor op-preview card / right-click verb routing all
+  fog-gated rival identity ONLY under `?combat=1`, so in the shipping base build (flag OFF) a fogged
+  rival under the cursor still tooltipped its kind+family, fired the attack hint, popped a preview
+  card, and routed 'attack' (crew marches in + a reticle blooms on the fogged tile). A mouse sweep
+  over the dark was a free X-ray — independent of `?combat=1`.
+- Fix: one fog predicate `IsoScene.isVisibleTile(pos)` (= `debugRevealAll || isRevealed(fog,…)`); every
+  cursor channel routes through it UNCONDITIONALLY via two pure fog-safe picks — `pickVisibleUnit`
+  (units) and `visibleBusinessAt` (fronts), the twins of `pickUnit`/`businessAtScreen`. `combatCtx`
+  reuses the single predicate; `resolveOpPreview`'s parallel `isVis` closure collapses into it — one
+  visibility rule, no parallel check. A fogged rival/front now reads byte-identically to empty ground.
+  Public district tooltips (base info) untouched.
+- Surfaces closed (all cursor/hover/tooltip/click — the dispatch scope): unit hover tooltip,
+  left-click hint, cursor op-preview, right-click verb routing; + the fogged-FRONT sibling family
+  (hoverText business branch, the persistent context card incl. its sticky `focusBizId`, left-click
+  building selection, right-click EXTORT menu) — all leaked a fogged front's rival earner + the exact
+  income/uncollected the opPreview selectors hide.
+- STEP-4 adversarial review (12-agent workflow, every finding independently verified): 7 confirmed
+  leaks. The 4 cursor surfaces above are fixed here. ⚠ THREE remain, OUT of the cursor-dispatch scope —
+  FLAGGED FOR K (separate rendering/feed lanes, deliberately NOT scope-crept into this PR):
+    1. Allegiance PLATE (`refreshBizPlates` ~2222) — per-frame recolour to rival-red vs fog-grey with
+       no fog gate; plate depth > the veil (0), so a fogged rival-held front's ownership shows through.
+    2. Default UNIT RIG body + blood faction ring / FAR-LOD sprite (~2067) — the base-build (non-
+       `?sprites`) draw has NO fog gate; `occlusionDisplay` returns 'normal' (alpha 1) for a NON-
+       occluded unit BEFORE consulting `revealed`, so a fogged rival in the open draws at full opacity.
+       (Most severe — a directly visible fogged rival; the rendering lane must route `revealed` into alpha.)
+    3. Combat info-feed (`playCombatBeat → recordInfoEvent` ~3405) — a rival 'down' beat pushes the
+       live tile into the WIRE row + minimap ping + edge arrow + [Q]-jump with no fog check; the
+       `shouldEmitFeedback` gate (~3412) guards only the flash/SFX, not the report. Rival-vs-rival
+       brawls in unexplored fog leak position. (+ `rival.telegraph` ~1809 needs K's learned-vs-raw ruling.)
+- Tests: mutation-verified fog-probe twin worlds (`tests/fogLeak.test.ts`, `tests/selection.test.ts`)
+  — a fogged-rival tile deep-equals empty ground at the pick that drives hover/hint/preview; the
+  ungated `pickUnit` leaks (witness); source-scan wiring proves all cursor channels route through the
+  one gate and the `combatEnabled ?` leak pattern is gone. The stale #67 assertion that FROZE the
+  flag-off leak (`combatControl.test.ts`) is updated to the fixed invariant. Numbers-frozen unaffected.
+- STEP-0 note: the harness handed this branch based on `legal-crime-remake` (no `IsoScene.ts` at all);
+  re-pointed onto the dispatched base `rts/isometric-conversion`@da8f710. Only open PR is #68 (audio),
+  which does not touch `IsoScene.ts` and rebases AFTER this lands — this goes first.
+- Gate: typecheck ✅  build ✅  test ✅ (1527; +22 this lane).
+- Commits: `NO-X-RAY fog-leak fix: gate rival identity on hover/cursor/tooltip/click`;
+  `NO-X-RAY: fog-gate the fogged-front cursor surfaces (earner + economics)`.
