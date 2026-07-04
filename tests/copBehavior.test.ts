@@ -93,6 +93,22 @@ describe('copBehavior — sight rule (NO-X-RAY, symmetric)', () => {
     expect(lineOfSightClear(grid(24, [[7, 7]]), from, to)).toBe(false); // dead on the diagonal
     expect(lineOfSightClear(grid(24, [[5, 9]]), from, to)).toBe(true);  // far off the sightline — clear
   });
+
+  it('is SYMMETRIC on a perfect diagonal: a corner-grazing wall never blocks; an interior wall blocks both ways', () => {
+    const a = { gx: 0, gy: 0 };
+    const b = { gx: 2, gy: 2 };
+    // (0,1) and (1,0) only touch the 45° sightline at a corner point — NOT strictly between — so they must
+    // NOT block, and the answer must be identical whichever endpoint is the origin (no staircase bias).
+    for (const wall of [[0, 1], [1, 0], [1, 2], [2, 1]] as Array<[number, number]>) {
+      const L = grid(8, [wall]);
+      expect(lineOfSightClear(L, a, b)).toBe(true);
+      expect(lineOfSightClear(L, b, a)).toBe(true); // symmetric — both directions agree
+    }
+    // (1,1) is the true interior tile the segment crosses — it blocks, symmetrically.
+    const solid = grid(8, [[1, 1]]);
+    expect(lineOfSightClear(solid, a, b)).toBe(false);
+    expect(lineOfSightClear(solid, b, a)).toBe(false);
+  });
 });
 
 describe('copBehavior — what counts as a crime (acquisition)', () => {
@@ -173,6 +189,32 @@ describe('copBehavior — escalation state machine', () => {
     expect(cop.suspicion).toBe(0);
     expect(cop.focusUnitId).toBeUndefined();
     expect(cop.lastSeen).toBeUndefined();
+  });
+
+  it('a NON-committed watcher drops its stale focus at suspicion 0 — it will not re-escalate on a peaceful suspect', () => {
+    const L = grid(24);
+    const cop = mkCop(5, 5);
+    // STEP A: glimpse a brawl from the beat — acquire a focus but do NOT cross the commit threshold.
+    const s = withUnits(fighter('p1', 'player', 8, 5), fighter('r1', 'rival-a', 8.4, 5));
+    expect(updateCopDetection(cop, s, L, 0.5)).toBe(false);
+    expect(cop.focusUnitId).toBe('p1');
+    expect(cop.suspicion).toBeLessThan(COP_RESPOND_THRESHOLD); // still just watching, not committed
+    // STEP B–C: the trail goes cold (brawl over, suspect gone from sight) → suspicion decays to 0.
+    s.units = [];
+    for (let i = 0; i < 5; i++) updateCopDetection(cop, s, L, 0.5);
+    expect(cop.suspicion).toBe(0);
+    expect(cop.focusUnitId).toBeUndefined(); // THE FIX: the cold mark is dropped even without a commit
+    expect(cop.lastSeen).toBeUndefined();
+    // STEP D–E: that former suspect wanders back into view — but LONE and peaceful (committing no crime now).
+    // Retention (which does not require an active brawl) must NOT re-fire: with no focus, acquisition needs a
+    // real brawl, which isn't happening, so the cop stays on the beat and ignores the citizen.
+    s.units = [fighter('p1', 'player', 8, 5)]; // no enemy ⇒ not a crime
+    let active = false;
+    for (let i = 0; i < 6; i++) active = updateCopDetection(cop, s, L, 0.5);
+    expect(active).toBe(false);
+    expect(cop.mode).toBe('patrol');
+    expect(cop.suspicion).toBe(0);
+    expect(cop.focusUnitId).toBeUndefined(); // never re-acquired a non-brawling target
   });
 
   it('hysteresis: once committed the cop keeps responding while suspicion is in (0, threshold)', () => {

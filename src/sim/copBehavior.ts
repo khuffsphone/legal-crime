@@ -83,7 +83,15 @@ export function lineOfSightClear(layout: WorldLayout, from: GridPos, to: GridPos
   // this can never spin even on a degenerate input.
   const budget = Math.abs(endX - x) + Math.abs(endY - y) + 2;
   for (let i = 0; i < budget; i++) {
-    if (tMaxX < tMaxY) { x += stepX; tMaxX += tDeltaX; } else { y += stepY; tMaxY += tDeltaY; }
+    // Advance to the next tile the segment ENTERS. On an EXACT grid-corner crossing (tMaxX === tMaxY — e.g.
+    // a perfect 45° diagonal) step BOTH axes at once, passing THROUGH the shared corner. This visits only the
+    // tiles the segment's interior actually crosses (never the two corner-grazed neighbours), so the result is
+    // a symmetric property of the tile pair — lineOfSightClear(a,b) === lineOfSightClear(b,a) — and a building
+    // that merely touches the sightline's corner does not over-block it. (A one-axis tie-break would staircase
+    // through a corner tile in one direction only, hiding a diagonally-visible crime asymmetrically.)
+    if (tMaxX < tMaxY) { x += stepX; tMaxX += tDeltaX; }
+    else if (tMaxY < tMaxX) { y += stepY; tMaxY += tDeltaY; }
+    else { x += stepX; y += stepY; tMaxX += tDeltaX; tMaxY += tDeltaY; }
     if (x === endX && y === endY) return true;      // reached the target tile — endpoint, never blocks
     if (tileKindAt(layout, x, y) === 'building') return false; // an opaque tile strictly between — no LOS
   }
@@ -174,9 +182,21 @@ export function updateCopDetection(
     : Math.max(0, cop.suspicion - COP_SUSPICION_DECAY * dt);
 
   const committed = cop.mode === 'respond' || cop.mode === 'engage';
-  // STAND DOWN: the trail is stone cold — resume the beat.
+  // STAND DOWN: the trail is stone cold — drop the mark and resume the beat. A COMMITTED cop needs the full
+  // patrol reset (mode → patrol + a healable path so it snaps back onto the graph). A cop that was only
+  // WATCHING from the beat (acquired a focus but never committed) keeps its patrol walk intact — but it MUST
+  // still shed the stale focus/lastSeen. Retention (line above) deliberately does NOT require an active brawl
+  // (a committed cop pursues its suspect between swings), so a lingering focus would let retention re-fire on
+  // that former suspect the moment it reappears — the cop would then commit against someone committing NO
+  // crime now, bypassing the "caught in the act" acquisition gate. Clearing the mark at 0 closes that leak.
   if (cop.suspicion <= 0) {
-    if (committed) deescalateCop(cop);
+    if (committed) {
+      deescalateCop(cop);
+    } else {
+      cop.suspicion = 0;
+      cop.focusUnitId = undefined;
+      cop.lastSeen = undefined;
+    }
     return false;
   }
   // WATCHING FROM THE BEAT: suspicion is rising but hasn't crossed the commit threshold yet — keep
