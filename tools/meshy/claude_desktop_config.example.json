@@ -1,0 +1,19 @@
+{
+  "//": "Octane Racer — Meshy MCP server. Merge the `meshy` entry into your Claude Desktop config's `mcpServers` object.",
+  "//_config_path_macos": "~/Library/Application Support/Claude/claude_desktop_config.json",
+  "//_config_path_windows": "%APPDATA%\\Claude\\claude_desktop_config.json",
+  "//_setup": "From tools/meshy: `npm install && npm run build`. Then replace the ABSOLUTE paths below with your checkout. Restart Claude Desktop.",
+  "//_alt_no_build": "To skip the build step, use command `npx` with args [\"-y\", \"tsx\", \"<abs>/tools/meshy/mcp-server/index.ts\"].",
+  "mcpServers": {
+    "meshy": {
+      "command": "node",
+      "args": [
+        "/ABSOLUTE/PATH/TO/octane-racer/tools/meshy/dist/mcp-server/index.js"
+      ],
+      "env": {
+        "MESHY_API_KEY": "your_key_here",
+        "MESHY_OUT_DIR": "/ABSOLUTE/PATH/TO/octane-racer/assets/raw/meshy"
+      }
+    }
+  }
+}
