@@ -20,6 +20,7 @@
  *   npm run pull -- --since 2026-01-01        # only tasks created since a date
  *   npm run pull -- --mode text --out ./tmp   # only text-to-3d, custom dir
  */
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MeshyClient } from "./src/client.js";
@@ -29,6 +30,25 @@ import { pullAssets, type PullSummary } from "./src/pull.js";
 import type { TaskKind } from "./src/types.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Walks up from `start` to the tools/meshy package root (the dir containing
+ * package.json), so paths resolve correctly whether this runs via tsx (source,
+ * SCRIPT_DIR = tools/meshy) or node (built, SCRIPT_DIR = tools/meshy/dist).
+ */
+function findPackageRoot(start: string): string {
+  let dir = start;
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(path.join(dir, "package.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return start;
+}
+
+/** tools/meshy — the package root. Repo assets live at PKG_ROOT/../../assets. */
+const PKG_ROOT = findPackageRoot(SCRIPT_DIR);
 
 const MODE_MAP: Record<string, TaskKind[]> = {
   all: ["text-to-3d", "image-to-3d", "retexture"],
@@ -67,7 +87,7 @@ function parseSince(value: string): number {
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     mode: "all",
-    out: path.resolve(SCRIPT_DIR, "../../assets/raw/meshy"),
+    out: path.resolve(PKG_ROOT, "../../assets/raw/meshy"),
     dryRun: false,
     overwrite: false,
     thumbnails: false,
@@ -99,9 +119,14 @@ function parseArgs(argv: string[]): CliArgs {
       case "--thumbnails":
         args.thumbnails = true;
         break;
-      case "--page-size":
-        args.pageSize = Number(next());
+      case "--page-size": {
+        const n = Number(next());
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new Error("--page-size must be a positive number (max 50)");
+        }
+        args.pageSize = n;
         break;
+      }
       case "-h":
       case "--help":
         args.help = true;
@@ -173,7 +198,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  loadDotEnv(path.join(SCRIPT_DIR, ".env"));
+  loadDotEnv(path.join(PKG_ROOT, ".env"));
   const apiKey = process.env[API_KEY_ENV];
   if (!apiKey) {
     console.error(

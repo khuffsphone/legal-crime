@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { MeshyClient, MeshyApiError, normalizeList } from "../src/client.js";
+import { MeshyClient, MeshyApiError, normalizeList, clampPageSize } from "../src/client.js";
 import type { FetchLike } from "../src/client.js";
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -62,6 +62,33 @@ describe("MeshyClient list pagination", () => {
     const client = new MeshyClient({ apiKey: "k", fetchImpl, sleepImpl: noSleep });
     await client.listTasks("image-to-3d", { pageSize: 999 });
     expect(seenPageSize).toBe("50");
+  });
+
+  it("does not loop forever when given a NaN/0 page size (falls back to 50)", async () => {
+    let calls = 0;
+    const fetchImpl: FetchLike = vi.fn(async (url) => {
+      calls += 1;
+      // page_size must be a sane number, never "NaN"/"0"
+      expect(new URL(url).searchParams.get("page_size")).toBe("50");
+      // one short page => loop must terminate
+      return jsonResponse([{ id: "only", status: "SUCCEEDED" }]);
+    });
+    const client = new MeshyClient({ apiKey: "k", fetchImpl, sleepImpl: noSleep });
+    const all = await client.listAllTasks("text-to-3d", { pageSize: Number("oops") });
+    expect(all).toHaveLength(1);
+    expect(calls).toBe(1);
+  });
+});
+
+describe("clampPageSize", () => {
+  it("clamps to (0, 50] and falls back on invalid input", () => {
+    expect(clampPageSize(10, 10)).toBe(10);
+    expect(clampPageSize(999, 10)).toBe(50);
+    expect(clampPageSize(0, 10)).toBe(10);
+    expect(clampPageSize(-5, 10)).toBe(10);
+    expect(clampPageSize(NaN, 10)).toBe(10);
+    expect(clampPageSize(undefined, 25)).toBe(25);
+    expect(clampPageSize(12.9, 10)).toBe(12);
   });
 });
 

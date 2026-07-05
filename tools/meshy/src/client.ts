@@ -73,6 +73,15 @@ export interface MeshyClientLike {
   downloadArrayBuffer(url: string): Promise<Uint8Array>;
 }
 
+/** Clamps a requested page size to (0, MAX_PAGE_SIZE]; NaN/0/negative -> fallback.
+ *  Guards against a bad --page-size defeating the "stop on short page" logic. */
+export function clampPageSize(value: number | undefined, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.min(Math.floor(value), MAX_PAGE_SIZE);
+  }
+  return fallback;
+}
+
 /** Normalizes a list response into a plain array of tasks. Meshy returns a bare
  *  array today, but we defensively unwrap common envelope keys too. */
 export function normalizeList(data: unknown): MeshyTask[] {
@@ -249,7 +258,7 @@ export class MeshyClient implements MeshyClientLike {
     const data = await this.request<unknown>("GET", endpointPath(kind), {
       query: {
         page_num: opts.pageNum ?? 1,
-        page_size: Math.min(opts.pageSize ?? DEFAULT_LIST_PAGE_SIZE, MAX_PAGE_SIZE),
+        page_size: clampPageSize(opts.pageSize, DEFAULT_LIST_PAGE_SIZE),
         sort_by: opts.sortBy ?? "-created_at",
       },
     });
@@ -258,7 +267,7 @@ export class MeshyClient implements MeshyClientLike {
 
   /** Async iterator over every task of a kind, walking pages until a short page. */
   async *iterateTasks(kind: TaskKind, opts: ListAllOptions = {}): AsyncGenerator<MeshyTask> {
-    const pageSize = Math.min(opts.pageSize ?? MAX_PAGE_SIZE, MAX_PAGE_SIZE);
+    const pageSize = clampPageSize(opts.pageSize, MAX_PAGE_SIZE);
     const maxPages = opts.maxPages ?? 1000;
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       const page = await this.listTasks(kind, { pageNum, pageSize, sortBy: opts.sortBy });
