@@ -21,6 +21,10 @@ import { registerSynthSfx } from './audioSynth';
 // cache under the same key, so there is no WAV to 404 or fail to decode (procedural SFX, Lane I).
 interface ClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; synth?: boolean; }
 
+/** AUDIO E-H (F2) — the shape a feature lane hands to the PUBLIC registration seam. Deliberately the
+ * file-backed subset of ClipDef (no `synth` — synth registration stays audioSynth's own boot path). */
+export interface RegisteredClipDef { key: string; file: string; bus: AudioBus; loop?: boolean; vol?: number; urgent?: boolean; }
+
 // The catalogued library (from the Drive ASSET_MANIFEST). Files present in the current drop load and
 // sound now; the rest (grease cues, door/typewriter, wire rings, stings, VO) are wired with their
 // expected filenames and activate the moment they're dropped into public/audio/.
@@ -93,6 +97,9 @@ const LIBRARY: ClipDef[] = [
 ];
 
 const DEFS = new Map(LIBRARY.map((d) => [d.key, d]));
+// AUDIO E-H (F2) — registration-ordering + bus-validity guards for the public register() seam.
+const VALID_BUSES: ReadonlySet<AudioBus> = new Set(['sfx', 'vo', 'music', 'ambience']);
+let preloadSnapshotTaken = false;
 const URGENT_DEBOUNCE = 120; // ms — don't stack/retrigger an urgent cue inside this window
 const SAME_CLIP_DEBOUNCE = 70; // ms — swallow a retrigger of the SAME clip inside this window
 // ── soft-SFX/VO governor knobs (mirrors the urgent governor). The CAP, priority table, and burst
@@ -135,7 +142,56 @@ export class AudioManager {
    * not-yet-real paths), so a fresh load logs ZERO "Unable to decode audio data" errors. */
   static preload(scene: Phaser.Scene): void {
     // synth clips carry no file — they're generated at boot (ready()), so they're never queued on the loader.
+    preloadSnapshotTaken = true; // registration after this point misses the loader queue (see register())
     registerAudioPreload(scene.load, LIBRARY.filter((d) => !d.synth));
+  }
+
+  /** AUDIO E-H (F2) — the PUBLIC clip-registration seam. Feature lanes register their catalogs through
+   * here (BEFORE the scene's preload, so the files queue); they never reach into the private LIBRARY /
+   * DEFS. An already-registered key is SKIPPED, never overridden — a lane cannot re-voice a shipped clip
+   * (e.g. the federal_notice/watch/raid parity entries). play()'s unknown-key no-op is unchanged for
+   * anything left unregistered. Returns what was added vs skipped so the caller can assert parity.
+   *
+   * ORDERING IS ENFORCED, not just documented: registering AFTER a preload() already snapshotted the
+   * library would leave the key catalogued but its file never queued — isRegistered() true, has() false,
+   * permanently silent. That mis-ordering logs a loud console warning (it self-heals on the next scene
+   * preload, e.g. a restart, which makes the bug maddening to reproduce otherwise).
+   *
+   * A def with a bus outside the real AudioBus set is REJECTED (skipped + warned): an unknown bus would
+   * make busVolume() compute NaN, and NaN is not `<= 0` — it would sail through the mute gate and hand
+   * Web Audio a non-finite volume. */
+  static register(defs: readonly RegisteredClipDef[]): { added: string[]; skipped: string[] } {
+    const added: string[] = [];
+    const skipped: string[] = [];
+    for (const d of defs) {
+      if (DEFS.has(d.key)) { skipped.push(d.key); continue; }
+      if (!VALID_BUSES.has(d.bus)) {
+        skipped.push(d.key);
+        console.warn(`AudioManager.register: clip ${d.key} has unknown bus '${String(d.bus)}' — rejected (would NaN the volume math)`);
+        continue;
+      }
+      const def: ClipDef = { key: d.key, file: d.file, bus: d.bus };
+      if (d.loop !== undefined) def.loop = d.loop;
+      if (d.vol !== undefined) def.vol = d.vol;
+      if (d.urgent !== undefined) def.urgent = d.urgent;
+      LIBRARY.push(def);
+      DEFS.set(def.key, def);
+      added.push(def.key);
+    }
+    if (added.length > 0 && preloadSnapshotTaken) {
+      console.warn(
+        `AudioManager.register: ${added.length} clip(s) registered AFTER preload already ran — their files were ` +
+        `never queued and they will stay silent until the next scene preload. Register before AudioManager.preload(). ` +
+        `Late keys: ${added.join(', ')}`,
+      );
+    }
+    return { added, skipped };
+  }
+
+  /** F2 test/diagnostic seam: is a key in the registration catalog (registered or shipped)? Distinct
+   * from has(), which additionally requires the ASSET to have loaded. */
+  static isRegistered(key: string): boolean {
+    return DEFS.has(key);
   }
 
   constructor(scene: Phaser.Scene) {
@@ -348,6 +404,50 @@ export class AudioManager {
   private applyBedVolumes(): void {
     if (this.musicSound) (this.musicSound as Phaser.Sound.BaseSound & { volume: number }).volume = this.bedVol('music', this.currentBed);
     if (this.ambienceSound) (this.ambienceSound as Phaser.Sound.BaseSound & { volume: number }).volume = this.bedVol('ambience', 'ambience_city');
+  }
+
+  // ── AUDIO E-H (H3) — ATMOSPHERE LOOP VOICES ─────────────────────────────────────────────────────
+  // District beds (E) + anchor prop loops (G) need per-voiceId looped playback the music conductor's
+  // fixed-key beds can't provide. The H3 scene adapter drives these through its AudioSink, which lands
+  // here — so every atmosphere loop stays UNDER the manager: bus volume + mute + the unknown/unloaded-key
+  // no-op all apply (a not-yet-shipped .wav is silent, never an error), exactly like play(). Stereo-flat:
+  // the manager has no positional audio, so the adapter drops the intents' pan/tile before calling in.
+  private atmoVoices = new Map<string, { snd: Phaser.Sound.BaseSound; key: string }>();
+
+  /** Start (or re-point) a looping atmosphere voice under a stable voiceId, fading in. No-op on an
+   * unloaded/unknown key (F2 graceful degradation). Re-pointing a live voiceId to the same key just
+   * re-trims; to a new key retires the old loop first, so a voiceId never stacks two loops. */
+  loopVoice(voiceId: string, key: string, opts: { volScale?: number; fadeInMs?: number } = {}): void {
+    const def = DEFS.get(key);
+    if (!def || !this.loaded.has(key)) return; // unknown/unloaded → silent no-op (matches play())
+    const existing = this.atmoVoices.get(voiceId);
+    if (existing && existing.key === key) { this.setVoiceGain(voiceId, opts.volScale ?? 1); return; }
+    if (existing) this.stopVoice(voiceId, 200); // voiceId re-pointed to a different clip → retire the old
+    const target = this.voiceVolume(def, { volScale: opts.volScale });
+    const snd = this.scene.sound.add(key, { loop: true, volume: opts.fadeInMs ? 0 : target });
+    snd.play();
+    if (opts.fadeInMs) this.scene.tweens.add({ targets: snd, volume: target, duration: opts.fadeInMs });
+    this.atmoVoices.set(voiceId, { snd, key });
+  }
+
+  /** Re-trim a live atmosphere voice's gain WITHOUT restarting it (bus volume + mute still apply). */
+  setVoiceGain(voiceId: string, volScale: number): void {
+    const v = this.atmoVoices.get(voiceId);
+    const def = v && DEFS.get(v.key);
+    if (!v || !def) return;
+    this.scene.tweens.killTweensOf(v.snd);
+    (v.snd as Phaser.Sound.BaseSound & { volume: number }).volume = this.voiceVolume(def, { volScale });
+  }
+
+  /** Fade out + stop a looping atmosphere voice (no-op on an unknown voiceId). */
+  stopVoice(voiceId: string, fadeOutMs = 0): void {
+    const v = this.atmoVoices.get(voiceId);
+    if (!v) return;
+    this.atmoVoices.delete(voiceId);
+    const snd = v.snd;
+    this.scene.tweens.killTweensOf(snd);
+    if (fadeOutMs > 0) this.scene.tweens.add({ targets: snd, volume: 0, duration: fadeOutMs, onComplete: () => snd.stop() });
+    else snd.stop();
   }
 
   /** A clip is available to play (loaded). */
