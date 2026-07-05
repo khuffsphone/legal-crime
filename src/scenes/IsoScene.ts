@@ -48,6 +48,8 @@ import {
   type TutorialProgress,
   hqTileOf,
   businessTileOf,
+  type ObserveResult,
+  type DepositEvent,
   businessAtTile,
   realtimeHudView,
   crewReadout,
@@ -230,11 +232,20 @@ import {
   PAL,
 } from './cityArt';
 import {
-  districtIdentityFor, facadeAccentFor, buildingVariantFor, hashKey, type DistrictIdentity,
+  districtIdentityFor, facadeAccentFor, buildingVariantFor, hashKey,
+  type DistrictIdentity, type DistrictArchetype,
 } from './art/districtIdentity';
 import { AudioManager } from './audio';
 import { cycleVolume } from './audioMap';
 import type { MusicPhase } from './audioMap';
+// AUDIO E-H (H3) — the atmosphere wire-up: the ?audio flag, the F2 clip-registration seam, and the
+// single scene↔coordinator bridge (fed the post-updateAndObserve surface + processCollectorArrivals).
+import { atmosphereAudioRequested } from './audio/audioFlags';
+import { registerAtmosphereClips, verifyAtmosphereClipsLoaded } from './audio/registerAtmosphereClips';
+import { AtmosphereSceneAdapter, type AtmosphereSink } from './audio/atmosphereSceneAdapter';
+import type { AtmosphereFrame } from './audio/atmosphereCoordinator';
+import type { EmitterEligibility } from './audio/propEmitterPlanner';
+import { legacyEmitterSources, type EmitterSource } from './audio/propEmitterCatalog';
 import {
   nextTimeScale, scaledDt, skipWeekDt, flagEnabled,
 } from './playability';
@@ -726,6 +737,14 @@ export class IsoScene extends Phaser.Scene {
   // (attack-move acquisition fog-gated, focus-fire designation, disengage) + spoken denials. OFF by
   // default (?cops=1 pattern) — flag off, every input path below is the pre-existing #17 behavior.
   private combatEnabled = typeof window !== 'undefined' && combatRequested(window.location?.search ?? '');
+  // AUDIO E-H (H3, ?audio=1): the district-bed / event-cue / prop-emitter atmosphere layer. OFF by default
+  // (?cops=1 pattern) — flag off, none of the audio machinery below runs and play is byte-identical. The
+  // per-frame coordinator step + all AudioManager playback are gated on this single field.
+  private atmosphereAudioEnabled = typeof window !== 'undefined' && atmosphereAudioRequested(window.location?.search ?? '');
+  private atmosphere?: AtmosphereSceneAdapter;         // the one scene↔coordinator bridge (built in create when ?audio)
+  private atmoLogCursor = 0;                           // our OWN state.log read cursor (NOT the ledger's incidentLogCursor)
+  private atmoArchCache = new Map<string, DistrictArchetype>(); // district-id → ART archetype (static per match)
+  private atmoEmitterSources: readonly EmitterSource[] = [];    // R1: legacy scatter props as prop-emitter sources
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
@@ -836,6 +855,10 @@ export class IsoScene extends Phaser.Scene {
   }
 
   preload(): void {
+    // AUDIO E-H (F2): register the atmosphere clip manifest BEFORE AudioManager.preload snapshots the
+    // library, so the bed/event/prop files queue with it (registering after ⇒ catalogued but never loaded,
+    // permanently silent + a loud warn). Idempotent + skips shipped parity keys. Behind ?audio, default OFF.
+    if (this.atmosphereAudioEnabled) registerAtmosphereClips();
     // RTS-27: register the audio library for loading (missing clips 404 → graceful no-op).
     AudioManager.preload(this);
     // ?sprites — queue the thug iso sheets + manifest (missing → graceful no-op, procedural stays up).
@@ -907,6 +930,12 @@ export class IsoScene extends Phaser.Scene {
     this.lastFogSize = -1;
     this.robbedCollectors = new Set<string>();
     this.lastAutosaveTick = -1;
+    // AUDIO E-H (H3) — the atmosphere bridge + its per-run cursors are rebuilt in create() (behind ?audio);
+    // drop the stale handles so a restart never steps a coordinator seeded from the prior match.
+    this.atmosphere = undefined;
+    this.atmoLogCursor = 0;
+    this.atmoArchCache.clear();
+    this.atmoEmitterSources = [];
   }
 
   create(): void {
@@ -1014,6 +1043,17 @@ export class IsoScene extends Phaser.Scene {
     if (this.sound.locked) this.sound.once('unlocked', startBeds); else startBeds();
     this.audio.setPhase(this.lastPhase as MusicPhase, true);
     this.buildAudioPanel();
+    // AUDIO E-H (H3): after ready() (which marks clips loaded), build the ONE scene↔coordinator bridge and
+    // its per-match state. R4: verify in REPORT mode (not dev-throw) so a not-yet-shipped .wav leaves the
+    // clip silent instead of bricking ?audio; ?debugaudio surfaces the list. R1: legacy scatter props feed
+    // the prop-emitter layer (cached once — deterministic per seed). Behind ?audio, default OFF.
+    if (this.atmosphereAudioEnabled) {
+      const missing = verifyAtmosphereClipsLoaded((k) => this.audio.has(k), false);
+      if (missing.length > 0) console.warn(`[audio E-H] ${missing.length} atmosphere clip(s) have no asset yet (silent until dropped)`);
+      this.atmoEmitterSources = legacyEmitterSources(scatterProps(this.world, { seed: this.state.seed }));
+      this.atmosphere = new AtmosphereSceneAdapter(this.state.seed, this.audioSink());
+      this.atmoLogCursor = this.state.log.length; // don't replay the loaded/historical log as a cue burst
+    }
     // RTS-30a: split the world + HUD onto two cameras (AFTER all HUD exists) so the HUD never zooms.
     this.setupUiCamera();
     // LANE D — earned-intel dossier: the ONE HUD mount. Read-only panel on the FIXED HUD camera (sacred);
@@ -1922,7 +1962,10 @@ export class IsoScene extends Phaser.Scene {
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     if (obs.result.combat.length > 0) this.lastCombatMs = this.time.now; // POLISH v2 · PKG5 — active-combat signal
     this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
-    for (const dep of processCollectorArrivals(this.state, this.layout)) {
+    // AUDIO E-H (F1): capture the deposits so the atmosphere hook can source collector cues from THEM
+    // (processCollectorArrivals), never obs.result.arrivedUnitIds (which carries rival arrivals → x-ray).
+    const collectorDeposits = processCollectorArrivals(this.state, this.layout);
+    for (const dep of collectorDeposits) {
       this.flashDeposit(dep.collectorId, dep.banked);
       // LANE K — a collector REPORTED IN: log the bank so income shows up on THE WIRE, not just a one-frame
       // float. ⭐ NO-X-RAY: PLAYER deposits only — processCollectorArrivals also yields rival collectors, and
@@ -1951,6 +1994,12 @@ export class IsoScene extends Phaser.Scene {
       this.recordInfoEvent('hq.attack', 'OUR HQ IS UNDER ATTACK', hq?.gx, hq?.gy);
     }
     this.state = harvestIncidents(this.state);
+    // AUDIO E-H (H3) — THE ONE atmosphere touch point. Post-updateAndObserve (reads obs.result + the
+    // reassigned this.state) and post-processCollectorArrivals, inside the un-paused gate. Behind ?audio
+    // (default OFF). The adapter owns all AudioManager calls; /src/sim is untouched. Exactly one hook.
+    if (this.atmosphereAudioEnabled && this.atmosphere) {
+      this.atmosphere.step(this.buildAtmosphereFrame(obs, collectorDeposits));
+    }
     // RTS-17: the contest resolved — surface the win/lose readout.
     if (obs.endgame || this.state.status !== 'playing') this.showEndgame();
     this.advanceDossier(); // LANE D — earn aged intel once per settlement (no-op between ticks; never edits the sim)
@@ -2900,6 +2949,81 @@ export class IsoScene extends Phaser.Scene {
    * dev aid. Reused, never re-derived — there is no parallel visibility rule anywhere in the scene. */
   private isVisibleTile(pos: { gx: number; gy: number }): boolean {
     return this.debugRevealAll || isRevealed(this.fog, Math.round(pos.gx), Math.round(pos.gy));
+  }
+
+  // ── AUDIO E-H (H3) — the two injected closures the atmosphere coordinator consumes ──────────────
+  /** THE single audio eligibility closure (spec H.5): {revealed, onScreen} feeding weaponFeedback's
+   * shouldEmitFeedback — an ADAPTER over the existing NO-X-RAY gate, never a parallel LOS/isVisible rule.
+   * `revealed` rides isVisibleTile (so ?reveal/debugRevealAll lifts the audio veil exactly as the render's);
+   * `onScreen` is pure camera bounds — debugRevealAll must NEVER touch it, or a ?reveal board would make
+   * off-screen audio audible. The coordinator/planner call shouldEmitFeedback(revealed, onScreen) itself. */
+  private isAudioFeedbackEligible = (gx: number, gy: number): EmitterEligibility => {
+    const c = gridToScreen(gx, gy);
+    return { revealed: this.isVisibleTile({ gx, gy }), onScreen: this.onScreen(c.x, c.y) };
+  };
+
+  /** The district BED resolver's tile→archetype closure. Fog-gated (unexplored ⇒ null ⇒ zero weight,
+   * spec E.4 — a bed must never switch on a district the camera only panned over unrevealed), then the
+   * id→ordinal→archetype translation (districtOfTile stores sim instance ids, the bed catalog is keyed by
+   * ART archetype). Memoized per district id (static per match) so it is not a findIndex per tile. */
+  private atmosphereDistrictAt = (gx: number, gy: number): DistrictArchetype | null => {
+    if (!this.isVisibleTile({ gx, gy })) return null;
+    const x = Math.round(gx), y = Math.round(gy), size = this.world.size;
+    if (x < 0 || y < 0 || x >= size || y >= size) return null;
+    const did = this.world.districtOfTile[y * size + x];
+    if (!did) return null;
+    let arch = this.atmoArchCache.get(did);
+    if (arch === undefined) {
+      const idx = this.state.districts.findIndex((d) => d.id === did);
+      if (idx < 0) return null;
+      arch = districtIdentityFor(idx).archetype; // IsoScene:district ordinal→identity precedent
+      this.atmoArchCache.set(did, arch);
+    }
+    return arch;
+  };
+
+  /** AUDIO E-H (H3) — the AudioSink: the ONLY place atmosphere intents become AudioManager calls (the
+   * coordinator + adapter stay Phaser-free; this binds them to this.audio). Loops route through the H3
+   * loop-voice seam; pan/positional are already dropped by the adapter (the manager is stereo-flat). */
+  private audioSink(): AtmosphereSink {
+    const audio = this.audio;
+    return {
+      playOneShot: (key, gain) => audio.play(key, { volScale: gain }),
+      startLoop: (voiceId, key, gain, fadeInMs) => audio.loopVoice(voiceId, key, { volScale: gain, fadeInMs }),
+      stopLoop: (voiceId, fadeOutMs) => audio.stopVoice(voiceId, fadeOutMs),
+      setLoopGain: (voiceId, gain) => audio.setVoiceGain(voiceId, gain),
+      duck: (holdMs) => audio.duck(holdMs),
+    };
+  }
+
+  /** Build the AtmosphereFrame from the post-updateAndObserve surface (obs.result + the reassigned
+   * this.state) + the captured processCollectorArrivals deposits (NEVER obs.result.arrivedUnitIds, which
+   * carries rival arrivals → x-ray leak). Reads a NEW state.log slice via our own cursor. */
+  private buildAtmosphereFrame(obs: ObserveResult, collectorDeposits: readonly DepositEvent[]): AtmosphereFrame {
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const logSlice = this.state.log.slice(this.atmoLogCursor);
+    this.atmoLogCursor = this.state.log.length;
+    return {
+      nowMs: this.time.now,
+      camera: {
+        centerTile: screenToGrid(view.x + view.width / 2, view.y + view.height / 2),
+        audioZoom: cam.zoom / ZOOM_STOPS[1], // R2: cam.zoom vs the MID resting zoom (0.6)
+      },
+      districtAt: this.atmosphereDistrictAt,
+      eligibility: this.isAudioFeedbackEligible,
+      observation: {
+        logEvents: logSlice,
+        extortion: obs.result.extortion,
+        interceptions: obs.result.interceptions,
+        combatEventCount: obs.result.combat.length, // ducking side-chain ONLY — never replays combat SFX
+        tileOfFront: (frontId) => businessTileOf(this.layout, frontId) ?? undefined,
+      },
+      collectorDeposits,
+      collectorArrivals: collectorDeposits.map((d) => ({ collectorId: d.collectorId, familyId: d.familyId })),
+      emitterSources: this.atmoEmitterSources,
+      playerFamilyId: 'player',
+    };
   }
 
   /** The world context the sim verbs need: the nav grid + THE fog predicate (isVisibleTile), the same

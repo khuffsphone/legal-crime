@@ -406,6 +406,50 @@ export class AudioManager {
     if (this.ambienceSound) (this.ambienceSound as Phaser.Sound.BaseSound & { volume: number }).volume = this.bedVol('ambience', 'ambience_city');
   }
 
+  // ── AUDIO E-H (H3) — ATMOSPHERE LOOP VOICES ─────────────────────────────────────────────────────
+  // District beds (E) + anchor prop loops (G) need per-voiceId looped playback the music conductor's
+  // fixed-key beds can't provide. The H3 scene adapter drives these through its AudioSink, which lands
+  // here — so every atmosphere loop stays UNDER the manager: bus volume + mute + the unknown/unloaded-key
+  // no-op all apply (a not-yet-shipped .wav is silent, never an error), exactly like play(). Stereo-flat:
+  // the manager has no positional audio, so the adapter drops the intents' pan/tile before calling in.
+  private atmoVoices = new Map<string, { snd: Phaser.Sound.BaseSound; key: string }>();
+
+  /** Start (or re-point) a looping atmosphere voice under a stable voiceId, fading in. No-op on an
+   * unloaded/unknown key (F2 graceful degradation). Re-pointing a live voiceId to the same key just
+   * re-trims; to a new key retires the old loop first, so a voiceId never stacks two loops. */
+  loopVoice(voiceId: string, key: string, opts: { volScale?: number; fadeInMs?: number } = {}): void {
+    const def = DEFS.get(key);
+    if (!def || !this.loaded.has(key)) return; // unknown/unloaded → silent no-op (matches play())
+    const existing = this.atmoVoices.get(voiceId);
+    if (existing && existing.key === key) { this.setVoiceGain(voiceId, opts.volScale ?? 1); return; }
+    if (existing) this.stopVoice(voiceId, 200); // voiceId re-pointed to a different clip → retire the old
+    const target = this.voiceVolume(def, { volScale: opts.volScale });
+    const snd = this.scene.sound.add(key, { loop: true, volume: opts.fadeInMs ? 0 : target });
+    snd.play();
+    if (opts.fadeInMs) this.scene.tweens.add({ targets: snd, volume: target, duration: opts.fadeInMs });
+    this.atmoVoices.set(voiceId, { snd, key });
+  }
+
+  /** Re-trim a live atmosphere voice's gain WITHOUT restarting it (bus volume + mute still apply). */
+  setVoiceGain(voiceId: string, volScale: number): void {
+    const v = this.atmoVoices.get(voiceId);
+    const def = v && DEFS.get(v.key);
+    if (!v || !def) return;
+    this.scene.tweens.killTweensOf(v.snd);
+    (v.snd as Phaser.Sound.BaseSound & { volume: number }).volume = this.voiceVolume(def, { volScale });
+  }
+
+  /** Fade out + stop a looping atmosphere voice (no-op on an unknown voiceId). */
+  stopVoice(voiceId: string, fadeOutMs = 0): void {
+    const v = this.atmoVoices.get(voiceId);
+    if (!v) return;
+    this.atmoVoices.delete(voiceId);
+    const snd = v.snd;
+    this.scene.tweens.killTweensOf(snd);
+    if (fadeOutMs > 0) this.scene.tweens.add({ targets: snd, volume: 0, duration: fadeOutMs, onComplete: () => snd.stop() });
+    else snd.stop();
+  }
+
   /** A clip is available to play (loaded). */
   has(key: string): boolean { return this.loaded.has(key); }
   stingForPhaseKey(phase: MusicPhase): string { return stingForPhase(phase); }
