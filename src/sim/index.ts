@@ -710,3 +710,22 @@ export {
   fedWarningMessage,
   resolveFederalWarnings,
 } from './federal';
+// FEDERAL CASE-BUILDING (spec-partial, pure) — types/constants/math/readout. NOT wired into tick/scene
+// (a later ticket); exported so tests + the future wrapper consume one surface.
+export {
+  type FederalCaseStage, type PlayerCaseSignal, type DisruptionActionType, type RacketType,
+  type EvidenceSourceBreakdown, type FederalCaseInput, type FederalCaseState, type PlayerCaseReadout,
+  type DisruptionOutcome, type CompletedCaseConsequences,
+} from './federalCaseTypes';
+export { FEDERAL_CASE_CONSTANTS, DISRUPTION_CONSTANTS } from './federalCaseConstants';
+export {
+  clamp01, lerp, sum,
+  computeHeatEvidencePerDay, getRacketEvidenceWeight, computeRacketEvidencePerDay,
+  computeViolenceEvidencePerDay, computeInformantEvidencePerDay, computeLegalMitigationPerDay,
+  computeEvidenceDecayPerDay, computeEvidenceDelta, applyEvidenceDelta,
+  getEffectiveIndictmentThreshold, getEffectiveRaidThreshold, determineFederalCaseStage, advanceCaseTimers,
+  resolveDisruptionAction, computeCaseSeverity01, computeCompletedCaseConsequences,
+} from './federalCaseMath';
+export {
+  getPlayerEvidenceBand, getPlayerCaseSignals, getPlayerCaseReadout,
+} from './federalCaseReadout';
