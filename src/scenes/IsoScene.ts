@@ -339,6 +339,7 @@ import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
 // authoritative fallback). Pure flag/state/facing math + Phaser loader/animator/view.
 import { spritesRequested, spriteScaleParam, spriteDisplayScale } from './render/unitSpriteState';
 import { preloadUnitSprites, registerUnitAnims, availableActions, THUG_SPRITE_CONFIG, COP_SPRITE_CONFIG } from './render/unitSpriteLoader';
+import { propsRequested, preloadStreetProps, placeStreetProps } from './env/streetProps';
 import { ensureUnitSprite, driveUnitSprite } from './render/unitSpriteView';
 import { THUG_FACING_OFFSET } from './render/unitFacingQuantize';
 import { facadeKitRequested } from './env/facadeKitFlag';
@@ -751,6 +752,7 @@ export class IsoScene extends Phaser.Scene {
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
   // ?sprites — opt-in 3D iso atlas swap (default OFF). spriteSheetReady gates it on the sheets loading.
   private spritesEnabled = spritesRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
+  private propsEnabled = typeof window !== 'undefined' && propsRequested(window.location?.search ?? ''); // ?props - Meshy street-prop layer (default OFF)
   // ?facadekit — opt-in Phase-2 vector storefronts on LOW-TIER buildings (OFF by default; the old drawFacade
   // look is untouched when off). Reversible rollback valve for the all-at-once replace.
   private facadeKitEnabled = facadeKitRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
@@ -871,6 +873,7 @@ export class IsoScene extends Phaser.Scene {
       preloadUnitSprites(this, THUG_SPRITE_CONFIG);
       preloadUnitSprites(this, COP_SPRITE_CONFIG); // the Chicago beat-cop atlas (marker stays fallback)
     }
+    if (this.propsEnabled) preloadStreetProps(this); // ?props - the 24 Meshy street-prop atlases
   }
 
   /** RESTART TEARDOWN — scene.restart() (F9/menu quickload, slot/file load, endgame restart) destroys
@@ -1004,6 +1007,7 @@ export class IsoScene extends Phaser.Scene {
 
     this.drawCity();
     this.drawSetDressing(); // RTS-30b-ground: faction-neutral static props on the open tiles
+    if (this.propsEnabled) placeStreetProps(this, this.world, this.state.seed, this.dressing, this.dressingDark); // ?props - flag-gated Meshy props (fog-gated via dressing lists)
     // RTS-30 living-city Pass 1: pooled ambient pedestrians + cars on the sidewalk/road graphs. Caps are
     // the single "city liveliness" dial (?life=low|med|high, default med). Built BEFORE setupUiCamera so
     // its pre-allocated sprites land in the world-camera partition (ignored by the fixed HUD camera).

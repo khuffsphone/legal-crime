@@ -8,122 +8,170 @@
     {
       "id": "prop_awning__chicago_alley_door_07070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Alley_Door_0707021738_image-to-3d-texture.glb",
-      "family": "awning"
+      "family": "awning",
+      "targetHeightPx": 83.7,
+      "heightFt": 9
     },
     {
       "id": "prop_planter__chicago_building_stoo_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Building_Stoo_0707021645_image-to-3d-texture.glb",
-      "family": "planter"
+      "family": "planter",
+      "targetHeightPx": 18.6,
+      "heightFt": 2
     },
     {
       "id": "prop_awning__chicago_fire_escape_0707",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Fire_Escape_0707021715_image-to-3d-texture.glb",
-      "family": "awning"
+      "family": "awning",
+      "targetHeightPx": 83.7,
+      "heightFt": 9
     },
     {
       "id": "prop_fire_hydrant__chicago_fire_hydrant_070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Fire_Hydrant_0707021842_image-to-3d-texture.glb",
-      "family": "fire_hydrant"
+      "family": "fire_hydrant",
+      "targetHeightPx": 26.0,
+      "heightFt": 2.8
     },
     {
       "id": "prop_vendor_cart__chicago_hand_cart_070702",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Hand_Cart_0707021710_image-to-3d-texture.glb",
-      "family": "vendor_cart"
+      "family": "vendor_cart",
+      "targetHeightPx": 46.5,
+      "heightFt": 5
     },
     {
       "id": "prop_bollard__chicago_hitching_post_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Hitching_Post_0707021719_image-to-3d-texture.glb",
-      "family": "bollard"
+      "family": "bollard",
+      "targetHeightPx": 32.6,
+      "heightFt": 3.5
     },
     {
       "id": "prop_hedge_shrub__chicago_iron_fence_07070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Iron_Fence_0707021724_image-to-3d-texture.glb",
-      "family": "hedge_shrub"
+      "family": "hedge_shrub",
+      "targetHeightPx": 27.9,
+      "heightFt": 3
     },
     {
       "id": "prop_manhole_cover__chicago_manhole_cover_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Manhole_Cover_0707021824_image-to-3d-texture.glb",
-      "family": "manhole_cover"
+      "family": "manhole_cover",
+      "targetHeightPx": 1.4,
+      "heightFt": 0.15
     },
     {
       "id": "prop_news_stand__chicago_newsstand_070702",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Newsstand_0707021829_image-to-3d-texture.glb",
-      "family": "news_stand"
+      "family": "news_stand",
+      "targetHeightPx": 65.1,
+      "heightFt": 7
     },
     {
       "id": "prop_bench__chicago_park_bench_07070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Park_Bench_0707021806_image-to-3d-texture.glb",
-      "family": "bench"
+      "family": "bench",
+      "targetHeightPx": 26.0,
+      "heightFt": 2.8
     },
     {
       "id": "prop_mailbox__chicago_postal_box_07070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Postal_Box_0707021839_image-to-3d-texture.glb",
-      "family": "mailbox"
+      "family": "mailbox",
+      "targetHeightPx": 35.3,
+      "heightFt": 3.8
     },
     {
       "id": "prop_crate_stack__chicago_steamer_trunk_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Steamer_Trunk_0707021633_image-to-3d-texture.glb",
-      "family": "crate_stack"
+      "family": "crate_stack",
+      "targetHeightPx": 32.6,
+      "heightFt": 3.5
     },
     {
       "id": "prop_traffic_signal__chicago_stop_sign_070702",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Stop_Sign_0707021757_image-to-3d-texture.glb",
-      "family": "traffic_signal"
+      "family": "traffic_signal",
+      "targetHeightPx": 74.4,
+      "heightFt": 8
     },
     {
       "id": "prop_sewer_grate__chicago_storm_drain_0707",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Storm_Drain_0707021817_image-to-3d-texture.glb",
-      "family": "sewer_grate"
+      "family": "sewer_grate",
+      "targetHeightPx": 1.4,
+      "heightFt": 0.15
     },
     {
       "id": "prop_statue_monument__chicago_street_clock_070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Street_Clock_0707021730_image-to-3d-texture.glb",
-      "family": "statue_monument"
+      "family": "statue_monument",
+      "targetHeightPx": 102.3,
+      "heightFt": 11
     },
     {
       "id": "prop_street_lamp__chicago_street_lamp_0707",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Street_Lamp_0707022059_image-to-3d-texture.glb",
-      "family": "street_lamp"
+      "family": "street_lamp",
+      "targetHeightPx": 111.6,
+      "heightFt": 12
     },
     {
       "id": "prop_crate_stack__chicago_street_props_070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Street_Props_0707022011_image-to-3d-texture.glb",
-      "family": "crate_stack"
+      "family": "crate_stack",
+      "targetHeightPx": 32.6,
+      "heightFt": 3.5
     },
     {
       "id": "prop_blade_sign__chicago_street_sign_p_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Street_Sign_P_0707021812_image-to-3d-texture.glb",
-      "family": "blade_sign"
+      "family": "blade_sign",
+      "targetHeightPx": 27.9,
+      "heightFt": 3
     },
     {
       "id": "prop_police_call_box__chicago_telephone_boo_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Telephone_Boo_0707021753_image-to-3d-texture.glb",
-      "family": "police_call_box"
+      "family": "police_call_box",
+      "targetHeightPx": 41.9,
+      "heightFt": 4.5
     },
     {
       "id": "prop_trash_can__chicago_trash_can_070702",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Trash_Can_0707021744_image-to-3d-texture.glb",
-      "family": "trash_can"
+      "family": "trash_can",
+      "targetHeightPx": 26.0,
+      "heightFt": 2.8
     },
     {
       "id": "prop_utility_pole__chicago_utility_pole_070",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Utility_Pole_0707021655_image-to-3d-texture.glb",
-      "family": "utility_pole"
+      "family": "utility_pole",
+      "targetHeightPx": 279.0,
+      "heightFt": 30
     },
     {
       "id": "prop_vendor_cart__chicago_vendor_pushca_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Chicago_Vendor_Pushca_0707021650_image-to-3d-texture.glb",
-      "family": "vendor_cart"
+      "family": "vendor_cart",
+      "targetHeightPx": 46.5,
+      "heightFt": 5
     },
     {
       "id": "prop_produce_stall__speakeasy_bar_counter_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Speakeasy_Bar_Counter_0707022051_image-to-3d-texture.glb",
-      "family": "produce_stall"
+      "family": "produce_stall",
+      "targetHeightPx": 60.5,
+      "heightFt": 6.5
     },
     {
       "id": "prop_produce_stall__speakeasy_table_and_c_07",
       "glb": "C:\\Users\\KHuff\\legal-crime\\assets\\raw\\meshy\\Meshy_AI_Speakeasy_Table_and_C_0707022016_image-to-3d-texture.glb",
-      "family": "produce_stall"
+      "family": "produce_stall",
+      "targetHeightPx": 60.5,
+      "heightFt": 6.5
     }
   ]
 }
