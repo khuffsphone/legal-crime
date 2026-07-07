@@ -15,6 +15,10 @@ export interface SpriteUnitConfig {
   actions: string[];
   /** uniform cell size (px) the render emits; must match manifest.frameCanvas. */
   cell: number;
+  /** The clip that MUST be present for the sprite view to engage (defaults to CORE_ACTION='idle').
+   * Units rendered without an idle sheet (e.g. the beat cop ships walk/run/attack) set this to a clip
+   * they do have, so readiness keys on a real texture rather than a missing one. */
+  coreAction?: string;
 }
 
 /** The CORE clip every sprite unit must have for the view to engage; the rest are optional and degrade via
@@ -29,6 +33,16 @@ export const THUG_SPRITE_CONFIG: SpriteUnitConfig = {
   // ships idle+walk(+run/hurt); attack arrives later and falls back to idle until then.
   actions: ['idle', 'walk', 'run', 'hurt', 'attack'],
   cell: 256,
+};
+
+// The Chicago beat-cop atlas (Meshy GLB render). Ships walk/run/attack (no idle sheet — the loader's
+// fallback chain resolves a missing clip to a rendered one, so patrol/idle cops degrade to walk).
+export const COP_SPRITE_CONFIG: SpriteUnitConfig = {
+  unitName: 'cop',
+  baseUrl: 'assets/sprites/units/',
+  actions: ['walk', 'run', 'attack'],
+  cell: 256,
+  coreAction: 'walk', // no idle sheet — readiness + fallback key on walk
 };
 
 export function manifestCacheKey(unitName: string): string {
@@ -67,7 +81,7 @@ export function availableActions(scene: Phaser.Scene, cfg: SpriteUnitConfig = TH
 export function unitSpritesReady(scene: Phaser.Scene, cfg: SpriteUnitConfig = THUG_SPRITE_CONFIG): boolean {
   const manifest = scene.cache.json.get(manifestCacheKey(cfg.unitName)) as UnitSpriteManifest | undefined;
   if (!manifest || !manifest.actions) return false;
-  return availableActions(scene, cfg).has(CORE_ACTION);
+  return availableActions(scene, cfg).has(cfg.coreAction ?? CORE_ACTION);
 }
 
 /**

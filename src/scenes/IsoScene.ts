@@ -57,6 +57,7 @@ import {
   threatenedCollectors,
   anyCollectorInDanger,
   unitFacing,
+  type Facing,
   facesRight,
   inspectUnit,
   inspectBusiness,
@@ -337,7 +338,7 @@ import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
 // ?sprites — the OPT-IN 3D-rendered iso sprite-sheet view for the thug (procedural figure stays the
 // authoritative fallback). Pure flag/state/facing math + Phaser loader/animator/view.
 import { spritesRequested, spriteScaleParam, spriteDisplayScale } from './render/unitSpriteState';
-import { preloadUnitSprites, registerUnitAnims, availableActions, THUG_SPRITE_CONFIG } from './render/unitSpriteLoader';
+import { preloadUnitSprites, registerUnitAnims, availableActions, THUG_SPRITE_CONFIG, COP_SPRITE_CONFIG } from './render/unitSpriteLoader';
 import { ensureUnitSprite, driveUnitSprite } from './render/unitSpriteView';
 import { THUG_FACING_OFFSET } from './render/unitFacingQuantize';
 import { facadeKitRequested } from './env/facadeKitFlag';
@@ -755,6 +756,10 @@ export class IsoScene extends Phaser.Scene {
   private facadeKitEnabled = facadeKitRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private spriteScaleMul = spriteScaleParam(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private spriteSheetReady = false;
+  private copSpriteReady = false; // ?sprites — the cop atlas registered (marker stays fallback if not)
+  private copSpriteScale = 1;
+  private copSpriteActions: ReadonlySet<string> = new Set();
+  private copSprites = new Map<string, Phaser.GameObjects.Sprite>(); // per beat-cop animated sprite
   private spriteScale = 0.25; // display scale (manifest figurePxH → FIGURE_PX), recomputed in create()
   private spriteActions: ReadonlySet<string> = new Set(); // which clips actually rendered (drives fallback)
   private grain?: Phaser.GameObjects.TileSprite;
@@ -862,7 +867,10 @@ export class IsoScene extends Phaser.Scene {
     // RTS-27: register the audio library for loading (missing clips 404 → graceful no-op).
     AudioManager.preload(this);
     // ?sprites — queue the thug iso sheets + manifest (missing → graceful no-op, procedural stays up).
-    if (this.spritesEnabled) preloadUnitSprites(this, THUG_SPRITE_CONFIG);
+    if (this.spritesEnabled) {
+      preloadUnitSprites(this, THUG_SPRITE_CONFIG);
+      preloadUnitSprites(this, COP_SPRITE_CONFIG); // the Chicago beat-cop atlas (marker stays fallback)
+    }
   }
 
   /** RESTART TEARDOWN — scene.restart() (F9/menu quickload, slot/file load, endgame restart) destroys
@@ -897,6 +905,7 @@ export class IsoScene extends Phaser.Scene {
     this.districtLabels.clear();
     this.downedBodyViews.clear();
     this.copViews.clear(); // BEAT-COP P0 — marker pool; cop ids are stable, so corpses would pin forever
+    this.copSprites.clear(); // ?sprites cop atlas pool — dropped with the marker pool (same teardown law)
     // lazily-created (get-or-create) display singletons — undefined makes each creator rebuild a live one
     // instead of silently reusing a corpse (the copViews lesson, applied to every sibling).
     this.copDebugGfx = undefined; // BEAT-COP P0 — the ?debugCops=1 overlay
@@ -957,6 +966,13 @@ export class IsoScene extends Phaser.Scene {
         this.spriteSheetReady = true;
         this.spriteScale = spriteDisplayScale(manifest.figurePxH, FIGURE_PX, this.spriteScaleMul);
         this.spriteActions = availableActions(this, THUG_SPRITE_CONFIG); // clips that actually rendered (idle/walk/…)
+      }
+      // The Chicago beat-cop atlas — same gate. Missing/404 ⇒ copSpriteReady false ⇒ the marker dot stays.
+      const copManifest = registerUnitAnims(this, COP_SPRITE_CONFIG);
+      if (copManifest) {
+        this.copSpriteReady = true;
+        this.copSpriteScale = spriteDisplayScale(copManifest.figurePxH, FIGURE_PX, this.spriteScaleMul);
+        this.copSpriteActions = availableActions(this, COP_SPRITE_CONFIG);
       }
     }
 
@@ -3641,7 +3657,10 @@ export class IsoScene extends Phaser.Scene {
     const cops: BeatCop[] = this.copsEnabled ? (this.state.beatCops ?? []) : [];
     const live = new Set(cops.map((c) => c.id));
     for (const [id, g] of this.copViews) {
-      if (!live.has(id)) { g.destroy(); this.copViews.delete(id); }
+      if (!live.has(id)) {
+        g.destroy(); this.copViews.delete(id);
+        this.copSprites.get(id)?.destroy(); this.copSprites.delete(id); // drop the paired atlas sprite too
+      }
     }
     this.copDebugGfx?.clear();
     for (const c of cops) {
@@ -3656,10 +3675,32 @@ export class IsoScene extends Phaser.Scene {
         this.copViews.set(c.id, g);
       }
       const shown = copMarkerVisible(this.fog, c, this.debugRevealAll);
-      g.setVisible(shown);
-      if (!shown) continue; // hidden cop: nothing drawn, nothing leaked
       const sp = gridToScreen(c.pos.gx, c.pos.gy);
-      g.setPosition(sp.x, sp.y).setDepth(depthValue(Math.round(c.pos.gx), Math.round(c.pos.gy)) * 10 + 3);
+      const copDepth = depthValue(Math.round(c.pos.gx), Math.round(c.pos.gy)) * 10 + 3;
+      // ?sprites — the Chicago beat-cop atlas. Same NO-X-RAY gate (copMarkerVisible): a hidden cop draws
+      // NOTHING (sprite invisible too). When the sprite is up the marker dot hides; if the atlas never
+      // loaded (copSpriteReady false) the dot stays authoritative.
+      if (this.copSpriteReady) {
+        g.setVisible(false);
+        let cs = this.copSprites.get(c.id);
+        if (!cs) { cs = ensureUnitSprite(this, COP_SPRITE_CONFIG.unitName); this.worldFx(cs); this.copSprites.set(c.id, cs); }
+        const facing: Facing = (['N', 'E', 'S', 'W'] as const)[c.headingDir] ?? 'S';
+        const moving = c.mode === 'patrol' || c.mode === 'respond' || c.mode === 'engage';
+        driveUnitSprite(cs, {
+          unitName: COP_SPRITE_CONFIG.unitName,
+          facing,
+          dirOffset: THUG_FACING_OFFSET, // same Meshy-forward calibration as the thug rows
+          attacking: c.mode === 'engage',
+          moving, loco: moving ? 1 : 0,
+          availableActions: this.copSpriteActions, // walk/run/attack; idle degrades to walk
+          x: sp.x, y: sp.y, depth: copDepth, alpha: 1, visible: shown, scale: this.copSpriteScale,
+        });
+        if (!shown) continue; // hidden cop: sprite invisible above, nothing leaked
+      } else {
+        g.setVisible(shown);
+        if (!shown) continue; // hidden cop: nothing drawn, nothing leaked
+      }
+      g.setPosition(sp.x, sp.y).setDepth(copDepth);
       if (this.debugCops && c.path.length > 0) {
         // NO-X-RAY: the patrol edge can point INTO the shroud — draw it only once the WAYPOINT tile
         // is revealed too (?debugCops does not imply ?reveal; the veil discloses nothing).
