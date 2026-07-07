@@ -158,7 +158,16 @@ export async function downloadTaskAssets(
     } else if (opts.dryRun) {
       // planning only — do not touch disk
     } else {
-      const data = await fetchAsset(target);
+      let data: Uint8Array;
+      try {
+        data = await fetchAsset(target);
+      } catch (err) {
+        // Surface the task id alongside the (already host+status, key-redacted)
+        // message so a persistent failure is diagnosable.
+        const status = err instanceof MeshyApiError ? err.status : undefined;
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new MeshyApiError(`Task ${task.id} (${target.role}): ${msg}`, status);
+      }
       const part = `${dest}.part`;
       await fs.writeFile(part, data);
       await fs.rename(part, dest);

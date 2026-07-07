@@ -24,6 +24,10 @@ export interface PullOptions {
   logger?: (msg: string) => void;
   /** Injectable clock for deterministic manifest timestamps in tests. */
   now?: () => number;
+  /** Polite delay (ms) between tasks to avoid hammering the API (default 0). */
+  interTaskDelayMs?: number;
+  /** Injectable sleep, for deterministic tests (defaults to setTimeout). */
+  sleepImpl?: (ms: number) => Promise<void>;
 }
 
 export interface PullTaskSummary {
@@ -47,6 +51,11 @@ export interface PullSummary {
 /** True when a completed task actually has a GLB to pull. */
 function hasGlb(task: MeshyTask): boolean {
   return Boolean(task.model_urls?.glb);
+}
+
+function sleep(ms: number, impl?: (ms: number) => Promise<void>): Promise<void> {
+  if (impl) return impl(ms);
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -91,8 +100,29 @@ export async function pullAssets(
       `  ${kind}: ${tasks.length} total, ${completed.length} completed, ${selected.length} to pull`,
     );
 
-    for (const task of selected) {
-      const result = await downloadTaskAssets(client, task, {
+    let first = true;
+    for (const listTask of selected) {
+      // Polite spacing between tasks so we don't hammer the API on large accounts.
+      if (!first && !opts.dryRun && (opts.interTaskDelayMs ?? 0) > 0) {
+        await sleep(opts.interTaskDelayMs!, opts.sleepImpl);
+      }
+      first = false;
+
+      // A listed task's model_url is a pre-signed link that expires (~3 days), so
+      // the URL baked into the LIST response is often stale. Re-fetch the task by
+      // id immediately before downloading to mint FRESH signed URLs. (Skipped in
+      // dry-run, which only reports what the listing shows.)
+      let detail = listTask;
+      if (!opts.dryRun) {
+        try {
+          detail = await client.getTask(kind, listTask.id);
+        } catch (err) {
+          log(`  ! ${listTask.id}: get-by-id failed (${(err as Error).message}); falling back to list URL`);
+          detail = listTask;
+        }
+      }
+
+      const result = await downloadTaskAssets(client, detail, {
         outDir: opts.outDir,
         dryRun: opts.dryRun,
         overwrite: opts.overwrite,
@@ -105,20 +135,20 @@ export async function pullAssets(
       totalSkipped += skipped;
 
       if (!opts.dryRun) {
-        manifest.tasks[task.id] = buildEntry(task, kind, result, pulledAt);
+        manifest.tasks[detail.id] = buildEntry(detail, kind, result, pulledAt);
       }
 
-      const mode = taskModeLabel(kind, task);
+      const mode = taskModeLabel(kind, detail);
       pulled.push({
-        id: task.id,
+        id: detail.id,
         kind,
         mode,
-        prompt: taskPrompt(task),
-        status: String(task.status),
+        prompt: taskPrompt(detail),
+        status: String(detail.status),
         filesDownloaded: downloaded,
         filesSkipped: skipped,
       });
-      log(`  ${opts.dryRun ? "[dry-run] " : ""}${task.id} (${mode}): +${downloaded} new / =${skipped} skipped`);
+      log(`  ${opts.dryRun ? "[dry-run] " : ""}${detail.id} (${mode}): +${downloaded} new / =${skipped} skipped`);
     }
   }
 

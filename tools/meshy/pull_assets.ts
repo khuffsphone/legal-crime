@@ -60,6 +60,9 @@ const MODE_MAP: Record<string, TaskKind[]> = {
   retexture: ["retexture"],
 };
 
+/** Default polite spacing between tasks (get-by-id + downloads) to avoid hammering the API. */
+const DEFAULT_DELAY_MS = 200;
+
 interface CliArgs {
   mode: string;
   since?: number;
@@ -68,6 +71,7 @@ interface CliArgs {
   overwrite: boolean;
   thumbnails: boolean;
   pageSize?: number;
+  delayMs: number;
   help: boolean;
 }
 
@@ -91,6 +95,7 @@ function parseArgs(argv: string[]): CliArgs {
     dryRun: false,
     overwrite: false,
     thumbnails: false,
+    delayMs: DEFAULT_DELAY_MS,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -127,6 +132,14 @@ function parseArgs(argv: string[]): CliArgs {
         args.pageSize = n;
         break;
       }
+      case "--delay": {
+        const n = Number(next());
+        if (!Number.isFinite(n) || n < 0) {
+          throw new Error("--delay must be a non-negative number of milliseconds");
+        }
+        args.delayMs = n;
+        break;
+      }
       case "-h":
       case "--help":
         args.help = true;
@@ -148,11 +161,13 @@ Options:
   --overwrite                       Re-download even if the file exists
   --thumbnails                      Also download the thumbnail render
   --page-size <n>                   List page size (max 50)
+  --delay <ms>                      Delay between tasks (default 200; polite to the API)
   -h, --help                        Show this help
 
 Environment:
-  MESHY_API_KEY   Required. Set in your shell or in tools/meshy/.env
-  MESHY_API_BASE  Optional API base override (default https://api.meshy.ai)
+  MESHY_API_KEY     Required. Set in your shell or in tools/meshy/.env
+  MESHY_API_BASE    Optional API base override (default https://api.meshy.ai)
+  MESHY_DOWNLOAD_UA Optional User-Agent for asset downloads (CDN 403 workaround)
 `;
 
 function truncate(text: string, max: number): string {
@@ -226,6 +241,7 @@ async function main(): Promise<void> {
     overwrite: args.overwrite,
     includeThumbnail: args.thumbnails,
     pageSize: args.pageSize,
+    interTaskDelayMs: args.delayMs,
     logger: (msg) => console.log(msg),
   });
 

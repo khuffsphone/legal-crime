@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pullAssets } from "../src/pull.js";
-import type { MeshyClientLike } from "../src/client.js";
+import { MeshyApiError, type MeshyClientLike } from "../src/client.js";
 import type { MeshyTask, TaskKind } from "../src/types.js";
 
 let tmp: string;
@@ -16,15 +16,20 @@ afterEach(async () => {
 
 function makeClient(tasksByKind: Partial<Record<TaskKind, MeshyTask[]>>): MeshyClientLike & {
   downloadArrayBuffer: ReturnType<typeof vi.fn>;
+  getTask: ReturnType<typeof vi.fn>;
 } {
   return {
     createTask: vi.fn(),
-    getTask: vi.fn(),
+    // get-by-id returns the same task from the list by default (fresh URL == list URL).
+    getTask: vi.fn(async (kind: TaskKind, id: string) => (tasksByKind[kind] ?? []).find((t) => t.id === id)),
     listTasks: vi.fn(),
     listAllTasks: vi.fn(async (kind: TaskKind) => tasksByKind[kind] ?? []),
     pollTask: vi.fn(),
     downloadArrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3, 4])),
-  } as unknown as MeshyClientLike & { downloadArrayBuffer: ReturnType<typeof vi.fn> };
+  } as unknown as MeshyClientLike & {
+    downloadArrayBuffer: ReturnType<typeof vi.fn>;
+    getTask: ReturnType<typeof vi.fn>;
+  };
 }
 
 const tasks: MeshyTask[] = [
@@ -80,12 +85,37 @@ describe("pullAssets", () => {
     expect(summary2.totalSkipped).toBe(4);
   });
 
-  it("dry-run downloads nothing and writes no manifest", async () => {
+  it("dry-run downloads nothing, re-fetches nothing, and writes no manifest", async () => {
     const client = makeClient({ "text-to-3d": tasks });
     const summary = await pullAssets(client, { kinds: ["text-to-3d"], outDir: tmp, dryRun: true, now: () => 0 });
     expect(client.downloadArrayBuffer).not.toHaveBeenCalled();
+    expect(client.getTask).not.toHaveBeenCalled(); // no proactive re-fetch in dry-run
     expect(summary.dryRun).toBe(true);
     await expect(fs.stat(path.join(tmp, "manifest.json"))).rejects.toBeTruthy();
+  });
+
+  it("re-fetches each task by id and downloads the FRESH url, not the stale list url", async () => {
+    const staleUrl = "https://assets.meshy.ai/tasks/old-1/output/model.glb?sig=STALE";
+    const freshUrl = "https://assets.meshy.ai/tasks/old-1/output/model.glb?sig=FRESH";
+    const listTask: MeshyTask = { id: "old-1", status: "SUCCEEDED", created_at: 1, model_urls: { glb: staleUrl } };
+    const freshTask: MeshyTask = { id: "old-1", status: "SUCCEEDED", created_at: 1, model_urls: { glb: freshUrl } };
+
+    const client = makeClient({ "image-to-3d": [listTask] });
+    client.getTask.mockResolvedValue(freshTask); // get-by-id mints a fresh signed URL
+    const fetched: string[] = [];
+    client.downloadArrayBuffer.mockImplementation(async (url: string) => {
+      fetched.push(url);
+      if (url === staleUrl) throw new MeshyApiError("stale (HTTP 403)", 403);
+      return new Uint8Array([1, 2, 3]);
+    });
+
+    const summary = await pullAssets(client, { kinds: ["image-to-3d"], outDir: tmp, now: () => 0 });
+
+    expect(client.getTask).toHaveBeenCalledWith("image-to-3d", "old-1");
+    expect(fetched).toEqual([freshUrl]); // fetched ONLY the fresh URL — never the stale list URL
+    expect(summary.totalDownloaded).toBe(1);
+    const manifest = JSON.parse(await fs.readFile(path.join(tmp, "manifest.json"), "utf8"));
+    expect(manifest.tasks["old-1"].model_urls.glb).toBe(freshUrl); // manifest records the fresh URL
   });
 
   it("continues to other kinds when one kind's listing fails", async () => {
