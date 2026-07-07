@@ -5,6 +5,7 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_POLL_TIMEOUT_MS,
   TERMINAL_STATUSES,
+  DOWNLOAD_USER_AGENT,
   endpointPath,
 } from "./constants.js";
 import type { MeshyTask, TaskKind } from "./types.js";
@@ -80,6 +81,28 @@ export function clampPageSize(value: number | undefined, fallback: number): numb
     return Math.min(Math.floor(value), MAX_PAGE_SIZE);
   }
   return fallback;
+}
+
+/** A safe label for an asset URL in error messages: scheme://host/path only.
+ *  Drops the query string so a pre-signed signature/token is never logged. */
+export function safeUrlLabel(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return "the asset URL";
+  }
+}
+
+/** Human hint appended to a failed-download error, keyed on status. */
+function downloadHint(status: number): string {
+  if (status === 403 || status === 401) {
+    return " — the pre-signed URL may have expired (Meshy links last ~3 days) or been blocked by a CDN; re-fetch the task for a fresh URL.";
+  }
+  if (status === 404) {
+    return " — the asset no longer exists (the task result may have been deleted).";
+  }
+  return "";
 }
 
 /** Normalizes a list response into a plain array of tasks. Meshy returns a bare
@@ -302,24 +325,39 @@ export class MeshyClient implements MeshyClientLike {
   }
 
   /**
-   * Downloads a binary asset (GLB/texture) into memory. Meshy asset URLs are
-   * pre-signed, so NO Authorization header is sent (adding one breaks the S3
-   * signature). Bytes are returned untouched — no recompression (pngquant ban).
+   * Downloads a binary asset (GLB/texture) from a Meshy-returned URL into memory.
+   *
+   * These are pre-signed CDN URLs (signature in the query string), so we send:
+   *   - NO Authorization header — S3/R2 rejects a request carrying both a URL
+   *     signature and a Bearer token (=> 403). Only api.meshy.ai calls get the key.
+   *   - a browser-ish User-Agent — Node's fetch sends none, and the CDN can 403
+   *     UA-less/bot requests.
+   * Bytes are returned untouched — no recompression (pngquant ban). Errors name
+   * the host + status but never the signature query string or the API key.
    */
   async downloadArrayBuffer(url: string): Promise<Uint8Array> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.max(this.timeoutMs, 120_000));
     try {
-      const res = await this.fetchImpl(url, { method: "GET", signal: controller.signal });
+      const res = await this.fetchImpl(url, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { "User-Agent": DOWNLOAD_USER_AGENT, Accept: "*/*" },
+      });
       if (!res.ok) {
-        throw new MeshyApiError(`Failed to download asset (HTTP ${res.status}).`, res.status);
+        throw new MeshyApiError(
+          this.redact(
+            `Failed to download asset from ${safeUrlLabel(url)} (HTTP ${res.status})${downloadHint(res.status)}`,
+          ),
+          res.status,
+        );
       }
       const buf = await res.arrayBuffer();
       return new Uint8Array(buf);
     } catch (err) {
       if (err instanceof MeshyApiError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
-      throw new MeshyApiError(this.redact(`Failed to download asset: ${msg}`));
+      throw new MeshyApiError(this.redact(`Failed to download asset from ${safeUrlLabel(url)}: ${msg}`));
     } finally {
       clearTimeout(timer);
     }

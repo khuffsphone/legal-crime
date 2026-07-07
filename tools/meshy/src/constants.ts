@@ -44,3 +44,13 @@ export const CHARACTER_LIMIT = 25000;
  * this and this only — never FBX/OBJ/USDZ.
  */
 export const TARGET_FORMATS_GLB: readonly string[] = ["glb"];
+
+/**
+ * User-Agent sent ONLY on asset (GLB/texture) downloads from the pre-signed CDN
+ * URLs — never on api.meshy.ai calls. Node's global fetch sends no UA by default,
+ * and Meshy's asset host sits behind a CDN (Cloudflare) that can 403 UA-less /
+ * bot-looking requests. A browser-ish UA avoids that. Override via MESHY_DOWNLOAD_UA.
+ */
+export const DOWNLOAD_USER_AGENT: string =
+  process.env.MESHY_DOWNLOAD_UA ||
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";

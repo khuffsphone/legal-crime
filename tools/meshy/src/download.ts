@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type { MeshyClientLike } from "./client.js";
-import type { MeshyTask } from "./types.js";
+import { MeshyApiError, type MeshyClientLike } from "./client.js";
+import type { MeshyTask, TaskKind } from "./types.js";
 
 /** One asset we intend to (or did) write to disk. */
 export interface DownloadedFile {
@@ -77,6 +77,12 @@ export interface DownloadTaskOptions {
   /** Re-download even if the file already exists. */
   overwrite?: boolean;
   includeThumbnail?: boolean;
+  /**
+   * Task kind. When provided, a download that fails with 401/403/404 (a stale or
+   * expired pre-signed URL) triggers a ONE-SHOT re-fetch of the task by id to get
+   * fresh URLs, then a single retry. Without it, such errors propagate.
+   */
+  kind?: TaskKind;
 }
 
 export interface DownloadTaskResult {
@@ -109,6 +115,33 @@ export async function downloadTaskAssets(
   const targets = assetTargets(task, { includeThumbnail: opts.includeThumbnail });
   const files: DownloadedFile[] = [];
 
+  // Lazily-refreshed target list (fresh pre-signed URLs), fetched at most once if
+  // a download hits an auth/expiry error.
+  let refreshedTargets: AssetTarget[] | null = null;
+  const freshUrlForRole = async (role: string): Promise<string | undefined> => {
+    if (!opts.kind) return undefined;
+    if (!refreshedTargets) {
+      const fresh = await client.getTask(opts.kind, task.id);
+      refreshedTargets = assetTargets(fresh, { includeThumbnail: opts.includeThumbnail });
+    }
+    return refreshedTargets.find((t) => t.role === role)?.url;
+  };
+
+  const fetchAsset = async (target: AssetTarget): Promise<Uint8Array> => {
+    try {
+      return await client.downloadArrayBuffer(target.url);
+    } catch (err) {
+      const status = err instanceof MeshyApiError ? err.status : undefined;
+      if ((status === 403 || status === 401 || status === 404) && opts.kind) {
+        const freshUrl = await freshUrlForRole(target.role);
+        if (freshUrl && freshUrl !== target.url) {
+          return client.downloadArrayBuffer(freshUrl); // one retry with a fresh URL
+        }
+      }
+      throw err;
+    }
+  };
+
   if (!opts.dryRun && targets.length > 0) {
     await fs.mkdir(dir, { recursive: true });
   }
@@ -125,7 +158,7 @@ export async function downloadTaskAssets(
     } else if (opts.dryRun) {
       // planning only — do not touch disk
     } else {
-      const data = await client.downloadArrayBuffer(target.url);
+      const data = await fetchAsset(target);
       const part = `${dest}.part`;
       await fs.writeFile(part, data);
       await fs.rename(part, dest);

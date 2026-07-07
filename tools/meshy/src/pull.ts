@@ -97,6 +97,7 @@ export async function pullAssets(
         dryRun: opts.dryRun,
         overwrite: opts.overwrite,
         includeThumbnail: opts.includeThumbnail,
+        kind,
       });
       const downloaded = result.files.filter((f) => !f.skipped).length;
       const skipped = result.files.filter((f) => f.skipped).length;

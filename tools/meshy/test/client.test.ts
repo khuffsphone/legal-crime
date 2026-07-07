@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { MeshyClient, MeshyApiError, normalizeList, clampPageSize } from "../src/client.js";
+import { MeshyClient, MeshyApiError, normalizeList, clampPageSize, safeUrlLabel } from "../src/client.js";
 import type { FetchLike } from "../src/client.js";
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -202,9 +202,54 @@ describe("MeshyClient.downloadArrayBuffer", () => {
     expect(headers.Authorization).toBeUndefined();
   });
 
+  it("succeeds against an S3-style URL that 403s WHEN an Authorization header is present", async () => {
+    // Models the real bug: a pre-signed URL rejects a request carrying both a
+    // signature and a Bearer token. Our downloader must send no auth header.
+    const fetchImpl: FetchLike = vi.fn(async (_url, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (headers.Authorization) return new Response("signed request + auth = conflict", { status: 403 });
+      return new Response(new Uint8Array([7, 7, 7]));
+    });
+    const client = new MeshyClient({ apiKey: "secret", fetchImpl, sleepImpl: noSleep });
+    const bytes = await client.downloadArrayBuffer("https://s3.example.com/o.glb?X-Amz-Signature=abc");
+    expect(bytes).toEqual(new Uint8Array([7, 7, 7]));
+  });
+
+  it("sends a browser-ish User-Agent (CDNs 403 UA-less requests)", async () => {
+    let capturedInit: RequestInit | undefined;
+    const fetchImpl: FetchLike = vi.fn(async (_url, init) => {
+      capturedInit = init;
+      return new Response(new Uint8Array([1]));
+    });
+    const client = new MeshyClient({ apiKey: "k", fetchImpl, sleepImpl: noSleep });
+    await client.downloadArrayBuffer("https://assets.meshy.ai/x.glb?sig=1");
+    const headers = (capturedInit?.headers ?? {}) as Record<string, string>;
+    expect(headers["User-Agent"]).toBeTruthy();
+  });
+
   it("throws MeshyApiError on a failed download", async () => {
     const fetchImpl: FetchLike = vi.fn(async () => new Response("nope", { status: 403 }));
     const client = new MeshyClient({ apiKey: "k", fetchImpl, sleepImpl: noSleep });
     await expect(client.downloadArrayBuffer("https://x/y.glb")).rejects.toBeInstanceOf(MeshyApiError);
+  });
+
+  it("names the host in a 403 error but redacts the signature query string", async () => {
+    const fetchImpl: FetchLike = vi.fn(async () => new Response("denied", { status: 403 }));
+    const client = new MeshyClient({ apiKey: "k", fetchImpl, sleepImpl: noSleep });
+    const err = (await client
+      .downloadArrayBuffer("https://assets.meshy.ai/tasks/abc/model.glb?X-Amz-Signature=SECRETSIG&token=SECRET")
+      .catch((e) => e)) as MeshyApiError;
+    expect(err.status).toBe(403);
+    expect(err.message).toContain("assets.meshy.ai");
+    expect(err.message).toContain("model.glb");
+    expect(err.message).not.toContain("SECRETSIG");
+    expect(err.message).not.toContain("X-Amz-Signature");
+  });
+});
+
+describe("safeUrlLabel", () => {
+  it("keeps scheme/host/path and drops the query string", () => {
+    expect(safeUrlLabel("https://h.example.com/a/b.glb?sig=xyz")).toBe("https://h.example.com/a/b.glb");
+    expect(safeUrlLabel("not a url")).toBe("the asset URL");
   });
 });

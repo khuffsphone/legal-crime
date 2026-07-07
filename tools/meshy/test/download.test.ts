@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { assetTargets, downloadTaskAssets, extFromUrl } from "../src/download.js";
-import type { MeshyClientLike } from "../src/client.js";
+import { MeshyApiError, type MeshyClientLike } from "../src/client.js";
 import type { MeshyTask } from "../src/types.js";
 
 let tmp: string;
@@ -116,5 +116,43 @@ describe("downloadTaskAssets", () => {
     expect(client.downloadArrayBuffer).not.toHaveBeenCalled();
     expect(res.files.every((f) => f.bytes === 0 && !f.skipped)).toBe(true);
     await expect(fs.stat(path.join(tmp, "task-1"))).rejects.toBeTruthy();
+  });
+
+  it("re-fetches the task for a fresh URL and retries once on a 403 (when kind is given)", async () => {
+    const staleGlb = "https://a/model.glb?sig=STALE";
+    const freshGlb = "https://a/model.glb?sig=FRESH";
+    const staleTask: MeshyTask = { id: "task-1", status: "SUCCEEDED", model_urls: { glb: staleGlb } };
+    const freshTask: MeshyTask = { id: "task-1", status: "SUCCEEDED", model_urls: { glb: freshGlb } };
+
+    const downloadArrayBuffer = vi.fn(async (url: string) => {
+      if (url === staleGlb) throw new MeshyApiError("Failed to download asset from https://a/model.glb (HTTP 403)", 403);
+      if (url === freshGlb) return new Uint8Array([5, 5, 5, 5, 5]);
+      throw new Error(`unexpected url ${url}`);
+    });
+    const getTask = vi.fn(async () => freshTask);
+    const client = {
+      ...stubClient(),
+      downloadArrayBuffer,
+      getTask,
+    } as unknown as MeshyClientLike;
+
+    const res = await downloadTaskAssets(client, staleTask, { outDir: tmp, kind: "image-to-3d" });
+
+    expect(getTask).toHaveBeenCalledTimes(1); // refreshed exactly once
+    expect(res.files[0]!.bytes).toBe(5);
+    await expect(fs.stat(path.join(tmp, "task-1", "model.glb"))).resolves.toBeTruthy();
+  });
+
+  it("propagates a 403 (no refresh) when kind is NOT provided", async () => {
+    const downloadArrayBuffer = vi.fn(async () => {
+      throw new MeshyApiError("Failed to download asset from https://a/model.glb (HTTP 403)", 403);
+    });
+    const getTask = vi.fn();
+    const client = { ...stubClient(), downloadArrayBuffer, getTask } as unknown as MeshyClientLike;
+
+    await expect(
+      downloadTaskAssets(client, taskWithGlb, { outDir: tmp }),
+    ).rejects.toBeInstanceOf(MeshyApiError);
+    expect(getTask).not.toHaveBeenCalled();
   });
 });

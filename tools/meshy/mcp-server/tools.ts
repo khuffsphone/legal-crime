@@ -535,6 +535,7 @@ Returns JSON: { task_id, dir, files: [{ role, filename, bytes, skipped }], downl
         outDir,
         overwrite: a.overwrite,
         includeThumbnail: a.include_thumbnail,
+        kind,
       });
 
       // Keep the manifest in sync with the bulk-pull script.
