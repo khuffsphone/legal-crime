@@ -93,6 +93,13 @@ export const JUDGE_MAX_BUST_MITIGATION = 0.8; // cap on bust avoidance from judg
 export const TIER_MAX = 3;
 export const TIER_UPGRADE_FACTOR = 1.0; // upgrade cost = OPERATION_COST[kind] * factor * tier
 
+// Beat-cop P1 — heat integration. A discrete, ONE-SHOT bump applied the moment a cop NEWLY commits to a
+// witnessed crime (edge-triggered, NOT per realtime tick — so it's cadence-safe and can't flood), decaying
+// via the normal HEAT_DECAY and feeding the EXISTING federal ladder (FED_WARN_TIER_1/2/3). Sized between a
+// collection (2) and ordering a hit (25): getting CAUGHT in the act by the law is a real jolt, once. ⚠
+// CC-DERIVED magnitude — reconcile against GPT-Pro's beat-cop spec §-heat.
+export const COP_WITNESS_HEAT = 12;
+
 // Hits & conflict (Phase 8).
 export const HIT_HEAT = 25; // heat the attacker draws for ordering a hit
 export const HIT_VARIANCE_MIN = 0.5; // effective strength = strength * [MIN, MIN+1)
