@@ -56,6 +56,11 @@ export interface ExtortCommand {
   type: 'extort';
   familyId: string;
   businessId: string;
+  /** NO-X-RAY seam (option a): the scene stamps this at ISSUE time via its isVisible closure — `false`
+   * asserts the front's tile is NOT revealed. Absent/`true` (headless, tests, legacy AI) ⇒ treated as
+   * revealed, so numbers stay byte-identical. A `false` assertion collapses the extort to the SAME
+   * rejection as a nonexistent target (see applyExtort) — no unrevealed business is ever named. */
+  issuedFromRevealed?: boolean;
 }
 
 /** Phase 3: establish an illegal operation in a district. */
@@ -203,13 +208,19 @@ function addHeat(family: Family, amount: number): void {
 function applyExtort(state: GameState, cmd: ExtortCommand): GameState {
   const family = findFamily(state, cmd.familyId);
   const found = findBusiness(state, cmd.businessId);
+  // NO-X-RAY seam: the reveal assertion never reaches the log (so a revealed extort is byte-identical to
+  // today, and an unrevealed one is indistinguishable from a nonexistent target).
+  const { issuedFromRevealed, ...cmdLog } = cmd;
 
-  if (!family || !found) {
+  // NO-X-RAY (canon: the sim must not act on an unrevealed tile). An unrevealed front — asserted by the
+  // scene's isVisible closure at issue time — COLLAPSES to the exact "not found" result of a nonexistent
+  // target: same kind, same message, same data. No unrevealed business is named or otherwise revealed.
+  if (!family || !found || issuedFromRevealed === false) {
     state.log.push({
       tick: state.tick,
       kind: 'extort-invalid',
       message: `Invalid extort: family ${cmd.familyId} or business ${cmd.businessId} not found`,
-      data: { ...cmd },
+      data: { ...cmdLog },
     });
     return state;
   }
@@ -221,7 +232,7 @@ function applyExtort(state: GameState, cmd: ExtortCommand): GameState {
       tick: state.tick,
       kind: 'extort-invalid',
       message: `${business.name} is not a front and cannot be extorted`,
-      data: { ...cmd },
+      data: { ...cmdLog },
     });
     return state;
   }
@@ -231,7 +242,7 @@ function applyExtort(state: GameState, cmd: ExtortCommand): GameState {
       tick: state.tick,
       kind: 'extort-invalid',
       message: `${family.name} already extorts ${business.name}`,
-      data: { ...cmd },
+      data: { ...cmdLog },
     });
     return state;
   }
@@ -244,7 +255,7 @@ function applyExtort(state: GameState, cmd: ExtortCommand): GameState {
       tick: state.tick,
       kind: 'extort-blocked',
       message: `${family.name} lacks control in ${district.name} (${control} < ${EXTORT_MIN_CONTROL})`,
-      data: { ...cmd, control },
+      data: { ...cmdLog, control },
     });
     return state;
   }
@@ -264,14 +275,14 @@ function applyExtort(state: GameState, cmd: ExtortCommand): GameState {
       tick: state.tick,
       kind: 'extort-success',
       message: `${family.name} now extorts ${business.name} in ${district.name}`,
-      data: { ...cmd, chance },
+      data: { ...cmdLog, chance },
     });
   } else {
     state.log.push({
       tick: state.tick,
       kind: 'extort-fail',
       message: `${family.name} failed to extort ${business.name} in ${district.name}`,
-      data: { ...cmd, chance },
+      data: { ...cmdLog, chance },
     });
   }
 

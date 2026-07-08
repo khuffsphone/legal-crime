@@ -21,6 +21,7 @@ import { enemyInRange, isCombatant } from './combat';
 import type { GameState } from './types';
 import type { MovableUnit } from './movement';
 import type { GridPos } from './iso';
+import type { IsVisible } from './opPreview'; // type-only ⇒ elided at runtime (no cycle with opPreview)
 
 // ── states ───────────────────────────────────────────────────────────────────────────────────────
 // approach  : thug paths to the front's interaction point (NOT at the building yet)
@@ -234,10 +235,17 @@ export function createMoveAndSabotageAct(
  * (RTS-35d) — a RIVAL-HELD front whose guard has been CLEARED (retake). A rival-held front that is still
  * GUARDED is rejected with a "clear the guard first" reason. Pure read. */
 export function canIssueMoveAndShakedown(
-  state: GameState, thugId: string, frontId: string, frontTile?: GridPos,
+  state: GameState, thugId: string, frontId: string, frontTile?: GridPos, isVisible: IsVisible = () => true,
 ): { ok: boolean; reason: string } {
   const thug = state.units.find((u) => u.id === thugId);
   if (!thug || thug.role === 'collector' || thug.downed) return { ok: false, reason: 'no free muscle — pick a thug, or recruit [6]' };
+  // NO-X-RAY (canon: the sim must not act on an unrevealed tile). An unrevealed front COLLAPSES to the exact
+  // 'no such block' denial of a nonexistent front — so ordering (or the menu's gate) can never confirm a
+  // fogged front exists or that it is extortable. The scene passes its isVisible closure WITH the tile;
+  // headless / opPreview / tests default to visible, so their outcomes stay byte-identical. Fog is monotonic
+  // and a shakedown only converts while the thug is PRESENT (∴ the tile is revealed), so this issue-time gate
+  // is the only reveal check the embodied path needs.
+  if (frontTile && !isVisible(frontTile)) return { ok: false, reason: 'no such block' };
   const prog = extortProgress(state, frontId);
   if (prog?.extortable) return { ok: true, reason: 'ready' };                       // un-taken front (35b)
   // RTS-35d — retake: a rival-held front is re-extortable once its guard is cleared.

@@ -2564,7 +2564,7 @@ export class IsoScene extends Phaser.Scene {
     const exTile = businessTileOf(this.layout, businessId);
     const exThug = this.selectedPlayerThug();
     const exGate = exThug && exTile
-      ? canIssueMoveAndShakedown(this.state, exThug.id, businessId, exTile)
+      ? canIssueMoveAndShakedown(this.state, exThug.id, businessId, exTile, (pos) => this.isVisibleTile(pos))
       : { ok: false, reason: 'select one of your thugs first' };
     const retakeLabel = isRivalHeldFront(this.state, businessId) ? 'RETAKE' : 'EXTORT';
 
@@ -2607,7 +2607,7 @@ export class IsoScene extends Phaser.Scene {
     if (!thug) { this.setStatus('select one of your thugs first, then order the shakedown'); return; }
     // RTS-35d — the gate now allows a RETAKE (a rival-held front whose guard is cleared) when given the
     // front tile, as well as the 35b un-taken front; it states the reason (incl. "clear the guard first").
-    const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId, tile);
+    const gate = canIssueMoveAndShakedown(this.state, thug.id, businessId, tile, (pos) => this.isVisibleTile(pos));
     if (!gate.ok) { this.setStatus(gate.reason); return; }
     const retake = isRivalHeldFront(this.state, businessId);
     // RTS-35b.1 — a busy selected thug is RE-TASKED (not silently handed off): the wrapper replaces his
