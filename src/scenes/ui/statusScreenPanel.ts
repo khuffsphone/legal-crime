@@ -46,13 +46,17 @@ function rowText(row: ScreenRow): { text: string; color: string } {
 export class StatusScreenPanel {
   private readonly scene: Phaser.Scene;
   private readonly register: (o: Phaser.GameObjects.GameObject) => void;
+  private readonly onClose?: () => void;
   private root?: Phaser.GameObjects.Container;
   private lastJson = '';
 
-  /** `register` is IsoScene.hudFx — makes the world camera ignore these fixed-HUD objects. */
-  constructor(scene: Phaser.Scene, register: (o: Phaser.GameObjects.GameObject) => void) {
+  /** `register` is IsoScene.hudFx — makes the world camera ignore these fixed-HUD objects. `onClose`
+   * (optional) lets the OWNER clear its open-state when the backdrop is clicked, so a per-frame refresh
+   * does not immediately re-create this panel (see IsoScene.closeStatusScreen). */
+  constructor(scene: Phaser.Scene, register: (o: Phaser.GameObjects.GameObject) => void, onClose?: () => void) {
     this.scene = scene;
     this.register = register;
+    this.onClose = onClose;
   }
 
   get isOpen(): boolean {
@@ -102,8 +106,9 @@ export class StatusScreenPanel {
       ly += 6;
     }
 
-    // Close on a click anywhere on the backdrop.
-    backdrop.on('pointerdown', () => this.hide());
+    // Close on a click anywhere on the backdrop — route through the owner so the scene clears its open id
+    // too (else the per-frame refresh would immediately re-create this panel, making it look un-closeable).
+    backdrop.on('pointerdown', () => (this.onClose ? this.onClose() : this.hide()));
     this.register(c);
     this.root = c;
   }

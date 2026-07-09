@@ -2574,13 +2574,31 @@ export class IsoScene extends Phaser.Scene {
   private openStatusScreen(id: string): void {
     if (!statusScreenById(id)) return;
     this.statusScreenId = id;
-    this.statusPanel ??= new StatusScreenPanel(this, (o) => this.hudFx(o));
+    this.statusPanel ??= new StatusScreenPanel(this, (o) => this.hudFx(o), () => this.closeStatusScreen());
     this.refreshStatusScreen();
+  }
+
+  /** #81 — the read-only status overlay must never stack on the mandatory intro splash / FTUE tutorial or
+   * contend for their "click anywhere to begin" input. True while either owns the screen ⇒ defer drawing. */
+  private statusModalBlocking(): boolean {
+    return (this.legend?.visible ?? false) || this.tutorialShowing;
+  }
+
+  /** Fully close the overlay: clear the open id AND tear down the panel, so the per-frame refresh leaves it
+   * closed. The backdrop-click close routes here (StatusScreenPanel.onClose) — hiding the panel alone would
+   * leave statusScreenId set and the next refresh would re-create it. */
+  private closeStatusScreen(): void {
+    this.statusScreenId = undefined;
+    this.statusPanel?.hide();
   }
 
   /** Rebuild the open screen from live state each frame (cheap — the panel skips unchanged content). */
   private refreshStatusScreen(): void {
     if (!this.statusScreenId || !this.statusPanel) return;
+    // #81 — defer while the intro splash / tutorial modal is up (retain statusScreenId so the panel pops in
+    // the moment they're dismissed). While hidden it has no interactive backdrop, so the begin-click reaches
+    // the scene pointer handler that dismisses the splash instead of being swallowed by the overlay.
+    if (this.statusModalBlocking()) { this.statusPanel.hide(); return; }
     const view = buildScreenView(this.statusScreenId, this.state, this.statusVis());
     if (view) this.statusPanel.render(view);
   }
