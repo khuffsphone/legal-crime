@@ -18,9 +18,9 @@ import { buildCityGraph, pickStep, STEP_DIRS, type CityGraph } from './cityGraph
 import { generateWorld, tileKindAt, type WorldLayout } from './worldgen';
 import { isRevealed, type FogState } from './fog';
 import { updateCopDetection, advanceCopResponse } from './copBehavior';
-import { WORLD_SIZE } from './constants';
+import { WORLD_SIZE, COP_WITNESS_HEAT, HEAT_MAX } from './constants';
 import type { GridPos } from './iso';
-import type { GameState } from './types';
+import type { GameState, Family } from './types';
 
 /** Patrol walking speed, tiles/second (between STROLL_SPEED 1.15 and MOVE_SPEED 2.5 — an unhurried beat). */
 export const COP_PATROL_SPEED = 1.2;
@@ -234,17 +234,34 @@ export function spawnBeatCops(state: GameState, world?: PatrolWorld): BeatCop[] 
  * occasional loiters). No-op — and leaves lawRngState UNSET — when the slice is absent/empty, so
  * old saves and cop-less games stay byte-identical through the realtime wrapper. Robust to large dt
  * (skip-week feeds ~55s in one call): movement is a time-budget loop, never a per-frame step. */
+/** P1 HEAT INTEGRATION — layer a cop-witness heat bump onto a family, clamped to HEAT_MAX. The single hook
+ * from the cop layer into the EXISTING heat/federal ladder; deterministic, draws no RNG. Exported so the
+ * mutation test can assert the bump (and its removal fails). Pure aside from the family.heat write. */
+export function raiseHeat(family: Family, amount: number): void {
+  family.heat = Math.min(HEAT_MAX, family.heat + amount);
+}
+
 export function advanceBeatCops(state: GameState, dt: number, world?: PatrolWorld): void {
   const cops = state.beatCops;
   if (!cops || cops.length === 0 || !(dt > 0)) return;
   const resolved = resolvePatrolWorld(state, world);
   const rng = new Rng(lawCursor(state));
   for (const cop of cops) {
+    const wasCommitted = cop.mode === 'respond' || cop.mode === 'engage';
     // P1 (copBehavior) — DETECT → RESPOND: deterministic, draws NO RNG, mutates ONLY the cop slice
     // (suspicion / mode / focusUnitId / lastSeen). A cop with a crime in sight leaves the beat and
     // converges on it; with nothing to see it runs the unchanged P0 random walk. The law cursor is
     // therefore advanced ONLY on the patrol branch, so a crime-less game keeps its exact P0 cadence.
     if (updateCopDetection(cop, state, resolved.layout, dt)) {
+      // P1 HEAT INTEGRATION — a cop that NEWLY commits (patrol/loiter → respond/engage) has just WITNESSED a
+      // crime: the commit only follows fog/LOS-gated sight (NO-X-RAY), so a fogged crime never triggers it.
+      // The bump is edge-triggered PER COMMITTING COP — once per that cop's "caught you" episode, never per
+      // realtime dt (so it can't flood); it then decays + climbs the EXISTING federal ladder (NOTICE/WATCH/
+      // RAID) normally. Deterministic (no RNG) ⇒ lawRngState + state.rngState untouched. A LAYER, not a rewrite.
+      // NOTE (multi-witness): heat STACKS with the number of cops that commit — a crime seen by 3 cops draws
+      // 3× — intentional ("a crime in a cop-dense block is riskier"), but the magnitude + whether to cap/dedupe
+      // per-crime is an open GPT-Pro §-heat reconciliation item (see COP_WITNESS_HEAT). Covered by copHeat.test.
+      if (!wasCommitted) raiseHeat(state.player, COP_WITNESS_HEAT);
       advanceCopResponse(cop, resolved.layout, dt); // off the sidewalk graph — cut straight to the trouble
     } else {
       healCop(cop, resolved); // cheap no-op while on-graph; re-snaps coords a substrate rebuild displaced
