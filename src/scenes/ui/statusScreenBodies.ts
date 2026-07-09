@@ -297,15 +297,24 @@ export function buildFrontsExtortion(state: GameState, vis: StatusVisibility): S
 }
 
 // ── 9. Incident Ledger ────────────────────────────────────────────────────────────────────────────
-/** Incidents that are inherently player-knowable regardless of location (own economy / own law / global). */
+// NO-X-RAY: an incident is knowable by TYPE only when it is structurally the player's own or globally
+// player-facing AND its summary carries no rival PII — the player's own weekly settlement, the player-only
+// federal ladder (resolveFederalWarnings logs only for isPlayer), and game over. EVERY other type is
+// emitted PER-FAMILY by the sim (bust / mutiny / desertion / loan / shock-audit / speakeasy-raid / robbery /
+// interception all fire for rivals too, and harvestIncidents projects them regardless of family), so their
+// summaries embed rival name/heat/debt/crew/dirty-cash/op-location. Those MUST prove player-involvement or
+// a scouted location, else they mask — never trust the type alone.
 const PLAYER_GLOBAL_INCIDENT: ReadonlySet<string> = new Set([
-  'settlement', 'deposit', 'collector_run', 'robbery', 'federal_warning', 'federal_warrant', 'federal_cooldown',
-  'bust', 'mutiny', 'desertion', 'loan', 'shock', 'market', 'game_over',
+  'settlement', 'game_over', 'federal_warning', 'federal_warrant', 'federal_cooldown',
 ]);
+/** SAFE own-involvement test — every key is compared to the PLAYER id, so it reveals only the player's own
+ * stake, never a rival identity. Broad because the sim tags involvement under many different data keys. */
 function incidentInvolvesPlayer(state: GameState, rec: IncidentRecord): boolean {
   const d = (rec.data ?? {}) as Record<string, unknown>;
   const pid = state.player.id;
-  return d.familyId === pid || d.newHolder === pid || d.oldHolder === pid || d.attackerId === pid || d.victimFamily === pid;
+  const keys = ['familyId', 'newHolder', 'oldHolder', 'attackerId', 'attackerFaction', 'victimFamily',
+    'victimFaction', 'ownerFamily', 'holderId', 'invaderId', 'defenderId', 'byFamily'];
+  return keys.some((k) => d[k] === pid);
 }
 export function buildIncidentLedger(state: GameState, vis: StatusVisibility, limit = 20): ScreenView {
   const held = heldIds(state);

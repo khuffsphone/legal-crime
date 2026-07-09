@@ -16,6 +16,9 @@ import type { ScreenView } from '../src/scenes/ui/screenView';
 const RIVAL_DEN = 'RIVALDEN_SECRET';
 const RIVAL_FRONT = 'RIVALFRONT_SECRET';
 const RIVAL_INCIDENT = 'RIVALTERRITORY_SECRET';
+const RIVAL_BUST = 'RIVALBUST_SECRET';
+const RIVAL_SHOCK = 'RIVALSHOCK_SECRET';
+const MY_BUST = 'MYBUST_KNOWN';
 const MY_DEN = 'MYDEN_OWNED';
 const MY_FRONT = 'MYFRONT_OWNED';
 const COP_LOC = '55,55';
@@ -42,7 +45,12 @@ function fixture(): { state: GameState; rivalDistrictId: string } {
   // Incidents: a player-global settlement (always known) + a rival territory grab at the unscouted district.
   const settlement: IncidentRecord = { seq: 1, week: 1, type: 'settlement', severity: 'info', summary: 'weekly settlement', data: { heatDelta: 2, cleanDelta: 300 } };
   const rivalGrab: IncidentRecord = { seq: 2, week: 1, type: 'territory', severity: 'warning', summary: `${RIVAL_INCIDENT} captured a block`, data: { districtId: dRival.id, newHolder: rival.id } };
-  s.incidents = [settlement, rivalGrab];
+  // rival-scoped incidents whose TYPE ('bust'/'shock') the sim also emits per-family — must NOT leak via a
+  // type allowlist. A player-involved bust (familyId = player) MUST still show.
+  const rivalBust: IncidentRecord = { seq: 3, week: 1, type: 'bust', severity: 'danger', summary: `${RIVAL_BUST} boss busted (heat 92)`, data: { familyId: rival.id } };
+  const rivalShock: IncidentRecord = { seq: 4, week: 1, type: 'shock', severity: 'warning', summary: `${RIVAL_SHOCK} raid shut a den`, data: { ownerFamily: rival.id } };
+  const myBust: IncidentRecord = { seq: 5, week: 1, type: 'bust', severity: 'danger', summary: `${MY_BUST} our boss was busted`, data: { familyId: s.player.id } };
+  s.incidents = [settlement, rivalGrab, rivalBust, rivalShock, myBust];
   return { state: s, rivalDistrictId: dRival.id };
 }
 
@@ -90,6 +98,15 @@ describe('status bodies — NO-X-RAY: fog-sensitive fields mask under `sealed`',
     expect(hidden).not.toContain(RIVAL_INCIDENT);       // rival grab at an unscouted block masked
     expect(hidden).toContain('another part of town');
     expect(json(build('incidentLedger', state, fullyVisible))).toContain(RIVAL_INCIDENT);
+  });
+
+  it('the incident TYPE allowlist cannot leak a rival-scoped bust/shock (per-family types are gated)', () => {
+    const { state } = fixture();
+    const hidden = json(build('incidentLedger', state, sealed));
+    expect(hidden).not.toContain(RIVAL_BUST);   // type 'bust' fires for rivals too — must mask
+    expect(hidden).not.toContain(RIVAL_SHOCK);  // type 'shock' (audit/speakeasy-raid) names rivals — must mask
+    expect(hidden).toContain(MY_BUST);          // the player's OWN bust (familyId = player) still shows
+    expect(hidden).toContain('weekly settlement'); // own settlement always shown
   });
 
   it('districtDossier of an unscouted rival district is fully masked under sealed', () => {
