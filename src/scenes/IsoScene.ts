@@ -300,6 +300,12 @@ import { DossierPanel } from './ui/dossierPanel';
 import { buildStatusDashboard, type DashboardTone } from './ui/statusDashboard';
 import { districtStatus } from '../sim';
 import { tipRegion } from './ui/tooltips'; // Lane — contextual HUD tooltips (feeds the existing one renderer)
+// STATUS UI Phase 1 — read-only screen bodies behind ?status. The panel renders the PURE buildScreenView
+// view-model each frame through the NO-X-RAY funnel (statusVis()); ] cycles the top-10.
+import { StatusScreenPanel } from './ui/statusScreenPanel';
+import { buildScreenView } from './ui/statusScreenBodies';
+import type { StatusVisibility } from './ui/statusVisibility';
+import { statusScreenById, TOP_10_SCREEN_IDS } from './ui/statusScreenRegistry';
 // INFO-FEEDBACK slice — THE WIRE — LOG + screen-edge alerts + minimap (render/UI; reads sim state only).
 import { metaFor, combatEventKind, extortionEventKind, captureEventKind, bribeEventKind, type EventKind, type EventTier } from './info/infoEvents';
 import { initLog, pushLog, latestUnreadPositional, markRead, unreadCount, type LogStore } from './info/logStore';
@@ -725,6 +731,10 @@ export class IsoScene extends Phaser.Scene {
   // RTS-30a.1: ?reveal=1 lifts the fog over the whole map so the sparse city is inspectable (debug-only;
   // normal play keeps the fog). Parsed by the pure revealAllRequested helper.
   private debugRevealAll = typeof window !== 'undefined' && revealAllRequested(window.location?.search ?? '');
+  // STATUS UI Phase 1 — ?status=<id> opens a read-only screen-body overlay (fog-safe via statusVis()).
+  private statusScreenFlag = typeof window !== 'undefined' ? (new URLSearchParams(window.location?.search ?? '').get('status') ?? undefined) : undefined;
+  private statusScreenId?: string;
+  private statusPanel?: StatusScreenPanel;
   // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
   // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
   private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
@@ -911,6 +921,8 @@ export class IsoScene extends Phaser.Scene {
     this.statusDashG = undefined;
     this.reticleG = undefined;
     this.opPreviewG = undefined;
+    this.statusPanel = undefined; // STATUS UI Phase 1 — panel died with the shutdown; drop the stale handle
+    this.statusScreenId = undefined;
     this.reticleNames = [];
     this.ctxMenu = undefined;
     this.ctxRect = undefined;
@@ -1056,6 +1068,10 @@ export class IsoScene extends Phaser.Scene {
     }
     // RTS-30a: split the world + HUD onto two cameras (AFTER all HUD exists) so the HUD never zooms.
     this.setupUiCamera();
+    // STATUS UI Phase 1 — open the read-only screen overlay if ?status=<id> was set (bare/invalid ⇒ dashboard).
+    if (this.statusScreenFlag !== undefined) {
+      this.openStatusScreen(this.statusScreenFlag && statusScreenById(this.statusScreenFlag) ? this.statusScreenFlag : 'commandDashboard');
+    }
     // LANE D — earned-intel dossier: the ONE HUD mount. Read-only panel on the FIXED HUD camera (sacred);
     // hudFx makes the WORLD camera ignore it. Toggled with backtick (see setupCameraControls).
     this.dossierPanel = new DossierPanel(this);
@@ -2536,6 +2552,44 @@ export class IsoScene extends Phaser.Scene {
    * of pickVisibleUnit; mirrors the resolveOpPreview fog guard so there is one visibility rule. */
   private visibleBusinessAt(worldX: number, worldY: number): string | undefined {
     return this.visibleFrontId(this.businessAtScreen(worldX, worldY));
+  }
+
+  // ── STATUS UI Phase 1 — the NO-X-RAY funnel + the read-only overlay controls ─────────────────────
+  /** Bind the Brassmere visibility registry to this scene's live fog + accessors — the SINGLE seam every
+   * fog-sensitive status-screen read routes through (never raw state.rivals[] / .owner / beatCops[].pos). */
+  private statusVis(): StatusVisibility {
+    return {
+      revealed: (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy),
+      tileVisible: (pos) => this.isVisibleTile(pos),
+      businessVisible: (id) => this.visibleFrontId(id) !== undefined, // front id only if its tile is revealed
+      copVisible: (cop) => copMarkerVisible(this.fog, cop, this.debugRevealAll),
+      unitVisible: (pos) => this.isVisibleTile(pos),
+      districtScouted: (id) => {
+        const wd = this.world.districts.find((d) => d.id === id);
+        return !!wd && (this.debugRevealAll || isRevealed(this.fog, wd.centroid.gx, wd.centroid.gy));
+      },
+    };
+  }
+
+  private openStatusScreen(id: string): void {
+    if (!statusScreenById(id)) return;
+    this.statusScreenId = id;
+    this.statusPanel ??= new StatusScreenPanel(this, (o) => this.hudFx(o));
+    this.refreshStatusScreen();
+  }
+
+  /** Rebuild the open screen from live state each frame (cheap — the panel skips unchanged content). */
+  private refreshStatusScreen(): void {
+    if (!this.statusScreenId || !this.statusPanel) return;
+    const view = buildScreenView(this.statusScreenId, this.state, this.statusVis());
+    if (view) this.statusPanel.render(view);
+  }
+
+  /** ] — cycle through the top-10 read-only screens, closing past the last. */
+  private cycleStatusScreen(): void {
+    const next = (this.statusScreenId ? TOP_10_SCREEN_IDS.indexOf(this.statusScreenId) : -1) + 1;
+    if (next >= TOP_10_SCREEN_IDS.length) { this.statusScreenId = undefined; this.statusPanel?.hide(); return; }
+    this.openStatusScreen(TOP_10_SCREEN_IDS[next]);
   }
 
   private closeBizMenu(): void { this.ctxMenu?.destroy(); this.ctxMenu = undefined; this.ctxRect = undefined; this.ctxRows = []; }
@@ -4424,6 +4478,8 @@ export class IsoScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-PLUS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-EQUALS', () => this.cycleZoom(1));
     this.input.keyboard?.on('keydown-MINUS', () => this.cycleZoom(-1));
+    // STATUS UI Phase 1 — ] cycles the read-only screen-body overlay through the top-10 (closes past last).
+    this.input.keyboard?.on('keydown-CLOSED_BRACKET', () => this.cycleStatusScreen());
     // HUD PHASE 1 — [T] opens the TURF drawer (the old [T] no-op status hint is retired).
     this.input.keyboard?.on('keydown-T', () => this.panels?.toggle('turf'));
     // Lane G — [E] extort / [C] collect / [R] reinvest / [G] grease are REMAPPABLE: dispatched from the
@@ -4518,6 +4574,7 @@ export class IsoScene extends Phaser.Scene {
     // RTS-34: fog-gate the ambient life — peds/cars only render on revealed tiles (no life through fog).
     // GLOBAL ACTIVE-PAUSE — the living city freezes too (a paused frame advances ambient by 0).
     this.ambient?.update(this.pause.paused ? 0 : dt, this.cameras.main, (gx, gy) => this.debugRevealAll || isRevealed(this.fog, gx, gy));
+    this.refreshStatusScreen(); // STATUS UI Phase 1 — live-rebuild the open read-only overlay (no-op when closed)
     this.refreshHud();
     this.refreshTutorial(); // Lane B — before refreshObjective: sets tutorialShowing so the banner stands down
     this.refreshObjective();
