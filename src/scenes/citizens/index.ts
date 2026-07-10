@@ -9,3 +9,4 @@ export * from './caps';
 export * from './reactions';
 export * from './flags';
 export * from './markers';
+export * from './anchors';

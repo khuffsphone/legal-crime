@@ -20,7 +20,7 @@ import Phaser from 'phaser';
 import {
   buildCityGraph, pickStep, STEP_DIRS, depthValue,
   ISO_TILE_HALF_WIDTH, ISO_TILE_HALF_HEIGHT, Rng,
-  districtOfWorldTile, tileKindAt,
+  districtOfWorldTile, tileKindAt, scatterProps,
   type CityGraph, type LifeCaps, type WorldLayout,
 } from '../sim';
 import { TEX, PED_COATS, pedTexKey, ensureCitizenMarkers } from './cityArt';
@@ -32,7 +32,9 @@ import {
   roleForSlot, movementSpeedForRole, citizenRoll, RollSalt,
   citizenMarkerTexKey, CITIZEN_MARKER_SCALE, roleIndex, ROLE_LETTER,
   pauseChance, pauseStateFor, stateDuration, reactionCooldown, reactionFor,
-  type CitizenRole, type CitizenState, type PauseContext, type CitizenEvent,
+  anchorsFromLegacyProps, buildAnchorIndex, nearQueueAnchor, isStandBlocked,
+  resolveSpawnRole, resolveStandSpot,
+  type CitizenRole, type CitizenState, type PauseContext, type CitizenEvent, type AnchorIndex,
 } from './citizens';
 
 const HW = ISO_TILE_HALF_WIDTH;  // 64
@@ -68,6 +70,11 @@ interface Agent {
   state?: CitizenState;         // current behaviour state (walk/loiter/windowShop/queue/react/panic)
   reactCd?: number;             // seconds until this citizen may react again (spec §6.3 jitter)
   letterText?: Phaser.GameObjects.Text; // debug occupation letter overlay (?citizenletters=1)
+  // DELTA 1/6 — sub-tile render offset while PAUSED: walking stays at the tile centre (the
+  // sidewalk_through read); a loiter/windowShop/queue shifts into its band / beside its anchor.
+  // Always 0 while walking and on the legacy (?citizens absent) path — flag-off render identical.
+  pauseDx: number;
+  pauseDy: number;
 }
 
 /** A tiny generic pool, inlined here so the Phaser sprites live with their agent structs. Mirrors the
@@ -105,6 +112,11 @@ export class AmbientLife {
   /** Cumulative district-density weights over sidewalkNodes — the weighted spawn field (spec §4.6). Layout-
    * derived + rebuilt on reconstruction (this whole object is rebuilt at IsoScene:create → no stale cache). */
   private readonly spawnCum?: Float64Array;
+  /** DELTA 2/6 — the REAL placed-prop anchors, indexed by tile. Derived from the SAME deterministic
+   * scatter the scene draws (scatterProps(layout,{seed}) — IsoScene passes the same state.seed), so the
+   * citizen layer and the visible dressing always agree. Rebuilt with the object on every create epoch
+   * (§13.1: layout-derived, never cached across regens). Undefined when ?citizens is off. */
+  private readonly anchorIndex?: AnchorIndex;
   /** Monotonic spawn counter — a deterministic input so successive citizens in a slot vary (spec §4.7). */
   private spawnEpoch = 0;
 
@@ -123,6 +135,8 @@ export class AmbientLife {
       ensureCitizenMarkers(scene); // R4 warm-neutral marker bakes (lazy — flag-off boot never bakes)
       const archMap = buildDistrictArchetypeMap(layout);
       this.spawnCum = cumulative(spawnWeightsForNodes(layout, archMap, this.graph.sidewalkNodes));
+      // DELTA 2/6 — index the actual placed props (same pure scatter + seed the scene renders).
+      this.anchorIndex = buildAnchorIndex(anchorsFromLegacyProps(scatterProps(layout, { seed })));
     }
 
     // pools pre-allocate ALL sprites up front (created before setupUiCamera, so the world/HUD camera
@@ -136,7 +150,7 @@ export class AmbientLife {
     const scale = isCar ? CAR_SCALE : (this.citizensEnabled ? CITIZEN_MARKER_SCALE : PED_SCALE);
     const originY = isCar ? 0.72 : (this.citizensEnabled ? 0.9 : 0.95);
     const sprite = this.scene.add.image(0, 0, tex).setOrigin(0.5, originY).setScale(scale).setVisible(false);
-    const agent: Agent = { sprite, isCar, gx: 0, gy: 0, tx: 0, ty: 0, dir: -1, speed: 0, pauseT: 0, offT: 0, frameT: 0, frameB: false, coat: 0, slot };
+    const agent: Agent = { sprite, isCar, gx: 0, gy: 0, tx: 0, ty: 0, dir: -1, speed: 0, pauseT: 0, offT: 0, frameT: 0, frameB: false, coat: 0, slot, pauseDx: 0, pauseDy: 0 };
     // Debug occupation letter (?citizens=1 + ?citizenletters=1) — a pooled world-camera Text created ONCE per
     // ped, hidden until the ped is a visible citizen. Never production UI (spec §11.3).
     if (this.citizensEnabled && this.citizenLetters && !isCar) {
@@ -199,11 +213,17 @@ export class AmbientLife {
     // RTS-34: fog-gate — keep simulating the agent's path, but only DRAW it on a revealed tile (no
     // peds/cars showing through the fog of war).
     const shown = ambientShown(this.reveal, a.gx, a.gy);
-    s.setVisible(shown).setPosition(sx, sy).setDepth(depthValue(a.gx, a.gy) * 10 + (isCar ? 4 : 3));
-    if (a.letterText) { a.letterText.setVisible(shown).setPosition(sx, sy - 20); }
+    // DELTA 1 — walking renders at the tile centre (sidewalk_through); a PAUSED citizen renders shifted
+    // into its band / beside its anchor (pauseDx/Dy — always 0 while walking and on the legacy path).
+    s.setVisible(shown).setPosition(sx + a.pauseDx, sy + a.pauseDy).setDepth(depthValue(a.gx, a.gy) * 10 + (isCar ? 4 : 3));
+    if (a.letterText) { a.letterText.setVisible(shown).setPosition(sx + a.pauseDx, sy + a.pauseDy - 20); }
     // Citizen reaction (Rider R3): dormant unless events are fed. Visible-only + NO-X-RAY handled in reactionFor.
     if (this.citizensEnabled && !isCar) this.tickCitizenReaction(a, dt);
-    if (a.pauseT > 0) { a.pauseT -= dt; return; }
+    if (a.pauseT > 0) {
+      a.pauseT -= dt;
+      if (a.pauseT <= 0) { a.pauseDx = 0; a.pauseDy = 0; } // pause over → back to the through-zone centre
+      return;
+    }
     const dx = a.tx - a.gx, dy = a.ty - a.gy;
     const dist = Math.sqrt(dx * dx + dy * dy);
     const step = a.speed * dt;
@@ -251,21 +271,31 @@ export class AmbientLife {
     else if (this.rng.nextFloat() < 0.06) a.pauseT = 1.5;                  // legacy: occasional window-shop pause
   }
 
-  /** Roll a contextual pause for a citizen at (gx,gy) — plaza→loiter, frontage→windowShop, else generic
-   * loiter (spec §6.3 pause chances + §6.2 durations). Deterministic per (seed, slot, tile, epoch). */
+  /** Roll a contextual pause for a citizen at (gx,gy) — anchor→queue, plaza→loiter, frontage→windowShop,
+   * else generic loiter (spec §6.3 chances + §6.2 durations). Deterministic per (seed, slot, tile, epoch).
+   * DELTA 1/6 — a pause that fires resolves its STAND SPOT against the real prop anchors: never directly
+   * on a filler prop (diagonal-adjacent favored; all blocked ⇒ the pause is skipped — the prop wins),
+   * and the spot renders in the context's band, off the sidewalk_through centre. */
   private rollCitizenPause(a: Agent, gx: number, gy: number): void {
     const ctx = this.contextAt(gx, gy);
     const epoch = a.epoch ?? this.spawnEpoch;
     const rollP = citizenRoll(this.seed, a.slot, gx * 131 + gy, epoch, RollSalt.Timing);
     if (rollP >= pauseChance(ctx)) return;
+    const rollS = citizenRoll(this.seed, a.slot, gx * 131 + gy + 13, epoch, RollSalt.Timing);
+    const spot = this.anchorIndex ? resolveStandSpot(this.anchorIndex, gx, gy, ctx, rollS) : { dx: 0, dy: 0 };
+    if (!spot) return; // delta 6: every legal spot is prop-occupied — keep walking, never stand ON one
     const st = pauseStateFor(ctx);
     const rollD = citizenRoll(this.seed, a.slot, gx * 131 + gy + 7, epoch, RollSalt.Timing);
     a.state = st;
     a.pauseT = stateDuration(st, rollD);
+    a.pauseDx = spot.dx;
+    a.pauseDy = spot.dy;
   }
 
-  /** The local pause CONTEXT from cheap worldgen tile heuristics (no PR#62 zones on this branch). Pure read. */
+  /** The local pause CONTEXT: a REAL queue anchor (vendor_cart/produce_stall/news_stand — delta 2) beats
+   * the worldgen tile heuristics; then frontage/plaza/generic as before. Pure read. */
   private contextAt(gx: number, gy: number): PauseContext {
+    if (this.anchorIndex && nearQueueAnchor(this.anchorIndex, gx, gy)) return 'anchor';
     const near = (k: string): boolean =>
       tileKindAt(this.layout, gx + 1, gy) === k || tileKindAt(this.layout, gx - 1, gy) === k ||
       tileKindAt(this.layout, gx, gy + 1) === k || tileKindAt(this.layout, gx, gy - 1) === k;
@@ -296,6 +326,9 @@ export class AmbientLife {
       const gx = ti % size, gy = (ti / size) | 0;
       const sx = (gx - gy) * HW, sy = (gx + gy) * HH;
       if (sx < minX || sx > maxX || sy < minY || sy > maxY) continue; // within the cull ring only
+      // DELTA 6 — a citizen never MATERIALIZES standing on a filler prop anchor (hydrant/mailbox/etc.):
+      // the prop wins the tile, the spawn re-rolls. Citizens-only; the legacy path is untouched.
+      if (weighted && this.anchorIndex && isStandBlocked(this.anchorIndex, gx, gy)) continue;
       const a = pool.acquire();
       if (!a) return false;
       this.initAgent(a, gx, gy, isCar);
@@ -306,6 +339,7 @@ export class AmbientLife {
 
   private initAgent(a: Agent, gx: number, gy: number, isCar: boolean): void {
     a.gx = gx; a.gy = gy; a.tx = gx; a.ty = gy; a.dir = -1; a.offT = 0; a.pauseT = 0; a.frameT = 0; a.frameB = false;
+    a.pauseDx = 0; a.pauseDy = 0;
     const s = a.sprite;
     if (isCar) {
       a.speed = CAR_SPEED;
@@ -315,7 +349,12 @@ export class AmbientLife {
       a.epoch = this.spawnEpoch;
       const ordinal = this.ordinalAt(gx, gy);
       const archetype = districtIdentityFor(ordinal).archetype;
-      const role = roleForSlot(this.seed, ordinal, a.slot, a.epoch, archetype);
+      // DELTA 2 — a street vendor requires a REAL vendor_cart/produce_stall prop at the spawn tile's
+      // neighbourhood; with none placed (true for the whole legacy scatter) the roll demotes to the
+      // fallback role. No free-floating vendor, no actor-carried cart (markers carry no prop visuals).
+      const role = this.anchorIndex
+        ? resolveSpawnRole(roleForSlot(this.seed, ordinal, a.slot, a.epoch, archetype), this.anchorIndex, gx, gy)
+        : roleForSlot(this.seed, ordinal, a.slot, a.epoch, archetype);
       a.role = role;
       a.state = 'walk';
       a.reactCd = 0;
