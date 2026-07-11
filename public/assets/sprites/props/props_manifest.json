@@ -1,0 +1,247 @@
+{
+  "generator": "tools/blender/render_props.py",
+  "density": 90.5097,
+  "baseCanvas": 256,
+  "props": {
+    "prop_awning__chicago_alley_door_07070": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 83.7,
+      "measuredHeightPx": 83,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.86,
+      "family": "awning"
+    },
+    "prop_planter__chicago_building_stoo_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 18.6,
+      "measuredHeightPx": 18,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.1737,
+      "family": "planter"
+    },
+    "prop_awning__chicago_fire_escape_0707": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 83.7,
+      "measuredHeightPx": 83,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.8234,
+      "family": "awning"
+    },
+    "prop_fire_hydrant__chicago_fire_hydrant_070": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 26.0,
+      "measuredHeightPx": 26,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.3112,
+      "family": "fire_hydrant"
+    },
+    "prop_vendor_cart__chicago_hand_cart_070702": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 46.5,
+      "measuredHeightPx": 47,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.6636,
+      "family": "vendor_cart"
+    },
+    "prop_bollard__chicago_hitching_post_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 32.6,
+      "measuredHeightPx": 32,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.4049,
+      "family": "bollard"
+    },
+    "prop_hedge_shrub__chicago_iron_fence_07070": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 27.9,
+      "measuredHeightPx": 28,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.2966,
+      "family": "hedge_shrub"
+    },
+    "prop_manhole_cover__chicago_manhole_cover_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 1.4,
+      "measuredHeightPx": 2,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.0054,
+      "family": "manhole_cover"
+    },
+    "prop_news_stand__chicago_newsstand_070702": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 65.1,
+      "measuredHeightPx": 65,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.7804,
+      "family": "news_stand"
+    },
+    "prop_bench__chicago_park_bench_07070": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 26.0,
+      "measuredHeightPx": 26,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.2197,
+      "family": "bench"
+    },
+    "prop_mailbox__chicago_postal_box_07070": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 35.3,
+      "measuredHeightPx": 35,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.4049,
+      "family": "mailbox"
+    },
+    "prop_crate_stack__chicago_steamer_trunk_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 32.6,
+      "measuredHeightPx": 33,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.2446,
+      "family": "crate_stack"
+    },
+    "prop_traffic_signal__chicago_stop_sign_070702": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 74.4,
+      "measuredHeightPx": 74,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.9409,
+      "family": "traffic_signal"
+    },
+    "prop_sewer_grate__chicago_storm_drain_0707": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 1.4,
+      "measuredHeightPx": 2,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.0072,
+      "family": "sewer_grate"
+    },
+    "prop_statue_monument__chicago_street_clock_070": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 102.3,
+      "measuredHeightPx": 102,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 1.2992,
+      "family": "statue_monument"
+    },
+    "prop_street_lamp__chicago_street_lamp_0707": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 111.6,
+      "measuredHeightPx": 112,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 1.4186,
+      "family": "street_lamp"
+    },
+    "prop_crate_stack__chicago_street_props_070": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 32.6,
+      "measuredHeightPx": 33,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.3174,
+      "family": "crate_stack"
+    },
+    "prop_blade_sign__chicago_street_sign_p_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 27.9,
+      "measuredHeightPx": 28,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.3583,
+      "family": "blade_sign"
+    },
+    "prop_police_call_box__chicago_telephone_boo_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 41.9,
+      "measuredHeightPx": 42,
+      "footPadPx": 0,
+      "iters": 1,
+      "worldH": 0.4629,
+      "family": "police_call_box"
+    },
+    "prop_trash_can__chicago_trash_can_070702": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 26.0,
+      "measuredHeightPx": 25,
+      "footPadPx": 0,
+      "iters": 1,
+      "worldH": 0.2873,
+      "family": "trash_can"
+    },
+    "prop_utility_pole__chicago_utility_pole_070": {
+      "canvas": 452,
+      "orthoScale": 4.993942,
+      "targetHeightPx": 279.0,
+      "measuredHeightPx": 279,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 3.4819,
+      "family": "utility_pole"
+    },
+    "prop_vendor_cart__chicago_vendor_pushca_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 46.5,
+      "measuredHeightPx": 47,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.5309,
+      "family": "vendor_cart"
+    },
+    "prop_produce_stall__speakeasy_bar_counter_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 60.5,
+      "measuredHeightPx": 60,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.6036,
+      "family": "produce_stall"
+    },
+    "prop_produce_stall__speakeasy_table_and_c_07": {
+      "canvas": 256,
+      "orthoScale": 2.828427,
+      "targetHeightPx": 60.5,
+      "measuredHeightPx": 61,
+      "footPadPx": 0,
+      "iters": 2,
+      "worldH": 0.5465,
+      "family": "produce_stall"
+    }
+  }
+}
