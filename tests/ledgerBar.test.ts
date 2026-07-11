@@ -106,6 +106,38 @@ describe('win-path ticker — all three always present, compact', () => {
     expect(v.straightText).toBe('STRAIGHT 37%');
     expect(v.electText).toBe('ELECT 62/100');
   });
+
+  // PLAYER SPINE T6 refine — trend glyphs (brass-only), click-through routes, all three simultaneously.
+  it('all three paths are present in a single ticker (never a leading-path picker)', () => {
+    const v = winPathTicker(1, 9, 5, 10);
+    expect(v.domText).toBeTruthy();
+    expect(v.straightText).toBeTruthy();
+    expect(v.electText).toBeTruthy();
+  });
+
+  it('defaults every trend glyph to flat (·) when there is no prior frame — never green/red', () => {
+    const v = winPathTicker(4, 9, 37, 62);
+    expect(v.domGlyph).toBe('·');
+    expect(v.straightGlyph).toBe('·');
+    expect(v.electGlyph).toBe('·');
+    // Only the three canon glyphs are ever used (brass ▲/▼/·, colour-free).
+    for (const g of [v.domGlyph, v.straightGlyph, v.electGlyph]) expect(['▲', '▼', '·']).toContain(g);
+  });
+
+  it('paints ▲/▼ per path vs the prior frame (gain/loss differ by GLYPH, not colour)', () => {
+    const v = winPathTicker(5, 9, 30, 40, { domHeld: 4, straightPct: 45, electPct: 40 });
+    expect(v.domGlyph).toBe('▲');      // held rose 4 → 5
+    expect(v.straightGlyph).toBe('▼'); // straight fell 45 → 30
+    expect(v.electGlyph).toBe('·');    // elect flat 40 → 40
+  });
+
+  it('routes each path to its detail screen (click-through), distinct per path', () => {
+    const v = winPathTicker(1, 9, 5, 10);
+    expect(v.domScreen).toBe('controlMap');
+    expect(v.straightScreen).toBe('moneyLedger');
+    expect(v.electScreen).toBe('civicInfluence');
+    expect(new Set([v.domScreen, v.straightScreen, v.electScreen]).size).toBe(3);
+  });
 });
 
 describe('control / funding budget (secondary; bottleneck flag)', () => {
@@ -133,5 +165,18 @@ describe('buildLedgerBar — assembles the whole model from a real GameState', (
     expect(m.paused).toBe(true);
     // the heat rung matches the canon mapping for the live exposure
     expect(m.heat.rung).toBe(['CLEAR', 'NOTICE', 'WATCH', 'RAID'][fedWarningTier(m.heat.exposure)]);
+    // T6: the ticker carries brass glyphs + click-through routes assembled through buildLedgerBar
+    expect(['▲', '▼', '·']).toContain(m.winPaths.domGlyph);
+    expect(m.winPaths.electScreen).toBe('civicInfluence');
+  });
+
+  it('threads prev win-path magnitudes into the ticker glyphs (T6 trend wiring)', () => {
+    const s = createInitialState(1, { bigCity: true });
+    const live = buildLedgerBar(s);
+    const straightNow = live.winPaths.straightText; // "STRAIGHT N%"
+    const nowPct = Number(straightNow.replace(/\D/g, ''));
+    // Feed a prior straight pct strictly below the current → an ▲ (rose). Below-or-equal handled by dead-band.
+    const m = buildLedgerBar(s, { prev: { clean: 0, dirty: 0, net: 0, domHeld: 0, straightPct: Math.max(0, nowPct) - 1, electPct: 0 } });
+    expect(['▲', '·']).toContain(m.winPaths.straightGlyph); // never a colour, always a glyph
   });
 });

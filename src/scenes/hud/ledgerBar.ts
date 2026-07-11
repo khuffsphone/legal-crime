@@ -131,17 +131,47 @@ export function heatLadder(exposure: number): HeatLadderView {
 }
 
 // ── the WIN-PATH TICKER (DOM X/9 · STRAIGHT Y% · ELECT Z/100) ────────────────────────────────────
+// PLAYER SPINE (T6 refine): all THREE paths are always present (this is not a "leading path" picker); each
+// carries a BRASS-only trend glyph (▲/▼/· — gains/losses differ by GLYPH, never colour, per the canon colour
+// law at trendGlyph) and a click-through route into its detail screen. No new layout — same three compact
+// cells, now trend-annotated and clickable.
 export interface WinPathTickerView {
   domText: string;
   straightText: string;
   electText: string;
+  /** Brass-only trend glyphs (▲/▼/·) vs last frame; '·' (flat) when there is no prior. */
+  domGlyph: string;
+  straightGlyph: string;
+  electGlyph: string;
+  /** Click-through route: the status screen each path drills into (real statusScreenRegistry ids). */
+  domScreen: string;
+  straightScreen: string;
+  electScreen: string;
 }
 
-export function winPathTicker(domHeld: number, domTotal: number, straightPct: number, electPct: number): WinPathTickerView {
+/** Last frame's win-path magnitudes — drives the ▲/▼ trend glyphs. Omit any field for a flat first frame. */
+export interface WinPathTickerPrev {
+  domHeld?: number;
+  straightPct?: number;
+  electPct?: number;
+}
+
+export function winPathTicker(
+  domHeld: number, domTotal: number, straightPct: number, electPct: number,
+  prev?: WinPathTickerPrev,
+): WinPathTickerView {
+  const glyph = (cur: number, was: number | undefined): string =>
+    trendGlyph(was === undefined ? 'flat' : trendOf(cur - was));
   return {
     domText: `DOM ${domHeld}/${domTotal}`,
     straightText: `STRAIGHT ${straightPct}%`,
     electText: `ELECT ${electPct}/100`,
+    domGlyph: glyph(domHeld, prev?.domHeld),
+    straightGlyph: glyph(straightPct, prev?.straightPct),
+    electGlyph: glyph(electPct, prev?.electPct),
+    domScreen: 'controlMap',
+    straightScreen: 'moneyLedger',
+    electScreen: 'civicInfluence',
   };
 }
 
@@ -180,6 +210,10 @@ export interface LedgerBarPrev {
   clean: number;
   dirty: number;
   net: number;
+  /** Last frame's win-path magnitudes — drive the ticker's brass ▲/▼ glyphs. Optional/absent ⇒ flat. */
+  domHeld?: number;
+  straightPct?: number;
+  electPct?: number;
 }
 
 export interface LedgerBarOpts {
@@ -197,10 +231,15 @@ export function buildLedgerBar(state: GameState, opts: LedgerBarOpts = {}): Ledg
   const net = playerWeeklyNet(state);
   const domHeld = districtsHeld(state, state.player.id).length;
   const domTotal = state.districts.length;
+  const straightPct = goStraightProgress(state).pct;
+  const electPct = mayorProgress(state).pct;
+  const winPrev = opts.prev
+    ? { domHeld: opts.prev.domHeld, straightPct: opts.prev.straightPct, electPct: opts.prev.electPct }
+    : undefined;
   return {
     cash: cashPair(p.cleanCash, p.dirtyCash, opts.prev ? { clean: opts.prev.clean, dirty: opts.prev.dirty } : undefined),
     heat: heatLadder(p.federalExposure),
-    winPaths: winPathTicker(domHeld, domTotal, goStraightProgress(state).pct, mayorProgress(state).pct),
+    winPaths: winPathTicker(domHeld, domTotal, straightPct, electPct, winPrev),
     budget: controlBudget(net, opts.prev?.net),
     weekText: `WK ${hud.week}`,
     clockText: hud.weekCountdownLabel,
