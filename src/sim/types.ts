@@ -92,6 +92,13 @@ export interface Family {
   influence?: number;
   /** RTS-24 — goods held for the Market (goodId → units). Absent ⇒ none. */
   inventory?: Record<string, number>;
+  /** PLAYER SPINE (T1) — COSMETIC boss honorific shown on the dossier (e.g. "Don", "Boss"). No mechanical
+   * effect. Absent ⇒ display fallback (see playerDossier). Additive, default-safe — old saves lack it and
+   * read as undefined, exactly like hqIntegrity?/aggro?/ties?. NO version bump (schema v1, additive). */
+  bossTitle?: string;
+  /** PLAYER SPINE (T1) — COSMETIC outfit / family flavour name. No mechanical effect. Absent ⇒ display
+   * fallback "The Outfit" (see playerDossier). Additive, default-safe. */
+  outfit?: string;
 }
 
 export interface Business {
