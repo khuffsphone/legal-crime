@@ -3,7 +3,8 @@
 // makes "Unable to decode audio data" structurally impossible: there is no file to fail — the buffer is math.
 import { describe, it, expect } from 'vitest';
 import {
-  synthSamples, buildSynthBuffer, SYNTH_KEYS, HIT_KEYS, STEP_KEYS, type SynthKey, type BufferContextLike,
+  synthSamples, buildSynthBuffer, registerSynthSfx, SYNTH_KEYS, HIT_KEYS, STEP_KEYS,
+  type SynthKey, type BufferContextLike,
 } from '../src/scenes/audioSynth';
 
 /** A minimal stand-in for a Web Audio context: allocates a real Float32 channel, no browser needed. */
@@ -82,5 +83,66 @@ describe('buildSynthBuffer — wraps the samples in an AudioBuffer for every key
       for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
       expect(peak).toBeGreaterThan(0.1);
     }
+  });
+});
+
+// A fake Phaser scene slice: a WebAudio-like context (createBuffer only) + a tracked audio cache. Lets us
+// exercise registerSynthSfx's file-vs-synth branch with NO browser and NO real Phaser — the cache Map IS the
+// observable: what's under each key after the call is exactly what plays.
+type SceneArg = Parameters<typeof registerSynthSfx>[0];
+function fakeScene(sampleRate = 44100): { scene: SceneArg; store: Map<string, unknown> } {
+  const store = new Map<string, unknown>();
+  const audio = {
+    exists: (k: string) => store.has(k),
+    add: (k: string, v: unknown) => { store.set(k, v); },
+    remove: (k: string) => { store.delete(k); }, // present so an unconditional-clobber regression still runs
+  };
+  const context = stubCtx(sampleRate);
+  const scene = { sound: { context }, cache: { audio } };
+  return { scene: scene as unknown as SceneArg, store };
+}
+
+describe('registerSynthSfx — FILE-WINS over synth (claim-9 fix)', () => {
+  it('SYNTH-FALLBACK path: with no WAV loaded, installs a synth buffer under EVERY synth key', () => {
+    const { scene, store } = fakeScene();
+    const added = registerSynthSfx(scene);
+    expect([...added].sort()).toEqual([...SYNTH_KEYS].sort()); // every key got the fallback
+    for (const key of SYNTH_KEYS) {
+      expect(store.has(key)).toBe(true);
+      // it's a real allocated buffer, not left empty
+      const buf = store.get(key) as AudioBuffer;
+      expect(buf.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('FILE-WINS path: a successfully loaded WAV is NOT overwritten by synth registration', () => {
+    const { scene, store } = fakeScene();
+    // Sentinel standing in for a decoded physical WAV the loader already cached (e.g. public/audio/sfx_hit_pistol.wav).
+    const REAL_WAV = { __physicalWav: true } as unknown as AudioBuffer;
+    store.set('sfx_hit_pistol', REAL_WAV);
+
+    const added = registerSynthSfx(scene);
+
+    // MUTATION-VERIFY: the exact same object is still under the key (not stripped + replaced by a synth buffer),
+    // and synth did NOT claim to install it. An unconditional-clobber regression fails BOTH assertions.
+    expect(store.get('sfx_hit_pistol')).toBe(REAL_WAV);
+    expect(added).not.toContain('sfx_hit_pistol');
+
+    // ...while every OTHER synth key (no WAV loaded) still got its synth fallback.
+    for (const key of SYNTH_KEYS) {
+      if (key === 'sfx_hit_pistol') continue;
+      expect(store.has(key)).toBe(true);
+      expect(added).toContain(key);
+    }
+  });
+
+  it('is a no-op (returns []) on a non-WebAudio backend — no context, never throws', () => {
+    const store = new Map<string, unknown>();
+    const scene = {
+      sound: {}, // no .context → not a WebAudio backend
+      cache: { audio: { exists: (k: string) => store.has(k), add() {}, remove() {} } },
+    } as unknown as SceneArg;
+    expect(registerSynthSfx(scene)).toEqual([]);
+    expect(store.size).toBe(0);
   });
 });

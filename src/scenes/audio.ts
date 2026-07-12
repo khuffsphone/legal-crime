@@ -37,22 +37,30 @@ const LIBRARY: ClipDef[] = [
   { key: 'siren', file: 'LCR_sfx_siren.m4a', bus: 'sfx', vol: 0.7, urgent: true }, // the law at 85 / lockout
   { key: 'warning', file: 'LCR_sfx_warning.m4a', bus: 'sfx', vol: 0.8, urgent: true }, // 🔔 teletype 50/70/85
   { key: 'mutiny', file: 'LCR_sfx_mutiny.m4a', bus: 'sfx', vol: 0.85, urgent: true }, // crew defection stinger
-  // ── per-weapon HIT-SFX hooks (attack-commit feedback). Keys are by CONTRACT (weaponFeedback.ts). Lane I:
-  // these are now SYNTHESIZED at boot (audioSynth.ts) under these exact keys — no WAV, so no decode error is
-  // even possible. The gun reports ride the EXISTING urgent governor (one-at-a-time + duck, like tommygun/
-  // pistol); a fists punch is a soft cue under the soft governor. No conductor/timing change. ──
-  { key: 'sfx_hit_fists', file: '', bus: 'sfx', vol: 0.7, synth: true }, // a knuckle thud (soft)
-  { key: 'sfx_hit_pistol', file: '', bus: 'sfx', vol: 0.82, urgent: true, synth: true },
-  { key: 'sfx_hit_shotgun', file: '', bus: 'sfx', vol: 0.85, urgent: true, synth: true },
-  { key: 'sfx_hit_rifle', file: '', bus: 'sfx', vol: 0.8, urgent: true, synth: true }, // the tommy
-  { key: 'sfx_hit_hitman', file: '', bus: 'sfx', vol: 0.82, urgent: true, synth: true },
-  { key: 'sfx_hit_demolitions', file: '', bus: 'sfx', vol: 0.85, urgent: true, synth: true },
-  // ── per-surface FOOTSTEP taps (Lane I) — synthesized filtered-noise; catalogued + governed on the sfx bus,
-  // ready for a locomotion lane to play by surface. No file. ──
-  { key: 'sfx_step_pavement', file: '', bus: 'sfx', vol: 0.4, synth: true },
-  { key: 'sfx_step_wood', file: '', bus: 'sfx', vol: 0.4, synth: true },
-  { key: 'sfx_step_gravel', file: '', bus: 'sfx', vol: 0.4, synth: true },
-  { key: 'sfx_step_interior', file: '', bus: 'sfx', vol: 0.35, synth: true },
+  // ── per-weapon HIT-SFX hooks (attack-commit feedback). Keys are by CONTRACT (weaponFeedback.ts).
+  // FILE-WINS (spec §9/§11 · Ticket 1): each key is WIRED to its physical WAV at public/audio/<key>.wav; the
+  // SAME key is still synthesized at boot (audioSynth.ts) as a FALLBACK, and registerSynthSfx now SKIPS a key
+  // whose WAV loaded — so a real WAV dropped at the path wins, and until then the procedural voice covers it.
+  // No silent stubs are shipped for these synth-backed keys (§9): a missing WAV 404s quietly → synth plays.
+  // The gun reports ride the EXISTING urgent governor (one-at-a-time + duck); a fists punch is a soft cue. ──
+  { key: 'sfx_hit_fists', file: 'sfx_hit_fists.wav', bus: 'sfx', vol: 0.7 }, // a knuckle thud (soft)
+  { key: 'sfx_hit_pistol', file: 'sfx_hit_pistol.wav', bus: 'sfx', vol: 0.82, urgent: true },
+  { key: 'sfx_hit_shotgun', file: 'sfx_hit_shotgun.wav', bus: 'sfx', vol: 0.85, urgent: true },
+  { key: 'sfx_hit_rifle', file: 'sfx_hit_rifle.wav', bus: 'sfx', vol: 0.8, urgent: true }, // the tommy
+  { key: 'sfx_hit_hitman', file: 'sfx_hit_hitman.wav', bus: 'sfx', vol: 0.82, urgent: true },
+  { key: 'sfx_hit_demolitions', file: 'sfx_hit_demolitions.wav', bus: 'sfx', vol: 0.85, urgent: true },
+  // ── per-surface FOOTSTEP taps. pavement + gravel are MVP (spec §8.1): wired to physical WAVs with the same
+  // synth fallback + file-wins rule as the hits. wood + interior are RESERVED (spec §8.2) — no confirmed wood
+  // TileKind / interior traversal system yet, so they STAY registered as synth-only (file:'') and ship NO WAV;
+  // do NOT force-map them until a real traversal context exists. ──
+  { key: 'sfx_step_pavement', file: 'sfx_step_pavement.wav', bus: 'sfx', vol: 0.4 },
+  { key: 'sfx_step_gravel', file: 'sfx_step_gravel.wav', bus: 'sfx', vol: 0.4 },
+  { key: 'sfx_step_wood', file: '', bus: 'sfx', vol: 0.4, synth: true }, // RESERVED §8.2 — no wood surface yet
+  { key: 'sfx_step_interior', file: '', bus: 'sfx', vol: 0.35, synth: true }, // RESERVED §8.2 — no interior yet
+  // ── downed-body SETTLE (spec §8.1/§11 · Ticket 1 · NEW key). Body/coat weight + cobble/floor contact when a
+  // unit goes down. Physical WAV only — no synth voice, so a missing WAV is a silent no-op (§11.2 "synth OR
+  // silence"). Soft cue under the soft governor; one per death. ──
+  { key: 'sfx_down_body', file: 'sfx_down_body.wav', bus: 'sfx', vol: 0.7 },
   // ── grease level-ups / extras — RTS-30e-audio: reconciled to the user's ACTUAL asset filenames (.wav) ──
   { key: 'grease_beat', file: 'sfx_the_beat_whistle.wav', bus: 'sfx', vol: 0.8 }, // a cop's whistle
   { key: 'grease_bench', file: 'sfx_the_bench_gavel.wav', bus: 'sfx', vol: 0.8 }, // a gavel

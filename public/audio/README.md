@@ -48,6 +48,25 @@ table in the RTS-30e-audio receipt) when you want them — all optional, none ga
 - LCR_vo_confirm_1.m4a · _2 · _3   (crew-order confirm, rotated)
 - LCR_vo_tip_extort/_grease/_launder/_war.m4a   · LCR_vo_win.m4a · LCR_vo_lose.m4a
 
+## ⚙ Combat & movement MVP (.wav) — FILE-WINS over synth (Combat & Movement Feedback · Ticket 1)
+These 9 keys are WIRED to the paths below but ship NO file yet: each has (or, for the
+downed cue, does without) a procedural SYNTH fallback that plays until you drop a real
+WAV here. Drop an audition-picked WAV at the exact name and it WINS over the synth
+automatically (registerSynthSfx skips a key whose WAV loaded). Do NOT ship silent stubs
+for the synth-backed keys — a missing file 404s quietly and the synth voice covers it.
+- sfx_hit_fists.wav        — fists hit (0.10–0.18s, cloth/body thud)   · synth fallback
+- sfx_hit_pistol.wav       — pistol hit (0.12–0.24s, dry period crack)  · synth fallback
+- sfx_hit_shotgun.wav      — shotgun hit (0.28–0.55s, broad boom)       · synth fallback
+- sfx_hit_rifle.wav        — tommy hit (0.22–0.40s, 4–6 taps)           · synth fallback
+- sfx_hit_hitman.wav       — hitman hit (0.08–0.18s, dry muted snap)    · synth fallback
+- sfx_hit_demolitions.wav  — demo hit (0.55–0.95s, satchel boom+tail)   · synth fallback
+- sfx_step_pavement.wav    — pavement footstep (0.055–0.10s)            · synth fallback
+- sfx_step_gravel.wav      — gravel footstep (0.07–0.13s)               · synth fallback
+- sfx_down_body.wav        — downed-body settle (0.30–0.65s)            · NO synth → silent if missing
+
+RESERVED (spec §8.2 — registered, NO file, NO forced surface map until a real context exists):
+`sfx_step_wood`, `sfx_step_interior` (synth-only).
+
 ## Music + ambience (.m4a, looped)
 - LCR_music_theme.m4a        — TITLE / default bed
 - LCR_music_menu.m4a         — menus
