@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "BM-20260712-001",
+  "correlation_id": "2cbe3830-ced3-4511-bb51-680198a0b5b6",
+  "parent_task_id": null,
+  "idempotency_key": "sha256:replace-with-objective-base-and-brain-revision-hash",
+  "objective": "Implement an approved low-risk documentation reconciliation without changing game code.",
+  "task_type": "brain_reconciliation",
+  "base_branch": "rts/isometric-conversion",
+  "base_commit": "5a8c6409907d0b7874a3c2e5adb104e68e999413",
+  "brain_inputs": [
+    {
+      "file_id": "1J-sjeB2AS6W3XzxcMUdKcVCa_0bOID1C",
+      "revision": null,
+      "authority": "canon"
+    }
+  ],
+  "scope": {
+    "allowed_paths": ["docs/orchestration/**"],
+    "forbidden_paths": ["src/**", ".github/**", "package*.json"],
+    "unlocked_rules": []
+  },
+  "acceptance": [
+    "The document accurately reflects repository-side queue authority.",
+    "No source, workflow, dependency, or lockfile changes are present."
+  ],
+  "routing": { "primary": "gpt", "reviewer": "claude" },
+  "risk": "low",
+  "autonomy": "open_pr",
+  "budget": {
+    "max_agent_calls": 2,
+    "max_rework_cycles": 1,
+    "max_runtime_minutes": 20,
+    "max_estimated_usd": 5
+  },
+  "dependencies": []
+}
