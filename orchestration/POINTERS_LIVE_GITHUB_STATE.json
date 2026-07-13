@@ -6,8 +6,9 @@
   "canonical_base_sha_at_bootstrap": "5a8c6409907d0b7874a3c2e5adb104e68e999413",
   "bootstrap_branch": "agent/brassmere-conductor-bootstrap",
   "bootstrap_pull_request": "https://github.com/khuffsphone/legal-crime/pull/87",
-  "bootstrap_head_sha": "bfc3e3e0ed06adab828973ab5306d538d669439a",
+  "activation_issue": "https://github.com/khuffsphone/legal-crime/issues/88",
+  "bootstrap_head_sha": "982ed85054ab0de05914693866735d40c2203b64",
   "live_state_authority": "GitHub Issues, PRs, Actions and branch refs",
   "drive_role": "approved knowledge, append-only receipts and generated digests",
-  "generated_at": "2026-07-13T02:24:00Z"
+  "generated_at": "2026-07-13T02:27:00Z"
 }
