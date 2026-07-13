@@ -1,0 +1,90 @@
+name: Brassmere worker - Codex
+
+on:
+  workflow_call:
+    inputs:
+      issue_number: { required: true, type: string }
+      task_id: { required: true, type: string }
+      task_b64: { required: true, type: string }
+      base_commit: { required: true, type: string }
+      design_only: { required: false, type: boolean, default: false }
+    secrets:
+      OPENAI_API_KEY: { required: true }
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: rts/isometric-conversion
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Enforce immutable base
+        env:
+          BASE_COMMIT: ${{ inputs.base_commit }}
+        run: git checkout --detach "$BASE_COMMIT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Prepare scoped prompt and task
+        env:
+          TASK_B64: ${{ inputs.task_b64 }}
+        run: |
+          mkdir -p .brassmere-runtime
+          printf '%s\n' '.brassmere-runtime/' >> .git/info/exclude
+          node scripts/orchestrator/prepare-prompt.mjs "$TASK_B64" orchestration/prompts/master-worker.md .brassmere-runtime/prompt.md
+          node -e "require('fs').writeFileSync('.brassmere-runtime/task.json', Buffer.from(process.env.TASK_B64, 'base64url').toString('utf8'))"
+          node scripts/orchestrator/validate-task.mjs .brassmere-runtime/task.json orchestration/policy.json
+      - name: Run Codex
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ${{ inputs.design_only && ':read-only' || ':workspace' }}
+          prompt-file: .brassmere-runtime/prompt.md
+          output-file: .brassmere-runtime/agent-message.txt
+      - name: Verify change scope
+        if: ${{ !inputs.design_only }}
+        run: |
+          { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/changed-paths.txt
+          test -s /tmp/changed-paths.txt
+          node scripts/orchestrator/validate-task.mjs .brassmere-runtime/task.json orchestration/policy.json /tmp/changed-paths.txt
+      - name: Run deterministic gates
+        if: ${{ !inputs.design_only }}
+        run: |
+          npm run typecheck
+          npm run build
+          npm test
+      - name: Publish design result
+        if: ${{ inputs.design_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue_number }}
+        run: gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file .brassmere-runtime/agent-message.txt
+      - name: Push isolated implementation branch
+        if: ${{ !inputs.design_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_ID: ${{ inputs.task_id }}
+          ISSUE: ${{ inputs.issue_number }}
+        run: |
+          BRANCH="agent/$(printf '%s' "$TASK_ID" | tr '[:upper:]' '[:lower:]')-codex"
+          git switch -c "$BRANCH"
+          git config user.name "brassmere-conductor[bot]"
+          git config user.email "brassmere-conductor[bot]@users.noreply.github.com"
+          git add --pathspec-from-file=/tmp/changed-paths.txt
+          git commit -m "$TASK_ID: autonomous Codex implementation"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --set-upstream origin "$BRANCH"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base rts/isometric-conversion --head "$BRANCH" --draft \
+            --title "$TASK_ID: autonomous Codex implementation" \
+            --body "Agent-managed draft for issue #$ISSUE. Human review remains required until autonomy policy enables verified auto-merge."
