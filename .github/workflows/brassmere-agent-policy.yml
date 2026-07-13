@@ -1,0 +1,33 @@
+name: Brassmere agent policy
+
+on:
+  pull_request:
+    branches: [rts/isometric-conversion]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-control-plane:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate JSON and example task
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('orchestration/policy.json')); JSON.parse(require('fs').readFileSync('orchestration/schemas/task.schema.json')); JSON.parse(require('fs').readFileSync('orchestration/schemas/receipt.schema.json'))"
+          node scripts/orchestrator/validate-task.mjs orchestration/examples/task.example.json orchestration/policy.json
+      - name: Require manual review for protected paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > /tmp/all-changed.txt
+          if rg -q '^(\.github/|src/|package(-lock)?\.json|CANON\.md|ENHANCEMENT_PLAN\.md|ASSET_SPEC\.md|RUN_LOG\.md|public/assets/|public/audio/)' /tmp/all-changed.txt; then
+            echo "Protected paths changed: automatic merge is forbidden."
+          fi
