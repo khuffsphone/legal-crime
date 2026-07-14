@@ -40,7 +40,7 @@ describe('criticalVisualState — keep these units findable', () => {
   });
 });
 
-describe('occlusionDisplay — dim→hide, or x-ray for critical (but NEVER x-ray a fog-hidden unit)', () => {
+describe('occlusionDisplay — dim→hide, or x-ray for critical (but a FOG-HIDDEN unit is ALWAYS hidden)', () => {
   it('a visible, un-occluded unit is normal', () => {
     expect(occlusionDisplay(false, false, true)).toBe('normal');
     expect(occlusionDisplay(false, true, true)).toBe('normal');
@@ -53,6 +53,14 @@ describe('occlusionDisplay — dim→hide, or x-ray for critical (but NEVER x-ra
   });
   it('⭐ occluded + critical but FOG-HIDDEN → hidden, NEVER x-ray (a shrouded rival stays shrouded)', () => {
     expect(occlusionDisplay(true, true, false)).toBe('hidden');
+  });
+  it('⭐ RESIDUAL LEAK CLOSED — a NON-occluded FOG-HIDDEN unit is HIDDEN, not normal (a directly-visible fogged rival must not draw at alpha 1)', () => {
+    // MUTATION: the pre-fix `if (!occluded) return "normal"` short-circuited BEFORE consulting `revealed`,
+    // so a fogged rival standing in the open rendered at full opacity. `revealed` must gate first.
+    expect(occlusionDisplay(false, false, false)).toBe('hidden');
+    expect(occlusionDisplay(false, true, false)).toBe('hidden'); // critical can't lift the fog either
+    // and it drives the sprite alpha to 0 (fully hidden), same as any other 'hidden'
+    expect(occlusionTargetAlpha(occlusionDisplay(false, false, false))).toBe(0);
   });
   it('the target alphas: normal full, hidden gone, x-ray a faint ghost under its rim', () => {
     expect(occlusionTargetAlpha('normal')).toBe(1);

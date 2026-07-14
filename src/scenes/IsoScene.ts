@@ -2158,7 +2158,10 @@ export class IsoScene extends Phaser.Scene {
       // so it stays findable. NEVER x-ray a fog-hidden unit (a shrouded rival stays shrouded).
       if (this.occEnabled) {
         const occluded = this.buildingHulls.length > 0 && isOccluded(s.x, s.y, depth, this.buildingHulls);
-        const revealed = isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
+        // NO-X-RAY: the SAME reveal predicate the ?sprites body-draw uses above (own units always draw; a
+        // rival draws only on a fog-revealed tile). occlusionDisplay now routes this into alpha for EVERY
+        // display state — so a NON-occluded fogged rival eases to alpha 0 instead of leaking at full opacity.
+        const revealed = v.faction === 'player' || isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
         const xact = extortByThug.get(v.unit.id);
         const critical = criticalVisualState({
           fighting: (!!v.attackUntil && now < v.attackUntil) || (!!v.hitUntil && now < v.hitUntil),
@@ -2285,10 +2288,19 @@ export class IsoScene extends Phaser.Scene {
       if (!plate) continue;
       const earner = businessEarner(b);
       const shut = isShutDown(b);
+      // NO-X-RAY: a plate only shows its TRUE allegiance (brass / rival-red / shut-soot) on a fog-revealed
+      // tile — a fogged front keeps the neutral fog-grey default so a rival-held (or any) block never leaks
+      // its ownership through the plate. Same registry predicate + same tile source as the coin/ownership-
+      // glow cull above (no-tile → treat as visible, matching that loop). The relight morph below stays
+      // ungated so `rec.shut` keeps tracking the real state.
+      const plateTile = businessTileOf(this.layout, b.id);
+      const revealed = plateTile ? this.isVisibleTile(plateTile) : true;
       let fill = hexNum(SPEC.fog), alpha = 0.14, stroke = hexNum(SPEC.fog), sAlpha = 0.45;
-      if (shut) { fill = hexNum(SPEC.soot); alpha = 0.5; stroke = hexNum(SPEC.danger); sAlpha = 0.6; }
-      else if (earner === 'player') { fill = hexNum(SPEC.brass); alpha = 0.26; stroke = hexNum(SPEC.brass); sAlpha = 0.8; }
-      else if (earner && earner.startsWith('rival')) { fill = hexNum(SPEC.rival); alpha = 0.26; stroke = hexNum(SPEC.rival); sAlpha = 0.8; }
+      if (revealed) {
+        if (shut) { fill = hexNum(SPEC.soot); alpha = 0.5; stroke = hexNum(SPEC.danger); sAlpha = 0.6; }
+        else if (earner === 'player') { fill = hexNum(SPEC.brass); alpha = 0.26; stroke = hexNum(SPEC.brass); sAlpha = 0.8; }
+        else if (earner && earner.startsWith('rival')) { fill = hexNum(SPEC.rival); alpha = 0.26; stroke = hexNum(SPEC.rival); sAlpha = 0.8; }
+      }
       plate.setFillStyle(fill, alpha).setStrokeStyle(1.5, stroke, sAlpha);
       // RTS-26: the building boards up / relights on the SHUT transition (event-driven redraw, not
       // per-frame — windows go dark + X-boards over the door when raided, warm again when reopened).
@@ -3568,7 +3580,15 @@ export class IsoScene extends Phaser.Scene {
     // INFO-FEEDBACK — a DOWN is a state change (unit.down, logged always); a HIT is a combat beat (combat.hit,
     // throttled inside the log so swings don't spam). Both carry the event tile.
     const faction: 'player' | 'rival' = ev.faction === this.state.player.id ? 'player' : 'rival';
-    this.recordInfoEvent(combatEventKind(ev.kind), ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`, ev.gx, ev.gy);
+    // NO-X-RAY: the WIRE row (+ its click-to-jump), the minimap ping, the edge arrow, and the [Q]-jump ALL
+    // ride the tile handed to recordInfoEvent — so an unrevealed rival-down/hit must not report AT ALL, or
+    // it leaks the tile through those four surfaces. Gate on the SAME registry predicate every other surface
+    // uses (isVisibleTile), fog-only: an off-screen but revealed beat still deserves its minimap ping / edge
+    // arrow (onScreen gates only the world flash + SFX below, via shouldEmitFeedback). A player-faction beat
+    // always rides a revealed tile (own units grow the fog), so it passes and stays reported as today.
+    if (this.isVisibleTile({ gx: ev.gx, gy: ev.gy })) {
+      this.recordInfoEvent(combatEventKind(ev.kind), ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`, ev.gx, ev.gy);
+    }
     // ⭐ ONE synced attack-commit event drives the three render channels (muzzle flash / hit-react / hit-SFX),
     // frame-aligned with the already-merged weaponAttackPose BODY lane — all off the SAME resolved-attack signal.
     const commit = attackCommitFromCombat(ev, { x: c.x, y: c.y });
