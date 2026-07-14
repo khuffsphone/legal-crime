@@ -47,6 +47,24 @@ export interface Gangster {
   traits?: Trait[];
 }
 
+/** RIVAL ARCHETYPE TUNING HOOK — a per-rival override of the three global aggression constants
+ * (constants.ts: AGGRO_ON_ATTACK / AGGRO_DECAY / AGGRO_HQ_STRIKE). Every field is optional; a field
+ * absent ⇒ the archetype preset, else the global constant, so an untouched rival is byte-identical. */
+export interface AggroTuning {
+  /** Overrides AGGRO_ON_ATTACK — aggression gained when the player hits this family. Absent ⇒ global. */
+  onAttack?: number;
+  /** Overrides AGGRO_DECAY — aggression shed per strategic pulse. Absent ⇒ global. */
+  decay?: number;
+  /** Overrides AGGRO_HQ_STRIKE — the menace threshold above which this family strikes YOUR HQ. Absent ⇒ global. */
+  hqStrike?: number;
+}
+
+/** The rival-AI candidate command kinds `rivalCandidates()` emits — the keys a per-rival `candidateBias`
+ * table may weight. A pure string union (no import) so it stays free of the commands.ts ↔ types.ts cycle;
+ * kept in sync with ai.ts by a test in tests/rivalArchetype.test.ts. */
+export type RivalCandidateKind =
+  | 'collect' | 'bribe' | 'recruitGangster' | 'establishOperation' | 'expandControl' | 'setBribe';
+
 export interface Family {
   id: string;
   name: string;
@@ -99,6 +117,23 @@ export interface Family {
   /** PLAYER SPINE (T1) — COSMETIC outfit / family flavour name. No mechanical effect. Absent ⇒ display
    * fallback "The Outfit" (see playerDossier). Additive, default-safe. */
   outfit?: string;
+  // ── RIVAL ARCHETYPE TUNING HOOKS (rivalArchetype.ts) — additive, all default-absent ⇒ byte-identical
+  //    baseline. These give each rival family a distinct AI "personality" without touching tick/commands. ──
+  /** Names a preset override bundle in RIVAL_ARCHETYPES (rivalArchetype.ts). DISTINCT from District.archetype
+   * (neighbourhood flavour) — this is the rival family's BEHAVIOUR preset. A direct override field below beats
+   * the preset beats the global. Absent ⇒ no preset. Additive, default-safe. */
+  familyArchetype?: string;
+  /** Per-rival override of the global aggression constants (onAttack/decay/hqStrike). Each field absent ⇒ the
+   * archetype preset, else the global. Absent ⇒ global aggression, byte-identical. Additive, default-safe. */
+  aggroTuning?: AggroTuning;
+  /** Per-rival preference weights over the federal-pressure bribe channels (politicians/judges/feds). Under
+   * pressure the family reaches for its highest-WEIGHTED unlocked channel. Absent ⇒ the historical fixed
+   * ladder (t1→politicians, t2→judges, t3→feds), byte-identical. Additive, default-safe. */
+  bribeChannelWeights?: Partial<Record<BribeChannel, number>>;
+  /** Per-rival multiplier over each AI candidate's base score, keyed by command kind — biases WHICH action an
+   * archetype favours (e.g. an aggressive family weights expandControl up). Absent, or a kind absent ⇒ ×1,
+   * byte-identical. Additive, default-safe. */
+  candidateBias?: Partial<Record<RivalCandidateKind, number>>;
 }
 
 export interface Business {

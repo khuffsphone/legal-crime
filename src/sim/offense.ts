@@ -5,7 +5,6 @@
 // economic settlement is untouched. Every attack raises the target's aggression (→ retaliation).
 
 import {
-  AGGRO_ON_ATTACK,
   ASSASSINATE_CITYHALL_CAP,
   ASSASSINATE_CITYHALL_COVER,
   ASSASSINATE_COST,
@@ -30,6 +29,7 @@ import {
   SABOTAGE_MIN_CREW,
 } from './constants';
 import { muscleInDistrict, findBusiness } from './commands';
+import { aggroOnAttackFor } from './rivalArchetype';
 import { familyStrength } from './conflict';
 import { businessEarner } from './economy';
 import { damageHQ } from './endgame';
@@ -42,7 +42,10 @@ import { findFamily, type Family, type GameState } from './types';
 function addHeat(family: Family, amount: number): void {
   family.heat = Math.min(HEAT_MAX, family.heat + Math.max(0, Math.round(amount)));
 }
-function raiseAggro(target: Family, amount = AGGRO_ON_ATTACK): void {
+// The aggro gained per hit is now PER-RIVAL (rivalArchetype tuning hook): the default and every fractional
+// caller resolve the target family's own onAttack value, which falls back to the global AGGRO_ON_ATTACK
+// when the family carries no override/archetype — so the baseline (40, 20, 60, 20) is byte-identical.
+function raiseAggro(target: Family, amount = aggroOnAttackFor(target)): void {
   target.aggro = (target.aggro ?? 0) + amount;
 }
 /** RTS-19: arm the shared crew cooldown after an offensive action — the men regroup before the
@@ -193,7 +196,7 @@ export function resolveSabotage(state: GameState, businessId: string): SabotageR
   clampDirty(p);
   armCooldown(state);
   addHeat(p, SABOTAGE_HEAT);
-  if (ownerFam) raiseAggro(ownerFam, AGGRO_ON_ATTACK / 2);
+  if (ownerFam) raiseAggro(ownerFam, aggroOnAttackFor(ownerFam) / 2);
 
   const rng = new Rng(state.rngState);
   const wreck = b.kind !== 'front' && rng.chance(SABOTAGE_DESTROY_CHANCE);
@@ -226,7 +229,7 @@ export function resolveAssassinate(state: GameState, rivalId: string): Assassina
   armCooldown(state);
   const cover = Math.min(ASSASSINATE_CITYHALL_CAP, (p.bribes.politicians ?? 0) * ASSASSINATE_CITYHALL_COVER);
   addHeat(p, ASSASSINATE_HEAT * (1 - cover));
-  raiseAggro(rival, AGGRO_ON_ATTACK * 1.5);
+  raiseAggro(rival, aggroOnAttackFor(rival) * 1.5);
 
   const pStr = familyStrength(p);
   const rStr = familyStrength(rival);
@@ -259,7 +262,7 @@ export function resolveLockout(state: GameState, rivalId: string): LockoutResult
   clampDirty(p);
   armCooldown(state);
   rival.lockoutTicks = Math.max(rival.lockoutTicks ?? 0, LOCKOUT_DURATION);
-  raiseAggro(rival, AGGRO_ON_ATTACK / 2);
+  raiseAggro(rival, aggroOnAttackFor(rival) / 2);
   state.log.push({ tick: state.tick, kind: 'lockout', message: `${p.name} sicced the Bureau on ${rival.name} — locked down for ${LOCKOUT_DURATION}`, data: { rivalId, duration: LOCKOUT_DURATION } });
   return { ok: true, reason: 'ok' };
 }

@@ -7,8 +7,6 @@
 // no-op, so it only comes alive on the big contested city.
 
 import {
-  AGGRO_DECAY,
-  AGGRO_HQ_STRIKE,
   ASSASSINATE_MIN_STRENGTH,
   HEAT_MAX,
   LOCKOUT_BLEED_CASH,
@@ -28,6 +26,7 @@ import { familyStrength } from './conflict';
 import { allBusinesses, businessEarner } from './economy';
 import { damageHQ } from './endgame';
 import { clampDirty } from './laundering';
+import { aggroDecayFor, aggroHqStrikeFor } from './rivalArchetype';
 import { controlOf, districtHolder } from './territory';
 import { pushPresence, districtsHeld, type PushResult } from './territoryWar';
 import { allFamilies, type District, type Family, type GameState } from './types';
@@ -204,7 +203,7 @@ export function resolveStrategicPulse(state: GameState): StrategicEvent {
       continue;
     }
 
-    rival.aggro = Math.max(0, (rival.aggro ?? 0) - AGGRO_DECAY);
+    rival.aggro = Math.max(0, (rival.aggro ?? 0) - aggroDecayFor(rival));
 
     // RTS-31: off-board rivals "lie low" between moves — their fixers keep the federal warrant at bay
     // and bleed heat, so a GROWING rival doesn't self-destruct in a federal bust on a fast clock (the
@@ -224,7 +223,7 @@ export function resolveStrategicPulse(state: GameState): StrategicEvent {
     // retaliation (aggro from being attacked) PLUS the unprovoked pressure of a rival who has out-grown
     // you (RTS-31), so a PASSIVE player who lets the rivals expand still gets hit — idling trends to loss.
     const menace = (rival.aggro ?? 0) + passiveAggression(state, rival);
-    if (menace >= AGGRO_HQ_STRIKE && familyStrength(rival) >= ASSASSINATE_MIN_STRENGTH) {
+    if (menace >= aggroHqStrikeFor(rival) && familyStrength(rival) >= ASSASSINATE_MIN_STRENGTH) {
       damageHQ(state, state.player.id, RIVAL_HQ_STRIKE_DAMAGE);
       hqStrikes.push(rival.id);
     }

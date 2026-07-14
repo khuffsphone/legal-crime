@@ -20,6 +20,7 @@ import {
 import { pendingCollection } from './collection';
 import type { Command } from './commands';
 import { applyCommand } from './commands';
+import { candidateBiasFor } from './rivalArchetype';
 import { Rng } from './rng';
 import { controlOf } from './territory';
 import {
@@ -176,6 +177,12 @@ export function rivalCandidates(state: GameState, rival: Family): ScoredAction[]
       else if (c.command.type === 'expandControl' && c.command.districtId !== defend?.districtId) c.base *= damp;
     }
   }
+
+  // RIVAL ARCHETYPE (tuning hook) — the per-candidate score MULTIPLIER, applied as the OUTERMOST layer over the
+  // (already posture-damped) base scores. It biases WHICH kind of action this rival favours by its archetype /
+  // per-rival table. Absent (×1 for every kind) ⇒ the base scores are unchanged and action ordering is
+  // byte-identical, so the base AI contract holds for any untuned rival.
+  for (const c of out) c.base *= candidateBiasFor(rival, c.command.type);
 
   return out;
 }

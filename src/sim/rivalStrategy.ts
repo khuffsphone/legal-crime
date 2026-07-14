@@ -15,6 +15,7 @@
 //     no combat and revives nothing.
 
 import { CONTROL_HOLD, EXPAND_COST } from './constants';
+import { chooseBribeChannel } from './rivalArchetype';
 import { fedWarningTier, federalExposure } from './federal';
 import { controlOf, districtHolder, topRivalControl } from './territory';
 import type { BribeChannel, Family, GameState } from './types';
@@ -143,7 +144,10 @@ export interface BribePlan {
 
 /**
  * The channel a family should bribe next, driven by the TELEGRAPHED federal warning it has actually reached
- * (federal pressure is always telegraphed a tick ahead, so reacting to fedWarningLevel is fair, not omniscient):
+ * (federal pressure is always telegraphed a tick ahead, so reacting to fedWarningLevel is fair, not omniscient).
+ * The fixed ladder is now a per-rival WEIGHTED table (rivalArchetype.chooseBribeChannel): channels unlock by
+ * tier (politicians@1, judges@2, feds@3) and the family reaches for its highest-weighted unlocked one. With no
+ * per-rival weights/archetype this reproduces the historical ladder exactly:
  *   • a bust armed / imminent tier (3) → FEDS (shield against the federal shock)
  *   • agents near the fronts (tier 2)  → JUDGES (survive a bust if it lands)
  *   • asking questions (tier 1)        → POLITICIANS (faster heat decay to cool back down)
@@ -154,10 +158,7 @@ export function bribeAllocation(
   family: Family,
   tuning: RivalStrategyTuning = RIVAL_STRATEGY_TUNING,
 ): BribePlan | undefined {
-  let channel: BribeChannel | undefined;
-  if (family.bustArmed || family.fedWarningLevel >= 3) channel = 'feds';
-  else if (family.fedWarningLevel >= 2) channel = 'judges';
-  else if (family.fedWarningLevel >= 1) channel = 'politicians';
+  const channel = chooseBribeChannel(family);
   if (!channel) return undefined;
   const current = family.bribes[channel] ?? 0;
   return { channel, amount: current + tuning.bribeStep, delta: tuning.bribeStep };
