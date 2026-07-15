@@ -198,11 +198,15 @@ export function buildSynthBuffer(ctx: BufferContextLike, key: SynthKey): AudioBu
 }
 
 /**
- * Synthesize every SYNTH_KEY ONCE and register it in Phaser's audio cache under its exact key, REPLACING any
- * silent placeholder loaded for that key. Borrows the WebAudioSoundManager's AudioContext only to allocate
- * the buffers — playback still flows through the manager (so the existing SFX volume path governs it). A
- * no-op (returns []) when WebAudio isn't the active backend (HTML5/no-audio), so a key simply stays silent
- * rather than erroring. Never throws; a single bad key can't break boot. Returns the keys registered.
+ * Synthesize each SYNTH_KEY that has NO loaded physical WAV and register the buffer in Phaser's audio cache
+ * under its exact key. FILE-WINS (spec §9): a key whose real WAV already loaded is left UNTOUCHED — the WAV is
+ * the primary voice and synth is only the FALLBACK for a missing/failed-to-decode WAV (so the key isn't in the
+ * cache). This reverses the old unconditional clobber (build → strip any cached WAV → install synth), which
+ * silently overrode a real WAV with the procedural voice. Borrows the WebAudioSoundManager's AudioContext only
+ * to allocate the fallback buffers — playback still flows through the manager (so the existing SFX volume path
+ * governs it). A no-op (returns []) when WebAudio isn't the active backend (HTML5/no-audio), so a key simply
+ * stays silent rather than erroring. Never throws; a single bad key can't break boot. Returns the keys the
+ * synth fallback was installed for (i.e. the keys with no physical WAV loaded).
  */
 export function registerSynthSfx(scene: Phaser.Scene): string[] {
   const mgr = scene.sound as unknown as { context?: BufferContextLike };
@@ -212,8 +216,11 @@ export function registerSynthSfx(scene: Phaser.Scene): string[] {
   const added: string[] = [];
   for (const key of SYNTH_KEYS) {
     try {
+      // FILE-WINS: a successfully loaded physical WAV under this exact key is the primary voice — keep it and
+      // skip synth entirely. Synth installs ONLY when the WAV is absent (missing/404/decode-fail → not cached),
+      // so a real WAV dropped at the key's path always beats the procedural fallback.
+      if (cache.exists(key)) continue;
       const buf = buildSynthBuffer(ctx, key);
-      if (cache.exists(key)) cache.remove(key); // drop any silent placeholder under this key
       cache.add(key, buf);
       added.push(key);
     } catch {
