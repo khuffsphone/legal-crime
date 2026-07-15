@@ -54,14 +54,16 @@ export function criticalVisualState(f: UnitVisFlags): boolean {
 export type OcclusionDisplay = 'normal' | 'hidden' | 'xray';
 
 /**
- * How an occluded unit should display. Not occluded → normal. Occluded + CRITICAL + REVEALED → the x-ray
- * silhouette (stay findable). Occluded otherwise → hidden. ⭐ A FOG-HIDDEN unit is NEVER x-rayed (a shrouded
- * rival stays shrouded) — the silhouette only preserves an already-visible unit's read. Pure.
+ * How a unit should display. ⭐ NO-X-RAY FIRST: a FOG-HIDDEN unit is ALWAYS 'hidden' — occluded or not,
+ * critical or not (a shrouded rival stays shrouded; the residual leak was a NON-occluded fogged rival
+ * short-circuiting to 'normal'/alpha-1 before `revealed` was ever consulted). Only past that gate: not
+ * occluded → normal; occluded + CRITICAL → the x-ray silhouette (stay findable); occluded otherwise →
+ * hidden. Pure — `revealed` now genuinely gates every branch, never just the x-ray one.
  */
 export function occlusionDisplay(occluded: boolean, critical: boolean, revealed: boolean): OcclusionDisplay {
+  if (!revealed) return 'hidden';        // ⭐ NO-X-RAY: no fog-hidden unit ever draws (this was THE leak).
   if (!occluded) return 'normal';
-  if (critical && revealed) return 'xray';
-  return 'hidden';
+  return critical ? 'xray' : 'hidden';
 }
 
 /** The ghost alpha for the dim→hide transition AND the faint x-ray body (a bright faction RIM is drawn on
