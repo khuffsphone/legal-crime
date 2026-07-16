@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brassmere.invalid/schemas/task.schema.json",
+  "title": "Brassmere Agent Task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "idempotency_key",
+    "objective",
+    "task_type",
+    "base_branch",
+    "base_commit",
+    "brain_inputs",
+    "scope",
+    "acceptance",
+    "routing",
+    "risk",
+    "autonomy",
+    "budget"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "task_id": { "type": "string", "pattern": "^BM-[0-9]{8}-[0-9]{3,}$" },
+    "correlation_id": { "type": "string", "minLength": 8 },
+    "parent_task_id": { "type": ["string", "null"] },
+    "idempotency_key": { "type": "string", "minLength": 16 },
+    "objective": { "type": "string", "minLength": 12, "maxLength": 1000 },
+    "task_type": {
+      "enum": ["design", "research", "recon", "architecture", "implementation", "test", "refactor", "visual", "ui", "brain_reconciliation"]
+    },
+    "base_branch": { "type": "string", "minLength": 1 },
+    "base_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "brain_inputs": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file_id", "authority"],
+        "properties": {
+          "file_id": { "type": "string", "minLength": 10 },
+          "revision": { "type": ["string", "null"] },
+          "authority": { "enum": ["canon", "approved_spec", "current_recon", "reference"] }
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_paths", "forbidden_paths"],
+      "properties": {
+        "allowed_paths": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+        "forbidden_paths": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
+        "unlocked_rules": { "type": "array", "maxItems": 10, "items": { "type": "string" } }
+      }
+    },
+    "acceptance": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 4 } },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "reviewer"],
+      "properties": {
+        "primary": { "enum": ["gpt", "codex", "claude", "gemini"] },
+        "reviewer": { "enum": ["codex", "claude", "gemini"] }
+      }
+    },
+    "risk": { "enum": ["low", "medium", "high"] },
+    "autonomy": { "enum": ["draft_only", "open_pr", "auto_merge_if_green", "human_approval"] },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_agent_calls", "max_rework_cycles", "max_runtime_minutes", "max_estimated_usd"],
+      "properties": {
+        "max_agent_calls": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "max_rework_cycles": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "max_runtime_minutes": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "max_estimated_usd": { "type": "number", "minimum": 0, "maximum": 50 }
+      }
+    },
+    "dependencies": { "type": "array", "maxItems": 20, "items": { "type": "string" } }
+  }
+}

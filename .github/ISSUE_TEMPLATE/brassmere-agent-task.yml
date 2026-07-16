@@ -1,0 +1,23 @@
+name: Brassmere autonomous task
+description: Queue a schema-validated task for the Brassmere Conductor.
+title: "[BM-AUTO] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only repository owners, members, and collaborators can enqueue work. The task must be complete JSON matching `orchestration/schemas/task.schema.json`.
+  - type: textarea
+    id: task
+    attributes:
+      label: Task envelope
+      description: Place the JSON between the two immutable marker comments.
+      value: |
+        <!-- brassmere-task:v1 -->
+        ```json
+        {
+          "schema_version": "1.0.0"
+        }
+        ```
+        <!-- /brassmere-task:v1 -->
+    validations:
+      required: true

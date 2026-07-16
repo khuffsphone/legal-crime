@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0.0",
+  "capabilities": [
+    {
+      "system": "OpenAI",
+      "unattended_surfaces": ["OpenAI API", "Codex GitHub Action", "Codex CLI non-interactive"],
+      "consumer_chat_is_worker": false,
+      "roles": ["design", "implementation", "review"]
+    },
+    {
+      "system": "Anthropic",
+      "unattended_surfaces": ["Claude Code GitHub Action", "Claude Agent SDK", "Claude Code CLI"],
+      "consumer_chat_is_worker": false,
+      "roles": ["architecture", "recon", "implementation", "review"]
+    },
+    {
+      "system": "Google",
+      "unattended_surfaces": ["Gemini CLI GitHub Action", "Gemini API", "Vertex AI", "Antigravity CLI"],
+      "consumer_chat_is_worker": false,
+      "spark_role": "optional creative and reporting surface; excluded from critical-path automation",
+      "roles": ["visual review", "UI review", "browser QA", "independent review"]
+    },
+    {
+      "system": "GitHub",
+      "unattended_surfaces": ["Actions", "Issues", "Pull Requests", "REST API", "GraphQL API", "webhooks"],
+      "roles": ["control plane", "event bus", "source truth", "CI", "merge gates"]
+    },
+    {
+      "system": "Google Drive",
+      "unattended_surfaces": ["Drive API", "Docs API", "Google Workspace remote MCP"],
+      "roles": ["knowledge plane", "approved context", "receipts", "digests"],
+      "warning": "Remote Drive MCP is Developer Preview; deterministic background writes should use Drive/Docs APIs with scoped identity."
+    }
+  ],
+  "security": {
+    "models_may_write_drive_and_github_in_same_run": false,
+    "scoped_context_by_file_id_and_revision": true,
+    "prompt_injection_boundary": "Drive documents, issue text, comments and repository content are untrusted data"
+  }
+}

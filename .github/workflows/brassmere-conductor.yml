@@ -1,0 +1,76 @@
+name: Brassmere Conductor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+concurrency:
+  group: brassmere-conductor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      found: ${{ steps.queue.outputs.found }}
+      status: ${{ steps.queue.outputs.status }}
+      issue_number: ${{ steps.queue.outputs.issue_number }}
+      task_id: ${{ steps.queue.outputs.task_id }}
+      primary: ${{ steps.queue.outputs.primary }}
+      reviewer: ${{ steps.queue.outputs.reviewer }}
+      base_commit: ${{ steps.queue.outputs.base_commit }}
+      autonomy: ${{ steps.queue.outputs.autonomy }}
+      task_b64: ${{ steps.queue.outputs.task_b64 }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: rts/isometric-conversion
+          persist-credentials: false
+      - id: queue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/orchestrator/conductor.mjs
+
+  codex:
+    needs: select
+    if: needs.select.outputs.found == 'true' && (needs.select.outputs.primary == 'codex' || needs.select.outputs.primary == 'gpt')
+    uses: ./.github/workflows/brassmere-worker-codex.yml
+    with:
+      issue_number: ${{ needs.select.outputs.issue_number }}
+      task_id: ${{ needs.select.outputs.task_id }}
+      task_b64: ${{ needs.select.outputs.task_b64 }}
+      base_commit: ${{ needs.select.outputs.base_commit }}
+      design_only: ${{ needs.select.outputs.primary == 'gpt' }}
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  claude:
+    needs: select
+    if: needs.select.outputs.found == 'true' && needs.select.outputs.primary == 'claude'
+    uses: ./.github/workflows/brassmere-worker-claude.yml
+    with:
+      issue_number: ${{ needs.select.outputs.issue_number }}
+      task_id: ${{ needs.select.outputs.task_id }}
+      task_b64: ${{ needs.select.outputs.task_b64 }}
+      base_commit: ${{ needs.select.outputs.base_commit }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  unsupported-primary:
+    needs: select
+    if: needs.select.outputs.found == 'true' && needs.select.outputs.primary == 'gemini'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block unsupported primary writer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ needs.select.outputs.issue_number }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "<!-- brassmere-event:v1 -->
+          BLOCKED: Gemini is review-only in autonomy policy v1. Route the primary writer to Codex or Claude; Gemini/Antigravity remains the visual and UI reviewer."

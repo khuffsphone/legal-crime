@@ -1,0 +1,78 @@
+name: Brassmere worker - Claude
+
+on:
+  workflow_call:
+    inputs:
+      issue_number: { required: true, type: string }
+      task_id: { required: true, type: string }
+      task_b64: { required: true, type: string }
+      base_commit: { required: true, type: string }
+    secrets:
+      ANTHROPIC_API_KEY: { required: true }
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: rts/isometric-conversion
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Enforce immutable base
+        env:
+          BASE_COMMIT: ${{ inputs.base_commit }}
+        run: git checkout --detach "$BASE_COMMIT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Prepare scoped prompt and task
+        env:
+          TASK_B64: ${{ inputs.task_b64 }}
+        run: |
+          mkdir -p .brassmere-runtime
+          printf '%s\n' '.brassmere-runtime/' >> .git/info/exclude
+          node scripts/orchestrator/prepare-prompt.mjs "$TASK_B64" orchestration/prompts/master-worker.md .brassmere-runtime/prompt.md
+          node -e "require('fs').writeFileSync('.brassmere-runtime/task.json', Buffer.from(process.env.TASK_B64, 'base64url').toString('utf8'))"
+          node scripts/orchestrator/validate-task.mjs .brassmere-runtime/task.json orchestration/policy.json
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "Read .brassmere-runtime/prompt.md and perform exactly that task. Do not push, merge, or write to Drive."
+          claude_args: "--max-turns 12"
+      - name: Verify change scope
+        run: |
+          { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/changed-paths.txt
+          test -s /tmp/changed-paths.txt
+          node scripts/orchestrator/validate-task.mjs .brassmere-runtime/task.json orchestration/policy.json /tmp/changed-paths.txt
+      - name: Run deterministic gates
+        run: |
+          npm run typecheck
+          npm run build
+          npm test
+      - name: Push isolated implementation branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_ID: ${{ inputs.task_id }}
+          ISSUE: ${{ inputs.issue_number }}
+        run: |
+          BRANCH="agent/$(printf '%s' "$TASK_ID" | tr '[:upper:]' '[:lower:]')-claude"
+          git switch -c "$BRANCH"
+          git config user.name "brassmere-conductor[bot]"
+          git config user.email "brassmere-conductor[bot]@users.noreply.github.com"
+          git add --pathspec-from-file=/tmp/changed-paths.txt
+          git commit -m "$TASK_ID: autonomous Claude implementation"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --set-upstream origin "$BRANCH"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base rts/isometric-conversion --head "$BRANCH" --draft \
+            --title "$TASK_ID: autonomous Claude implementation" \
+            --body "Agent-managed draft for issue #$ISSUE. Human review remains required until autonomy policy enables verified auto-merge."

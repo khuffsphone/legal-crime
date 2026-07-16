@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0.0",
+  "enabled": false,
+  "repository": "khuffsphone/legal-crime",
+  "canonical_branch": "rts/isometric-conversion",
+  "drive_brain_folder_id": "1kO2ToKWZUX6HSvY-Ba4EtMLyTa-g3tpu",
+  "queue": {
+    "issue_marker": "brassmere-task:v1",
+    "max_concurrent_writers": 1,
+    "lease_minutes": 45,
+    "maximum_retries": 2,
+    "maximum_rework_cycles": 1,
+    "maximum_hops": 4
+  },
+  "budgets": {
+    "maximum_agent_calls_per_task": 2,
+    "maximum_runtime_minutes": 30,
+    "maximum_estimated_usd_per_task": 8,
+    "maximum_estimated_usd_per_day": 35
+  },
+  "automatic_merge": {
+    "enabled": false,
+    "maximum_changed_files": 12,
+    "maximum_changed_lines": 700,
+    "allowed_path_prefixes": [
+      "docs/",
+      "orchestration/",
+      "scripts/orchestrator/"
+    ],
+    "required_checks": [
+      "typecheck",
+      "build",
+      "test",
+      "agent-policy",
+      "independent-review"
+    ]
+  },
+  "always_human_review": [
+    ".github/",
+    "src/",
+    "package.json",
+    "package-lock.json",
+    "CANON.md",
+    "ENHANCEMENT_PLAN.md",
+    "ASSET_SPEC.md",
+    "RUN_LOG.md",
+    "public/assets/",
+    "public/audio/"
+  ],
+  "collision_magnets": [
+    "src/scenes/IsoScene.ts",
+    "src/sim/save.ts",
+    "src/sim/tick.ts",
+    "src/sim/applyCommand.ts",
+    "src/scenes/ui/",
+    "src/sim/index.ts",
+    "src/sim/constants.ts",
+    "src/sim/types.ts",
+    "src/sim/state.ts"
+  ],
+  "locked_rules": [
+    "src/sim remains Phaser-free",
+    "tick and applyCommand math are not changed unless the task explicitly unlocks them",
+    "render and input behavior remains in src/scenes",
+    "repo truth defines what exists; approved Brain canon defines intended behavior",
+    "one primary writer per task; a different provider performs review",
+    "Drive is not a mutable queue or lease database"
+  ]
+}
