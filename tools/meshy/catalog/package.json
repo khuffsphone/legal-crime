@@ -1,0 +1,24 @@
+{
+  "name": "meshy-asset-catalog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Catalog Meshy character GLBs: render front+3/4 ortho thumbnails and scaffold a labeling catalog (catalog.json + gallery.md). Does NOT rename.",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "catalog": "tsx catalog.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
