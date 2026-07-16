@@ -12,3 +12,8 @@ assets/raw/
 *.glb
 __pycache__/
 *.pyc
+
+# Meshy integration (tools/meshy) — never commit the real key; DO ship the template.
+tools/meshy/.env
+!tools/meshy/.env.example
+# Pulled Meshy assets (assets/raw/meshy/) are already covered by `assets/raw/` above.
