@@ -34,6 +34,7 @@ import {
   isSelected,
   createInitialState,
   updateAndObserve as observeWorld,
+  cleanupDeadRivalEmbodiment,
   harvestIncidents,
   recentIncidents,
   rushCollection,
@@ -205,7 +206,13 @@ import {
   COMBAT_SEEK_RANGE,
   isCombatant,
   enemyInRange,
+  recordDownedBody,
+  downedBodyFallProgress,
+  downedBodyMotionPaused,
   downedBodyDecay,
+  downedBodyAngleDeg,
+  DOWNED_BODY_CONTACT_SECONDS,
+  MAX_DOWNED_BODIES,
   type DownedBody,
   spawnBeatCops,
   primePatrolWorld,
@@ -375,7 +382,6 @@ import {
 import {
   combatVfxForVerb,
   attackMotionForWeapon,
-  corpseMemoryRole,
   outcomeDownedAMan,
   killNudgePx,
   type CombatVfx,
@@ -509,6 +515,13 @@ interface UnitView {
   footstepIndex?: number; // deterministic playback variation cursor
 }
 
+interface DownedBodyView {
+  figure: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
+  /** True only for a fresh, visible casualty whose shipped `thug_hurt` atlas can play the fall. */
+  hurtAtlas: boolean;
+  angleDeg: number;
+}
+
 /** RTS-32 — which units get the procedural rig: a plain button-man (thug) of either faction. Weapon
  * enforcers + collectors keep their baked silhouettes this slice (the rig is structured to adopt them
  * later — same gait clock, their own prop layer). */
@@ -567,8 +580,14 @@ export class IsoScene extends Phaser.Scene {
   // POLISH v2 · PKG4 — static building occlusion hulls (buildings don't move; computed once in drawCity).
   private buildingHulls: BuildingHull[] = [];
   private occEnabled = true; // independently toggleable
-  // COMBAT READABILITY (4) — persistent downed-body sprites, keyed by the downed unit's id.
-  private downedBodyViews = new Map<string, Phaser.GameObjects.Image>();
+  // COMBAT READABILITY (4) — one fall→corpse→fade view per casualty, keyed by the downed unit's id.
+  private downedBodyViews = new Map<string, DownedBodyView>();
+  // Only fresh combat events enter this set. It gives us one pause-safe ~0.5s body-contact cue without
+  // replaying a sound for bodies reconstructed from save, and is consumed even when the tile is hidden.
+  private pendingBodyContacts = new Set<string>();
+  // Nonverbal casualty reactions are supporting texture, not a chorus. Cap them globally so a burst of
+  // downs cannot mask weapon reports, the body-contact cue, or real character VO.
+  private lastDeathReactionMs = Number.NEGATIVE_INFINITY;
   // BEAT-COP P0 — one small NEUTRAL marker per cop (never faction-coloured, never interactive), keyed
   // by cop id; plus the ?debugCops=1 patrol-edge overlay.
   private copViews = new Map<string, Phaser.GameObjects.Graphics>();
@@ -932,6 +951,8 @@ export class IsoScene extends Phaser.Scene {
     this.bizBuildings.clear();
     this.districtLabels.clear();
     this.downedBodyViews.clear();
+    this.pendingBodyContacts.clear(); // never replay a death/contact cue when reconstructing a loaded save
+    this.lastDeathReactionMs = Number.NEGATIVE_INFINITY;
     this.copViews.clear(); // BEAT-COP P0 — marker pool; cop ids are stable, so corpses would pin forever
     this.copSprites.clear(); // ?sprites cop atlas pool — dropped with the marker pool (same teardown law)
     // lazily-created (get-or-create) display singletons — undefined makes each creator rebuild a live one
@@ -1781,12 +1802,19 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private despawnContestMuscle(c: Contest): void {
-    // RTS-30e: a repelled invasion's muscle goes DOWN — play the kill beat where each one stood.
+    // A resolved invasion retires each embodied attacker through the same fall/contact/body lifecycle as
+    // street combat. Missing views (defensive old-save edge) still get removed without fabricating a body.
     for (const id of c.muscleIds) {
       const v = this.units.find((u) => u.unit.id === id);
-      if (v) { const s = unitScreenPos(v.unit); this.playKill(s.x, s.y, v.faction); }
+      if (v) {
+        this.beginCasualtyLifecycle({
+          id, factionId: v.unit.factionId ?? c.invaderId, faction: 'rival',
+          gx: v.unit.pos.gx, gy: v.unit.pos.gy, removeUnitId: id,
+        });
+      } else {
+        this.removeUnitById(id);
+      }
     }
-    for (const id of c.muscleIds) this.removeUnitById(id);
     c.muscleIds = [];
   }
 
@@ -1970,6 +1998,23 @@ export class IsoScene extends Phaser.Scene {
     return best;
   }
 
+  /** Mirror the pure dead-rival retirement into scene-owned views and offense bookkeeping. */
+  private reconcileRivalCleanup(cleanup: ObserveResult['result']['rivalCleanup']): void {
+    const dead = new Set(cleanup.familyIds);
+    for (const familyId of dead) {
+      this.rivalStrikes.delete(familyId);
+      this.rivalLastOffenseSec.delete(familyId);
+    }
+    for (const unitId of cleanup.unitIds) this.removeUnitById(unitId);
+    // Defensive save/reload hygiene: no strike may retain a commitment made entirely of bodies that
+    // no longer exist, even if an older save associated it with the wrong family key.
+    for (const [familyId, strike] of this.rivalStrikes) {
+      if (dead.has(familyId) || !strike.unitIds.some((id) => this.state.units.some((u) => u.id === id))) {
+        this.rivalStrikes.delete(familyId);
+      }
+    }
+  }
+
   private removeUnitById(id: string): void {
     const idx = this.units.findIndex((v) => v.unit.id === id);
     if (idx >= 0) {
@@ -1982,6 +2027,14 @@ export class IsoScene extends Phaser.Scene {
       this.units.splice(idx, 1);
     }
     this.state.units = this.state.units.filter((u) => u.id !== id);
+    this.unitOrders.delete(id);
+    this.extortShoveAt.delete(id);
+    // Retire the id from every numbered group immediately. Recall also prunes defensively, but
+    // keeping the stored groups clean prevents a dead unit lingering through save/UI inspection.
+    const liveCommandableIds = this.liveCommandableIds();
+    for (let group = 1; group <= 9; group += 1) {
+      this.controlGroups = pruneGroup(this.controlGroups, group, liveCommandableIds);
+    }
     // RTS-30d-3: a dead/despawned unit drops out of the selection (the brass ring + its card vote go with it).
     if (this.selection.ids.includes(id)) this.selection = selectMany(this.selection.ids.filter((x) => x !== id));
     if (this.collectorInfoId === id) this.hideCollectorInfo();
@@ -1989,6 +2042,9 @@ export class IsoScene extends Phaser.Scene {
 
   private updateUnits(dt: number): void {
     this.reconcileCrewBodies();
+    // Commands/load can eliminate a rival between realtime steps. Reconcile before turf-war/offense
+    // steering so a dead family never gets one final embodied move while waiting for observeWorld.
+    this.reconcileRivalCleanup(cleanupDeadRivalEmbodiment(this.state));
     // RTS-28 PACING: feed the sim a tighter real-time week + the fast-forward multiplier; a pending
     // SKIP-WEEK jumps straight to the next settlement (exactly one). Economy math is untouched.
     // RTS-30c-1.1: compute the simulated step FIRST and drive the turf war with the SAME stepDt as the
@@ -2022,6 +2078,7 @@ export class IsoScene extends Phaser.Scene {
       this.copsEnabled,
     );
     this.state = obs.state;
+    this.reconcileRivalCleanup(obs.result.rivalCleanup);
     // RTS-24: on each settled week, run the content beat — civic INFLUENCE accrual (Mayor path),
     // market drift back toward balance, and the light event roll. WRAPS settlement; tick untouched.
     // RTS-28 ?market=off de-emphasises the Market + Events noise: still accrue civic influence
@@ -2058,10 +2115,15 @@ export class IsoScene extends Phaser.Scene {
     this.processExtortionEvents(obs.result.extortion);
     if (obs.result.weeksFired > 0) this.syncBusinessCollectors();
     for (const ev of obs.result.interceptions) {
+      // resolveInterceptions has already retired a robbed one-shot runner from the sim. Capture its
+      // scene-owned view/tile first so the ambush remains visible and the Wire keeps a valid jump target.
+      const collectorView = this.units.find((view) => view.unit.id === ev.collectorId);
+      const collectorTile = collectorView ? unitTile(collectorView.unit) : undefined;
+      const oneShotRunner = collectorView?.unit.routeId === undefined;
       this.flashAmbush(ev);
       // INFO-FEEDBACK — collector.robbed (state change → log + edge alert + ping) at the collector's tile.
-      const col = this.state.units.find((u) => u.id === ev.collectorId);
-      this.recordInfoEvent('collector.robbed', `a collector was robbed of $${ev.amount}`, col?.pos.gx, col?.pos.gy);
+      this.recordInfoEvent('collector.robbed', `a collector was robbed of $${ev.amount}`, collectorTile?.gx, collectorTile?.gy);
+      if (oneShotRunner) this.removeUnitById(ev.collectorId);
     }
     for (const ev of obs.result.combat) this.playCombatBeat(ev); // RTS-35a unit-vs-unit fight beats
     // NO-X-RAY: adaptive music may react only to combat the player can know about. A hidden rival-v-rival
@@ -2070,11 +2132,12 @@ export class IsoScene extends Phaser.Scene {
     this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
     // AUDIO E-H (F1): capture the deposits so the atmosphere hook can source collector cues from THEM
     // (processCollectorArrivals), never obs.result.arrivedUnitIds (which carries rival arrivals → x-ray).
+    const completedRushDeposits = processCollectorArrivals(this.state, this.layout);
     const collectorDeposits: DepositEvent[] = [
       ...routeEvents
         .filter((event) => event.kind === 'deposit')
         .map((event) => ({ collectorId: event.collectorId, familyId: event.familyId, banked: event.amount })),
-      ...processCollectorArrivals(this.state, this.layout),
+      ...completedRushDeposits,
     ];
     for (const dep of collectorDeposits) {
       if (dep.familyId === 'player') this.flashDeposit(dep.collectorId, dep.banked);
@@ -2087,6 +2150,9 @@ export class IsoScene extends Phaser.Scene {
         this.recordInfoEvent('collector.banked', `a collector banked $${dep.banked}`, vault?.gx, vault?.gy);
       }
     }
+    // Manual [C] collectors are one-shot runners. processCollectorArrivals retired their sim bodies;
+    // keep the view through flashDeposit above so the bank animation has an origin, then remove it too.
+    for (const dep of completedRushDeposits) this.removeUnitById(dep.collectorId);
     // Lane L — RUN STATS: the cash gained across the deposit calls above is the funds banked this frame.
     recordFundsBanked(runStats, this.state.player.cash - cashBeforeDeposits);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
@@ -3506,7 +3572,7 @@ export class IsoScene extends Phaser.Scene {
     if (!out.ok) {
       this.setStatus(out.reason === 'in-flight'
         ? 'a rushed collector is already on its way — let it bank before sending another'
-        : 'nothing to rush yet — takings build each week after a shakedown');
+        : 'nothing to rush — automatic collectors may have banked it already; new takings build each week');
       return;
     }
     this.attachView(out.unit, 'player');
@@ -3839,6 +3905,49 @@ export class IsoScene extends Phaser.Scene {
     v.hitKnockbackPx = react?.knockbackPx ?? 3;
   }
 
+  /**
+   * The ONE scene entry point for a real casualty, whether it came from realtime combat, a resolved turf
+   * contest, or an abstract offensive operation. It records the authoritative sim body, arms the pause-safe
+   * contact cue, emits t0 feedback only when visible, and optionally retires the embodied unit. Callers own
+   * strategic roster mutation/status copy; this owns only the physical fall→body→fade lifecycle.
+   */
+  private beginCasualtyLifecycle(casualty: {
+    id: string;
+    factionId: string;
+    faction: 'player' | 'rival' | 'civilian';
+    gx: number;
+    gy: number;
+    removeUnitId?: string;
+  }): void {
+    const alreadyStarted = !!this.pendingBodyContacts?.has(casualty.id) || !!this.downedBodyViews?.has(casualty.id);
+    const down: CombatEvent = {
+      kind: 'down', attackerId: `resolved-${casualty.id}`, unitId: casualty.id,
+      faction: casualty.factionId, gx: casualty.gx, gy: casualty.gy,
+    };
+    // Realtime combat has already recorded its body; abstract/contest casualties have not. The pure recorder
+    // dedupes both paths and applies the shared population cap.
+    this.state.downedBodies = recordDownedBody(this.state.downedBodies ?? [], down);
+
+    if (!alreadyStarted) {
+      (this.pendingBodyContacts ??= new Set()).add(casualty.id);
+      const c = gridToScreen(casualty.gx, casualty.gy);
+      const revealed = this.isVisibleTile({ gx: casualty.gx, gy: casualty.gy });
+      const visible = shouldEmitFeedback(revealed, this.onScreen(c.x, c.y));
+      if (visible) {
+        this.cameraBeat('kill');
+        this.playKill(c.x, c.y, casualty.faction);
+        // Keep multi-kill bursts subordinate to weapon/contact audio and to acted character VO.
+        if (this.time.now - (this.lastDeathReactionMs ?? Number.NEGATIVE_INFINITY) >= 1200) {
+          const reaction = hashSeed(casualty.id) % 2 === 0 ? 'sfx_death_reaction_1' : 'sfx_death_reaction_2';
+          this.audio?.play(reaction, { volScale: casualty.faction === 'player' ? 0.7 : 0.48 });
+          this.lastDeathReactionMs = this.time.now;
+        }
+      }
+    }
+
+    if (casualty.removeUnitId) this.removeUnitById(casualty.removeUnitId);
+  }
+
   /** RTS-35a — render a unit-vs-unit combat beat from the pure sim (resolveProximityCombat): the
    * attacker SWINGS/FIRES (melee swing or ranged recoil by its weapon — reusing the RTS-30e motion
    * system, not a duplicate helper), the struck thug FLINCHES, and on a DOWN the kill beat fires
@@ -3881,13 +3990,12 @@ export class IsoScene extends Phaser.Scene {
       if (visible) this.hitPip(c.x, c.y);      // COMBAT READABILITY (2) — a restrained damage-flash pip (no numbers)
       if (visible) this.cameraBeat('normalHit'); // POLISH v2 · PKG3 — a small punch on a visible trade
     } else {
-      if (visible) this.cameraBeat('kill');    // POLISH v2 · PKG3 — a heavier hit-stop on a visible down
-      if (visible) this.audio?.play('sfx_down_body'); // one cadence-locked settle on the same visibility gate
-      if (visible) this.playKill(c.x, c.y, faction); // ⭐ danger MOTION-only → desat slump → pool
       const casualty = this.units.find((view) => view.unit.id === ev.unitId)?.unit;
       const casualtyName = this.crewName(casualty, 'one of your thugs');
       if (faction === 'player' && casualty) removeCrewMemberForUnit(this.state.player, casualty);
-      this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
+      this.beginCasualtyLifecycle({
+        id: ev.unitId, factionId: ev.faction, faction, gx: ev.gx, gy: ev.gy, removeUnitId: ev.unitId,
+      });
       if (revealed) this.setStatus(faction === 'player' ? `${casualtyName} went DOWN — pull back or reinforce` : 'a rival thug went DOWN in the brawl');
     }
   }
@@ -3919,31 +4027,79 @@ export class IsoScene extends Phaser.Scene {
     this.tweens.add({ targets: pip, y: pip.y - 14, alpha: 0, duration: 180, ease: 'Quad.Out', onComplete: () => pip.destroy() });
   }
 
-  /** COMBAT READABILITY (4) — render the persistent DOWNED BODIES (state.downedBodies, driven by the sim
-   * wrapper). A downed unit leaves a DESATURATED, slumped body (canon: desat, never rival-red) that fades
-   * out over its persist window, then is cleaned up — instead of the unit vanishing the instant it falls.
-   * Pools one image per body; syncs create/fade/destroy against the sim list each frame. */
+  /** COMBAT READABILITY (4) — ONE authoritative casualty lifecycle, driven by sim body age:
+   * hit at t0 → shipped `thug_hurt` reaction/fallback fall → contact at ~0.5s → readable corpse → late fade
+   * → hard cleanup at 6s. Sim age freezes under active-pause and round-trips through save/load; the render
+   * never owns a second long-lived pool. Every visual/audio channel uses the same fog + viewport gate. */
   private syncDownedBodies(): void {
-    const bodies: DownedBody[] = this.state.downedBodies ?? [];
+    // Defense in depth for old saves: the sim normalizes to this cap on its next active step, while a paused
+    // restored game also renders no more than the newest MAX_DOWNED_BODIES.
+    const bodies: DownedBody[] = (this.state.downedBodies ?? []).slice(-MAX_DOWNED_BODIES);
     const live = new Set(bodies.map((b) => b.id));
     // drop views whose body the sim has cleaned up
     for (const [id, img] of this.downedBodyViews) {
-      if (!live.has(id)) { img.destroy(); this.downedBodyViews.delete(id); }
+      if (!live.has(id)) { img.figure.destroy(); this.downedBodyViews.delete(id); }
     }
+    for (const id of [...(this.pendingBodyContacts ?? [])]) if (!live.has(id)) this.pendingBodyContacts.delete(id);
     for (const b of bodies) {
       const sp = gridToScreen(b.gx, b.gy);
       const shown = this.isVisibleTile({ gx: b.gx, gy: b.gy });
       let img = this.downedBodyViews.get(b.id);
-      if (!img && !shown) continue;
+      if (!img && !shown) {
+        // Consume an unheard contact once its moment passes. Revealing the tile later may show the remaining
+        // corpse, but must not replay its fall or emit a delayed positional sound.
+        if (this.pendingBodyContacts?.has(b.id) && b.ageSec >= DOWNED_BODY_CONTACT_SECONDS) {
+          this.pendingBodyContacts.delete(b.id);
+        }
+        continue;
+      }
       if (!img) {
-        // a flattened, DESATURATED figure on the ground (grey — never rival-red), behind the living units.
-        img = this.add.image(sp.x, sp.y + 4, figureKeyFor(undefined, b.factionId === this.state.player.id ? 'player' : 'rival', 1))
-          .setOrigin(0.5, 0.9).setTint(0x6b6358).setScale(1.05, 0.5)
-          .setDepth(depthValue(Math.round(b.gx), Math.round(b.gy)) * 10 + 3);
-        this.worldFx(img);
+        // A fresh visible down gets the real atlas HURT take when it exists. A loaded/mature corpse uses the
+        // deterministic figure fallback so restoring a save never restarts a one-shot animation.
+        const hurtAtlas = !!this.pendingBodyContacts?.has(b.id)
+          && this.spritesEnabled && this.spriteSheetReady && this.spriteActions.has('hurt');
+        const figure = hurtAtlas
+          ? ensureUnitSprite(this, THUG_SPRITE_CONFIG.unitName, 'hurt')
+          : this.add.image(sp.x, sp.y + 4, figureKeyFor(undefined, b.factionId === this.state.player.id ? 'player' : 'rival', 1))
+              .setOrigin(0.5, 0.9);
+        figure.setTint(0x6b6358).setDepth(depthValue(Math.round(b.gx), Math.round(b.gy)) * 10 + 3);
+        img = { figure, hurtAtlas, angleDeg: downedBodyAngleDeg(b.id) };
+        this.worldFx(figure);
         this.downedBodyViews.set(b.id, img);
       }
-      img.setVisible(shown).setAlpha(0.7 * (1 - downedBodyDecay(b))); // fade out toward cleanup
+
+      const fall = downedBodyFallProgress(b);
+      const alpha = 0.82 * (1 - downedBodyDecay(b));
+      const depth = depthValue(Math.round(b.gx), Math.round(b.gy)) * 10 + 3;
+      if (img.hurtAtlas) {
+        const sprite = img.figure as Phaser.GameObjects.Sprite;
+        driveUnitSprite(sprite, {
+          unitName: THUG_SPRITE_CONFIG.unitName,
+          facing: img.angleDeg > 0 ? 'SE' : 'SW',
+          dirOffset: THUG_FACING_OFFSET,
+          attacking: false, moving: false, loco: 0, hurt: true,
+          availableActions: this.spriteActions,
+          x: sp.x, y: sp.y + 4, depth, alpha, visible: shown, scale: this.spriteScale,
+        });
+        // The shipped hurt clip loops. Freeze it at body contact so the horizontal corpse never writhes;
+        // active-pause also freezes the clip before contact, then allows it to resume until the fall lands.
+        if (downedBodyMotionPaused(b, !!this.pause?.paused || !!this.legend?.visible)) sprite.anims.pause();
+        else if (sprite.anims.isPaused) sprite.anims.resume();
+        sprite.setAngle(img.angleDeg * fall)
+          .setPosition(sp.x + Math.sign(img.angleDeg) * 5 * fall, sp.y + 4)
+          .setScale(this.spriteScale, this.spriteScale * (1 - 0.36 * fall));
+      } else {
+        img.figure.setVisible(shown).setAlpha(alpha).setDepth(depth)
+          .setPosition(sp.x + Math.sign(img.angleDeg) * 5 * fall, sp.y + 4)
+          .setAngle(img.angleDeg * fall).setScale(1.05, 1.02 - 0.5 * fall);
+      }
+
+      // Contact is keyed to SIM age, so a custom pause holds the fall. Consume the event at the threshold
+      // even if it is off-screen/hidden; returning later must never replay a positional sound (NO-X-RAY).
+      if (this.pendingBodyContacts?.has(b.id) && b.ageSec >= DOWNED_BODY_CONTACT_SECONDS) {
+        if (shouldEmitFeedback(shown, this.onScreen(sp.x, sp.y))) this.audio?.play('sfx_down_body');
+        this.pendingBodyContacts.delete(b.id);
+      }
     }
   }
 
@@ -4082,32 +4238,16 @@ export class IsoScene extends Phaser.Scene {
     return wx >= v.x - pad && wx <= v.right + pad && wy >= v.y - pad && wy <= v.bottom + pad;
   }
 
-  /** RTS-30e — the KILL / DOWNED beat (Design §4): ONE danger-red muzzle-flash + a ~2px screen-nudge
-   * (≤1.1s, once — the only danger-red here), then a DESATURATED slump (the figure's own colour drained
-   * ~50%, never rival-red on a player) over a near-black pool (#1A0A09 @60%), a dimmed faction-memory
-   * glint, fading to a faint stain decal (culled). The "X is down" line rides THE WIRE, not floating text. */
-  private playKill(wx: number, wy: number, faction: 'player' | 'rival' | 'civilian'): void {
+  /** RTS-30e — the t0 KILL / DOWNED punctuation only: ONE danger flash + restrained screen nudge. The
+   * authoritative fall/corpse/fade is syncDownedBodies; keeping it there removes the old duplicate pool
+   * whose nested tweens could linger for ~11 seconds after the body had already despawned. */
+  private playKill(wx: number, wy: number, _faction: 'player' | 'rival' | 'civilian'): void {
     if (!this.onScreen(wx, wy)) return;
-    // the one danger-red flash + the 2px nudge (once).
     const flash = this.add.image(wx, wy - 14, TEX.glow).setTint(hexNum(SPEC.danger)).setScale(0.4).setDepth(100002);
     this.worldFx(flash);
     this.tweens.add({ targets: flash, scale: 1.0, alpha: 0, duration: MOTION.killFlash * 0.2, onComplete: () => flash.destroy() });
     const nudge = killNudgePx();
     this.fxShake(MOTION.killFlash * 0.18, nudge / 1000);
-    // the near-black pool (#1A0A09 @ 60%) — NOT danger-red.
-    const pool = this.add.ellipse(wx, wy + 2, 20, 9, hexNum('#1a0a09'), 0.6).setDepth(99998);
-    this.worldFx(pool);
-    pool.setScale(0.2);
-    this.tweens.add({ targets: pool, scaleX: 1, scaleY: 1, duration: 500, ease: 'Quad.Out' });
-    // the desaturated slump: a dimmed faction-memory glint that settles, then fades to a stain.
-    const memRole = corpseMemoryRole(faction);
-    const slump = this.add.ellipse(wx, wy, 22, 8, hexNum(SPEC[memRole]), 0.55).setDepth(99999);
-    this.worldFx(slump);
-    slump.setScale(0.5, 0.5);
-    this.tweens.add({ targets: slump, scaleX: 1.1, scaleY: 0.7, duration: 360, ease: 'Back.Out' });
-    // settle, then fade both to a faint stain (the pool lingers dimmer); culled object count stays bounded.
-    this.tweens.add({ targets: slump, alpha: 0, duration: 900, delay: MOTION.corpseStainFade, onComplete: () => slump.destroy() });
-    this.tweens.add({ targets: pool, alpha: 0.16, duration: 1400, delay: MOTION.corpseStainFade, onComplete: () => { this.tweens.add({ targets: pool, alpha: 0, duration: 2600, delay: 3000, onComplete: () => pool.destroy() }); } });
   }
 
   /** RTS-30e — a one-shot HUD edge flash when federal exposure CROSSES a ladder rung (50/70/85):
@@ -4134,7 +4274,12 @@ export class IsoScene extends Phaser.Scene {
     if (!target) { this.setStatus('no rival turf to raid'); return; }
     const g = canRaid(this.state, target.id);
     if (!g.ok) { this.setStatus(`RAID ${target.name}: ${g.reason}`); return; }
+    const crewBefore = new Set(this.state.player.gangsters.map((gangster) => gangster.id));
     const res = resolveRaid(this.state, target.id);
+    const lostGangsterId = [...crewBefore].find((id) => !this.state.player.gangsters.some((gangster) => gangster.id === id));
+    const casualtyView = lostGangsterId
+      ? this.units.find((view) => view.faction === 'player' && view.unit.gangsterId === lostGangsterId)
+      : undefined;
     this.state = harvestIncidents(this.state);
     this.flashTerritory(target.id, false);
     this.audio?.combat('raid'); this.audio?.confirm(); // RTS-27 tommy-gun + crew confirm
@@ -4142,7 +4287,15 @@ export class IsoScene extends Phaser.Scene {
     const tc = this.world.districts.find((d) => d.id === target.id)?.centroid;
     if (tc) { const p = gridToScreen(tc.gx, tc.gy); const actor = this.actingUnitView(p.x, p.y);
       this.triggerAttackMotion(actor, actor?.unit.weapon, p.x); this.combatContact(p.x, p.y, combatVfxForVerb('raid'));
-      if (outcomeDownedAMan(res) && actor) { this.triggerHitReact(actor.unit.id); const s = unitScreenPos(actor.unit); this.playKill(s.x, s.y, 'player'); } }
+      if (outcomeDownedAMan(res)) {
+        if (casualtyView) this.triggerHitReact(casualtyView.unit.id);
+        const pos = casualtyView?.unit.pos ?? tc;
+        this.beginCasualtyLifecycle({
+          id: casualtyView?.unit.id ?? `raid-casualty-${lostGangsterId ?? this.state.tick}-${target.id}`,
+          factionId: this.state.player.id, faction: 'player', gx: pos.gx, gy: pos.gy,
+          removeUnitId: casualtyView?.unit.id,
+        });
+      } }
     this.setStatus(res.repelled ? `raid on ${target.name} was REPELLED — a man down` : `RAID on ${target.name}!`);
   }
 
@@ -4169,7 +4322,12 @@ export class IsoScene extends Phaser.Scene {
     if (!w) { this.setStatus('no rival Don left to hit'); return; }
     const g = canAssassinate(this.state, w.familyId);
     if (!g.ok) { this.setStatus(`HIT ${w.name}: ${g.reason}`); return; }
+    const crewBefore = new Set(this.state.player.gangsters.map((gangster) => gangster.id));
     const res = resolveAssassinate(this.state, w.familyId);
+    const lostGangsterId = [...crewBefore].find((id) => !this.state.player.gangsters.some((gangster) => gangster.id === id));
+    const casualtyView = lostGangsterId
+      ? this.units.find((view) => view.faction === 'player' && view.unit.gangsterId === lostGangsterId)
+      : undefined;
     this.state = harvestIncidents(this.state);
     this.audio?.combat('assassinate'); this.audio?.confirm(); // RTS-27 single pistol report
     const hq = hqIntegrityOf(this.state.rivals.find((r) => r.id === w.familyId)!);
@@ -4178,8 +4336,20 @@ export class IsoScene extends Phaser.Scene {
     const ht = hqTileOf(this.layout, w.familyId);
     if (ht) { const p = gridToScreen(ht.gx, ht.gy); const actor = this.actingUnitView(p.x, p.y);
       this.triggerAttackMotion(actor, actor?.unit.weapon, p.x); this.combatContact(p.x, p.y, combatVfxForVerb('assassinate'));
-      if (res.eliminated) this.playKill(p.x, p.y, 'rival');
-      else if (outcomeDownedAMan(res) && actor) { this.triggerHitReact(actor.unit.id); const s = unitScreenPos(actor.unit); this.playKill(s.x, s.y, 'player'); } }
+      if (res.eliminated) {
+        this.beginCasualtyLifecycle({
+          id: `don-casualty-${w.familyId}-${this.state.tick}`,
+          factionId: w.familyId, faction: 'rival', gx: ht.gx, gy: ht.gy,
+        });
+      } else if (outcomeDownedAMan(res)) {
+        if (casualtyView) this.triggerHitReact(casualtyView.unit.id);
+        const pos = casualtyView?.unit.pos ?? ht;
+        this.beginCasualtyLifecycle({
+          id: casualtyView?.unit.id ?? `hit-casualty-${lostGangsterId ?? this.state.tick}-${w.familyId}`,
+          factionId: this.state.player.id, faction: 'player', gx: pos.gx, gy: pos.gy,
+          removeUnitId: casualtyView?.unit.id,
+        });
+      } }
     this.setStatus(res.success ? (res.eliminated ? `${w.name} ELIMINATED` : `struck ${w.name}'s HQ — integrity ${hq}`) : `the hit on ${w.name} failed — a man down`);
   }
 

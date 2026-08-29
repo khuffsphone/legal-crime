@@ -134,6 +134,7 @@ describe('sfx event mapper — endgame + the frame aggregate', () => {
       interceptions: [{ attackerId: 'e', collectorId: 'c', attackerFaction: 'rival-1', victimFaction: PLAYER, amount: 5 }],
       combat: [combatEv('hit', 'shotgun')],
       extortion: [extortEv({ converted: true })],
+      rivalCleanup: { familyIds: [], unitIds: [], routeIds: [], contestDistrictIds: [] },
     };
     const logs = [log0()];
     const frozenResult = Object.freeze(result);

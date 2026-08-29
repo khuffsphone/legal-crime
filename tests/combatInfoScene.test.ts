@@ -12,8 +12,9 @@ beforeAll(async () => {
   ({ IsoScene: IsoSceneClass } = await import('../src/scenes/IsoScene'));
 });
 
-function harness(opts?: { revealed?: boolean; debugRevealAll?: boolean }) {
+function harness(opts?: { revealed?: boolean; debugRevealAll?: boolean; onScreen?: boolean }) {
   const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+  const audioPlay = vi.fn();
   Object.assign(scene, {
     state: { player: { id: 'player', gangsters: [] }, units: [] },
     fog: new Set(opts?.revealed ? ['5,6'] : []),
@@ -23,9 +24,12 @@ function harness(opts?: { revealed?: boolean; debugRevealAll?: boolean }) {
     alerts: [],
     pings: [],
     units: [],
-    onScreen: () => false,
+    onScreen: () => opts?.onScreen ?? false,
+    audio: { play: audioPlay },
     cameraBeat: vi.fn(),
     triggerHitReact: vi.fn(),
+    weaponMuzzleFlash: vi.fn(),
+    hitPip: vi.fn(),
     playKill: vi.fn(),
     removeUnitById: vi.fn(),
     setStatus: vi.fn(),
@@ -72,6 +76,24 @@ describe('IsoScene combat information — behavioral NO-X-RAY guard', () => {
     expect(scene.playKill).not.toHaveBeenCalled();
   });
 
+  it('starts a visible death reaction at t0 but defers body contact to the body-age lifecycle', () => {
+    const scene = harness({ revealed: true, onScreen: true });
+    scene.playCombatBeat(event('down'));
+
+    expect(scene.pendingBodyContacts.has('rival-b-1')).toBe(true);
+    expect(scene.audio.play).toHaveBeenCalledWith(expect.stringMatching(/^sfx_death_reaction_[12]$/), expect.any(Object));
+    expect(scene.audio.play).not.toHaveBeenCalledWith('sfx_down_body');
+  });
+
+  it('throttles simultaneous nonverbal death reactions so a multi-down cannot become a chorus', () => {
+    const scene = harness({ revealed: true, onScreen: true });
+    scene.playCombatBeat(event('down'));
+    scene.playCombatBeat({ ...event('down'), unitId: 'rival-b-2' });
+
+    const reactions = scene.audio.play.mock.calls.filter(([key]: [string]) => key.startsWith('sfx_death_reaction_'));
+    expect(reactions).toHaveLength(1);
+  });
+
   it('honors debugRevealAll through the canonical scene predicate', () => {
     const scene = harness({ debugRevealAll: true });
     scene.playCombatBeat(event('down'));
@@ -111,6 +133,50 @@ describe('IsoScene combat information — behavioral NO-X-RAY guard', () => {
 
     scene.syncDownedBodies();
     expect(addImage).not.toHaveBeenCalled();
+    expect(scene.downedBodyViews.size).toBe(0);
+  });
+
+  it('plays body contact once at ~0.5s and consumes it under the same visibility gate', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    const figure: Record<string, any> = {};
+    for (const method of ['setVisible', 'setAlpha', 'setDepth', 'setPosition', 'setAngle', 'setScale']) {
+      figure[method] = vi.fn(() => figure);
+    }
+    const body = { id: 'body', factionId: 'rival-a', gx: 5, gy: 6, ageSec: 0.49 };
+    Object.assign(scene, {
+      state: { player: { id: 'player' }, downedBodies: [body] },
+      fog: new Set(['5,6']), debugRevealAll: false,
+      downedBodyViews: new Map([['body', { figure, hurtAtlas: false, angleDeg: 64 }]]),
+      pendingBodyContacts: new Set(['body']),
+      onScreen: () => true,
+      audio: { play: vi.fn() },
+    });
+
+    scene.syncDownedBodies();
+    expect(scene.audio.play).not.toHaveBeenCalled();
+    body.ageSec = 0.5;
+    scene.syncDownedBodies();
+    expect(scene.audio.play).toHaveBeenCalledOnce();
+    expect(scene.audio.play).toHaveBeenCalledWith('sfx_down_body');
+    scene.syncDownedBodies();
+    expect(scene.audio.play).toHaveBeenCalledOnce();
+  });
+
+  it('consumes a hidden contact silently so revealing the tile later cannot replay it', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    Object.assign(scene, {
+      state: {
+        player: { id: 'player' },
+        downedBodies: [{ id: 'hidden', factionId: 'rival-a', gx: 55, gy: 56, ageSec: 0.5 }],
+      },
+      fog: new Set(), debugRevealAll: false,
+      downedBodyViews: new Map(), pendingBodyContacts: new Set(['hidden']),
+      add: { image: vi.fn() }, audio: { play: vi.fn() },
+    });
+
+    scene.syncDownedBodies();
+    expect(scene.pendingBodyContacts.has('hidden')).toBe(false);
+    expect(scene.audio.play).not.toHaveBeenCalled();
     expect(scene.downedBodyViews.size).toBe(0);
   });
 

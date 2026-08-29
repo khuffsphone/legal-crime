@@ -145,6 +145,12 @@ export {
 } from './mapEconomy';
 export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
 export {
+  cleanupDeadRivalEmbodiment,
+  emptyRivalEmbodimentCleanup,
+  mergeRivalEmbodimentCleanup,
+  type RivalEmbodimentCleanup,
+} from './rivalLifecycle';
+export {
   unitHealth, isCombatant, hostile, enemyInRange, damageUnit, resolveProximityCombat, type CombatEvent,
 } from './combat';
 export {
@@ -168,7 +174,10 @@ export {
   type RetreatResponse, type StrikeOutcome, type StrikeResolution,
 } from './telegraph';
 export {
-  recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
+  recordDownedBody, advanceDownedBodies, downedBodyFallProgress, downedBodyMotionPaused,
+  downedBodyDecay, downedBodyAngleDeg,
+  DOWNED_BODY_CONTACT_SECONDS, DOWNED_BODY_FADE_START_SECONDS, DOWNED_BODY_PERSIST_SECONDS,
+  MAX_DOWNED_BODIES, type DownedBody,
 } from './downedBodies';
 export {
   spawnBeatCops, advanceBeatCops, desiredCopCount, copDistrictWeights, buildPatrolWorld,

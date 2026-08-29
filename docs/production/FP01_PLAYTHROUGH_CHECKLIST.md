@@ -6,6 +6,7 @@ Use this checklist on the deployed candidate after automated gates pass. A sourc
 
 - The first `[C]` action is a required, one-time tutorial **RUSH**. The automatic collector waits so the player can send this protected first run.
 - After that first protected run, collections are automatic. Later `[C]` presses only rush accrued takings early.
+- A completed one-shot `[C]` runner deposits, exits, and is removed. It must not remain parked at HQ.
 - The Beat lowers police raid odds. It does **not** directly lower the raw Heat meter.
 - City Hall improves raw Heat cooling on future settlements. It does not erase Heat immediately when purchased.
 - The Bureau lowers Federal Exposure.
@@ -48,9 +49,10 @@ Use this checklist on the deployed candidate after automated gates pass. A sourc
 - [ ] Confirm the tutorial says `[C]` is the required one-time protected **RUSH**, not the permanent way income is collected.
 - [ ] Before `[C]`, confirm the automatic route waits and does not steal the tutorial's first payday.
 - [ ] Press `[C]` once.
+- [ ] While the first collector is in flight, hold `[C]`. Confirm no duplicate collector, pickup, deposit, or cash credit; a clear in-flight message should appear.
 - [ ] Exactly one collector departs, picks up exactly once, reaches HQ, deposits exactly once, and increases cash exactly once.
+- [ ] After the deposit feedback completes, the one-shot collector exits and disappears. It must not remain inert at HQ.
 - [ ] The first collector is visibly identified as protected/safe.
-- [ ] Hold `[C]` while the first collector is in flight. Confirm no duplicate collector, pickup, deposit, or cash credit; a clear in-flight/no-takings message should appear.
 
 ## 4. Automatic collections after the tutorial
 
@@ -59,7 +61,9 @@ Use this checklist on the deployed candidate after automated gates pass. A sourc
 - [ ] Confirm each automatic pickup and deposit produces readable visual/audio feedback.
 - [ ] Confirm no duplicate fixed collectors or double credit appears after multiple settlements.
 - [ ] Let takings accrue again, then tap `[C]`. Confirm it only advances the timing of the same collection system.
-- [ ] Tap `[C]` with no takings or a rushed collector already active. Confirm a clear no-op message and no state corruption.
+- [ ] While that later rush is active, tap `[C]` again. Confirm a clear in-flight message and no state corruption.
+- [ ] Confirm the later runner deposits, retires, and leaves no duplicate or parked collector.
+- [ ] Tap `[C]` with no takings. Confirm the game explains that nothing is waiting (the automatic route may already have banked it) and does not create a runner.
 
 ## 5. `[G]`, Heat, Federal Exposure, and input repeat
 
@@ -89,6 +93,11 @@ Use this checklist on the deployed candidate after automated gates pass. A sourc
 - [ ] Recruit the newly unlocked Pistol Man.
 - [ ] Observe a rival warning and use its camera-jump affordance.
 - [ ] Resolve one readable street fight with weapon report, impact, reaction, down-state, and civilian panic feedback.
+- [ ] On a visible casualty, require exactly one weapon hit, a short hurt/fall beat, one body-contact sound near floor contact, a clearly horizontal/desaturated body, a late fade, and complete removal within 6.5 seconds at `1x`.
+- [ ] The dead unit immediately loses selection, targeting, collision, control-group membership, and combat influence.
+- [ ] Pause during the body linger. Confirm the casualty lifecycle freezes; resume and confirm it finishes normally.
+- [ ] Save/load once during a body linger. Confirm one body resumes at the saved stage and does not duplicate or become a live target.
+- [ ] Eliminate a rival family. Confirm its remaining fighters and collectors disappear and its routes, contests, and queued strikes stop within one reconciliation step.
 - [ ] Hidden combat does not leak through camera movement, status text, effects, body markers, or adaptive music.
 - [ ] Reach a law-pressure warning and confirm its copy names valid counterplay.
 - [ ] Save and load once. Sal, Vito, collectors, fog, economy, and bribes persist correctly.
@@ -106,7 +115,8 @@ Capture screenshots at minimum for:
 4. State immediately before and after the held `[G]` test.
 5. Bribe/Heat/Federal/Mayor state after 4–6 settlements.
 6. First rival warning and street fight.
-7. Every failure.
+7. Casualty at hit/fall, body linger, and post-cleanup.
+8. Every failure.
 
 For each failure, record exact reproduction steps, expected result, actual result, frequency, severity, and evidence.
 
@@ -117,5 +127,7 @@ FP-01 does not pass unless:
 - The Beat, City Hall, and The Bureau communicate and affect the correct pressure;
 - the Mayor gates cannot resolve early;
 - footsteps no longer resemble high-pitched clicks;
+- a casualty is unambiguously dead and fully cleaned up within 6.5 seconds at `1x`;
+- an eliminated rival leaves no immortal map units, collectors, routes, contests, or queued strikes;
 - the first-ten-minute loop completes without a P0 or P1 defect;
 - audio was actually heard and browser gameplay was actually performed.

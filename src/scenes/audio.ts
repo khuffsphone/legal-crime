@@ -63,6 +63,10 @@ const LIBRARY: ClipDef[] = [
   // unit goes down. Physical WAV only — no synth voice, so a missing WAV is a silent no-op (§11.2 "synth OR
   // silence"). Soft cue under the soft governor; one per death. ──
   { key: 'sfx_down_body', file: 'sfx_down_body.wav', bus: 'sfx', vol: 0.7 },
+  // Provisional casualty voice: original PROCEDURAL nonverbal breath/grunt variants. This is not character
+  // dialogue and does not imitate a performer; final acted death takes remain an asset-production lane.
+  { key: 'sfx_death_reaction_1', file: '', bus: 'sfx', vol: 0.38, synth: true },
+  { key: 'sfx_death_reaction_2', file: '', bus: 'sfx', vol: 0.36, synth: true },
   // ── grease level-ups / extras — RTS-30e-audio: reconciled to the user's ACTUAL asset filenames (.wav) ──
   { key: 'grease_beat', file: 'sfx_the_beat_whistle.wav', bus: 'sfx', vol: 0.8 }, // a cop's whistle
   { key: 'grease_bench', file: 'sfx_the_bench_gavel.wav', bus: 'sfx', vol: 0.8 }, // a gavel

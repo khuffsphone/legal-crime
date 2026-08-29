@@ -15,6 +15,11 @@ import { advanceEmbodiedExtortion, type EmbodiedExtortionEvent } from './extorti
 import { advanceBeatCops } from './beatCops';
 import { advanceCombatOrders, type CombatCtx } from './combatControl';
 import { advanceStrategy, type StrategicEvent } from './strategy';
+import {
+  cleanupDeadRivalEmbodiment,
+  mergeRivalEmbodimentCleanup,
+  type RivalEmbodimentCleanup,
+} from './rivalLifecycle';
 import { evaluateEndgame, type EndgameResult } from './endgame';
 import { harvestIncidents, recordIncident } from './ledger';
 import { federalExposure } from './federal';
@@ -33,6 +38,8 @@ export interface UpdateResult {
   combat: CombatEvent[];
   /** RTS-35b — embodied-extortion state transitions this step (approach→…→resolve/failed). */
   extortion: EmbodiedExtortionEvent[];
+  /** Dead rival map bodies/routes/orders retired after this step (render layers reconcile these ids). */
+  rivalCleanup: RivalEmbodimentCleanup;
 }
 
 /**
@@ -77,7 +84,10 @@ export function update(
   // stay byte-identical. Draws no RNG; only ordered units' paths + the slice are ever written.
   advanceCombatOrders(state, dt, combatCtx);
   const weeksFired = advanceClock(state, dt, weekDuration);
-  return { weeksFired, arrivedUnitIds, interceptions, combat, extortion };
+  // A settlement can eliminate a rival through a hit or federal bust. Retire its embodied layer in
+  // the same frame so collectors/fighters cannot keep moving after the family is publicly dead.
+  const rivalCleanup = cleanupDeadRivalEmbodiment(state);
+  return { weeksFired, arrivedUnitIds, interceptions, combat, extortion, rivalCleanup };
 }
 
 export interface ObserveResult {
@@ -133,6 +143,12 @@ export function updateAndObserve(
   // RTS-16: advance the turf war (rival territorial moves). A no-op on the legacy map (no
   // adjacency), so existing 5-district tests are unaffected.
   const strategy = advanceStrategy(state, dt, pulseSeconds).events;
+  // A strategic pulse can also drive a rival out. Merge that second cleanup into the update report
+  // so a scene receives one complete render-reconciliation list for the frame.
+  result.rivalCleanup = mergeRivalEmbodimentCleanup(
+    result.rivalCleanup,
+    cleanupDeadRivalEmbodiment(state),
+  );
   // RTS-17: resolve the endgame (win/lose) if the contest has been decided.
   const endgame = evaluateEndgame(state);
 

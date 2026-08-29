@@ -21,11 +21,13 @@ export const HIT_KEYS = [
 export const STEP_KEYS = [
   'sfx_step_pavement', 'sfx_step_wood', 'sfx_step_gravel', 'sfx_step_interior',
 ] as const;
+/** Original procedural, nonverbal casualty reactions. These are breaths/grunts, not cloned speech. */
+export const DEATH_REACTION_KEYS = ['sfx_death_reaction_1', 'sfx_death_reaction_2'] as const;
 
-export type SynthKey = (typeof HIT_KEYS)[number] | (typeof STEP_KEYS)[number];
+export type SynthKey = (typeof HIT_KEYS)[number] | (typeof STEP_KEYS)[number] | (typeof DEATH_REACTION_KEYS)[number];
 
-/** Every key the synth fills (hits + footsteps). */
-export const SYNTH_KEYS: readonly SynthKey[] = [...HIT_KEYS, ...STEP_KEYS];
+/** Every key the synth fills (hits + footsteps + restrained nonverbal casualty reactions). */
+export const SYNTH_KEYS: readonly SynthKey[] = [...HIT_KEYS, ...STEP_KEYS, ...DEATH_REACTION_KEYS];
 
 // ── tiny deterministic DSP toolkit (pure) ─────────────────────────────────────────────────────────
 /** A seeded PRNG (mulberry32) so each key's noise is deterministic + distinct. */
@@ -199,6 +201,26 @@ export function synthSamples(key: SynthKey, sampleRate: number): Float32Array {
       const n = secs(sr, 0.07); const out = noise(n, seed); lowpass(out, 0.08);
       for (let i = 0; i < n; i++) out[i] *= decayAt(i, sr * 0.012) * 0.7;
       return finish(out, sr, 0.55);
+    }
+    case 'sfx_death_reaction_1':
+    case 'sfx_death_reaction_2': { // a low, falling breath/grunt — deliberately nonverbal and restrained
+      const n = secs(sr, key.endsWith('_1') ? 0.38 : 0.46);
+      const out = new Float32Array(n);
+      const breath = noise(n, seed); lowpass(breath, 0.045);
+      const startHz = key.endsWith('_1') ? 142 : 116;
+      const endHz = key.endsWith('_1') ? 84 : 72;
+      let phase = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / Math.max(1, n - 1);
+        const hz = startHz + (endHz - startHz) * t;
+        phase += (2 * Math.PI * hz) / sr;
+        const attack = Math.min(1, i / Math.max(1, secs(sr, 0.018)));
+        const env = attack * Math.pow(1 - t, 1.35);
+        const voiced = Math.sin(phase) * 0.72 + Math.sin(phase * 2.02) * 0.16;
+        out[i] = (voiced + breath[i] * 0.42) * env;
+      }
+      lowpass(out, 0.16); // keep it chesty; never a sharp yelp competing with combat reports
+      return finish(out, sr, 0.44);
     }
   }
 }

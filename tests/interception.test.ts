@@ -95,7 +95,21 @@ describe('resolveInterceptions — the ambush resolves', () => {
     expect(rival.heat).toBe(INTERCEPT_HEAT);
     expect(collector.carrying).toBe(0); // emptied
     expect(unitArrived(collector)).toBe(true); // stopped
+    expect(s.units).not.toContain(collector); // robbed one-shot [C] runner retires; it cannot become an inert duplicate
     expect(s.log.some((e) => e.kind === 'interception')).toBe(true);
+  });
+
+  it('preserves an intercepted automated route collector so its route machinery can resume it', () => {
+    const collector = spawnCollector('route-c', 5, 5, 'player', 180);
+    collector.routeId = 'route-biz-front-0';
+    collector.routePhase = 'toBank';
+    const enforcer = spawnEnforcer('e', 5.1, 5, 'rival-a');
+    const s = stateWith([collector, enforcer]);
+
+    expect(resolveInterceptions(s)).toHaveLength(1);
+    expect(collector.carrying).toBe(0);
+    expect(unitArrived(collector)).toBe(true);
+    expect(s.units).toContain(collector); // route collectors are permanent; advanceRoutes owns their next leg
   });
 
   it('robs a collector at most once even with two enforcers nearby', () => {
