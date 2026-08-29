@@ -204,7 +204,6 @@ import {
   type DownedBody,
   spawnBeatCops,
   primePatrolWorld,
-  copsRequested,
   debugCopsRequested,
   copMarkerVisible,
   type BeatCop,
@@ -241,7 +240,6 @@ import { cycleVolume } from './audioMap';
 import type { MusicPhase } from './audioMap';
 // AUDIO E-H (H3) — the atmosphere wire-up: the ?audio flag, the F2 clip-registration seam, and the
 // single scene↔coordinator bridge (fed the post-updateAndObserve surface + processCollectorArrivals).
-import { atmosphereAudioRequested } from './audio/audioFlags';
 import { registerAtmosphereClips, verifyAtmosphereClipsLoaded } from './audio/registerAtmosphereClips';
 import { AtmosphereSceneAdapter, type AtmosphereSink } from './audio/atmosphereSceneAdapter';
 import type { AtmosphereFrame } from './audio/atmosphereCoordinator';
@@ -250,6 +248,7 @@ import { legacyEmitterSources, type EmitterSource } from './audio/propEmitterCat
 import {
   nextTimeScale, scaledDt, skipWeekDt, flagEnabled,
 } from './playability';
+import { resolveFeatureProfile } from './featureProfile';
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
 import {
@@ -265,7 +264,7 @@ import {
 // barrel) to keep the lane file-isolated, Lane-D style. Default OFF — with the flag off none of
 // these is ever called and the #17 render-side stance layer below runs exactly as before.
 import {
-  combatRequested, orderAttackMove, orderFocusFire, orderDisengage, clearCombatOrders,
+  orderAttackMove, orderFocusFire, orderDisengage, clearCombatOrders,
   pickVisibleHostile, type CombatCtx, type CombatOrderResult,
 } from '../sim/combatControl';
 import { applyDevDebug, isDevBuild, parseScenario, applyScenario } from './devDebug';
@@ -343,12 +342,11 @@ import { drawThugFig2 } from './figureDraw2';
 import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
 // ?sprites — the OPT-IN 3D-rendered iso sprite-sheet view for the thug (procedural figure stays the
 // authoritative fallback). Pure flag/state/facing math + Phaser loader/animator/view.
-import { spritesRequested, spriteScaleParam, spriteDisplayScale } from './render/unitSpriteState';
+import { spriteScaleParam, spriteDisplayScale } from './render/unitSpriteState';
 import { preloadUnitSprites, registerUnitAnims, availableActions, THUG_SPRITE_CONFIG, COP_SPRITE_CONFIG } from './render/unitSpriteLoader';
-import { propsRequested, preloadStreetProps, placeStreetProps } from './env/streetProps';
+import { preloadStreetProps, placeStreetProps } from './env/streetProps';
 import { ensureUnitSprite, driveUnitSprite } from './render/unitSpriteView';
 import { THUG_FACING_OFFSET } from './render/unitFacingQuantize';
-import { facadeKitRequested } from './env/facadeKitFlag';
 import {
   rigAttackWeaponFromTier, sampleWeaponAttackPose, weaponAttackDurationMs, type RigAttackWeapon,
 } from './weaponAttackPose';
@@ -674,6 +672,7 @@ export class IsoScene extends Phaser.Scene {
   private lastFederalTier = 0;     // to fire the teletype only when the tier CROSSES up
   private lastMutinyName = '';     // fire the mutiny stinger on the transition, not every frame
   private tipsFired = new Set<string>(); // consigliere tips: first-occurrence gating
+  private tipUnlockQueued = new Set<string>(); // at most one browser-unlock retry per first-occurrence tip
   private rushUsed = false; // RTS-34.1: once the player uses [C] RUSH, the collect tutorial prompt retires
   private audioPanelOpen = false;
   private audioPanel?: Phaser.GameObjects.Text;
@@ -740,19 +739,20 @@ export class IsoScene extends Phaser.Scene {
   // RTS-32: ?debugRig=1 overlays joint + foot-PLANT dots + the gaitPhase/state readout on rigged units
   // (debug colours only — off in normal play) so the articulated walk is verifiable at a glance.
   private debugRig = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('debugRig') : null) === '1';
-  // BEAT-COP P0 (?cops=1): the law-patrol MARKER layer — 2-3 neutral beat cops random-walking the
-  // sidewalk graph, observation-only. OFF by default (reversible opt-in, ?facadekit-style) so normal
-  // play is untouched; ?debugCops=1 adds each cop's current patrol edge for QA.
-  private copsEnabled = typeof window !== 'undefined' && copsRequested(window.location?.search ?? '');
+  // FP-01 — normal play is the integrated showcase. `?profile=legacy` restores the pre-reboot fallback;
+  // individual query flags remain precise rollback/bisection valves.
+  private featureProfile = resolveFeatureProfile(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
+  // BEAT-COP P0: the law-patrol layer — 2-3 neutral beat cops random-walking the sidewalk graph.
+  private copsEnabled = this.featureProfile.cops;
   private debugCops = typeof window !== 'undefined' && debugCopsRequested(window.location?.search ?? '');
   // COMBAT PR A (?combat=1): route [A]/right-click-rival/[W] through the SIM combat-order verbs
-  // (attack-move acquisition fog-gated, focus-fire designation, disengage) + spoken denials. OFF by
-  // default (?cops=1 pattern) — flag off, every input path below is the pre-existing #17 behavior.
-  private combatEnabled = typeof window !== 'undefined' && combatRequested(window.location?.search ?? '');
+  // (attack-move acquisition fog-gated, focus-fire designation, disengage) + spoken denials. Proximity
+  // combat itself is always active; this profile switch names only the richer player control surface.
+  private combatControlsEnabled = this.featureProfile.combatControls;
   // AUDIO E-H (H3, ?audio=1): the district-bed / event-cue / prop-emitter atmosphere layer. OFF by default
   // (?cops=1 pattern) — flag off, none of the audio machinery below runs and play is byte-identical. The
   // per-frame coordinator step + all AudioManager playback are gated on this single field.
-  private atmosphereAudioEnabled = typeof window !== 'undefined' && atmosphereAudioRequested(window.location?.search ?? '');
+  private atmosphereAudioEnabled = this.featureProfile.atmosphereAudio;
   private atmosphere?: AtmosphereSceneAdapter;         // the one scene↔coordinator bridge (built in create when ?audio)
   private atmoLogCursor = 0;                           // our OWN state.log read cursor (NOT the ledger's incidentLogCursor)
   private atmoArchCache = new Map<string, DistrictArchetype>(); // district-id → ART archetype (static per match)
@@ -760,12 +760,11 @@ export class IsoScene extends Phaser.Scene {
   // RTS-34 — the noir MOOD layer (film grain + soft vignette). Cheap full-screen overlay on the FIXED
   // UI camera (no drift on zoom/pan); ?fx=off disables it (and [0]-style toggle). Soot/ink only — never red.
   private fxEnabled = flagEnabled(typeof window !== 'undefined' ? (window.location?.search ?? '') : '', 'fx');
-  // ?sprites — opt-in 3D iso atlas swap (default OFF). spriteSheetReady gates it on the sheets loading.
-  private spritesEnabled = spritesRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
-  private propsEnabled = typeof window !== 'undefined' && propsRequested(window.location?.search ?? ''); // ?props - Meshy street-prop layer (default OFF)
-  // ?facadekit — opt-in Phase-2 vector storefronts on LOW-TIER buildings (OFF by default; the old drawFacade
-  // look is untouched when off). Reversible rollback valve for the all-at-once replace.
-  private facadeKitEnabled = facadeKitRequested(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
+  // The atlases, Meshy prop layer and facade kit are now normal presentation, each still individually
+  // reversible through the feature profile's query overrides.
+  private spritesEnabled = this.featureProfile.sprites;
+  private propsEnabled = this.featureProfile.props;
+  private facadeKitEnabled = this.featureProfile.facadeKit;
   private spriteScaleMul = spriteScaleParam(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private spriteSheetReady = false;
   private copSpriteReady = false; // ?sprites — the cop atlas registered (marker stays fallback if not)
@@ -881,7 +880,9 @@ export class IsoScene extends Phaser.Scene {
     // ?sprites — queue the thug iso sheets + manifest (missing → graceful no-op, procedural stays up).
     if (this.spritesEnabled) {
       preloadUnitSprites(this, THUG_SPRITE_CONFIG);
-      preloadUnitSprites(this, COP_SPRITE_CONFIG); // the Chicago beat-cop atlas (marker stays fallback)
+      // Three additional 256px atlases decode to tens of MiB. Do not pay that startup cost while the
+      // gameplay-affecting police layer is deliberately excluded from the showcase profile.
+      if (this.copsEnabled) preloadUnitSprites(this, COP_SPRITE_CONFIG);
     }
     if (this.propsEnabled) preloadStreetProps(this); // ?props - the 24 Meshy street-prop atlases
   }
@@ -954,12 +955,15 @@ export class IsoScene extends Phaser.Scene {
     this.lastFogSize = -1;
     this.robbedCollectors = new Set<string>();
     this.lastAutosaveTick = -1;
+    this.rushUsed = false;
     // AUDIO E-H (H3) — the atmosphere bridge + its per-run cursors are rebuilt in create() (behind ?audio);
     // drop the stale handles so a restart never steps a coordinator seeded from the prior match.
     this.atmosphere = undefined;
     this.atmoLogCursor = 0;
     this.atmoArchCache.clear();
     this.atmoEmitterSources = [];
+    this.tipsFired.clear();
+    this.tipUnlockQueued.clear();
   }
 
   create(): void {
@@ -983,11 +987,13 @@ export class IsoScene extends Phaser.Scene {
         this.spriteActions = availableActions(this, THUG_SPRITE_CONFIG); // clips that actually rendered (idle/walk/…)
       }
       // The Chicago beat-cop atlas — same gate. Missing/404 ⇒ copSpriteReady false ⇒ the marker dot stays.
-      const copManifest = registerUnitAnims(this, COP_SPRITE_CONFIG);
-      if (copManifest) {
-        this.copSpriteReady = true;
-        this.copSpriteScale = spriteDisplayScale(copManifest.figurePxH, FIGURE_PX, this.spriteScaleMul);
-        this.copSpriteActions = availableActions(this, COP_SPRITE_CONFIG);
+      if (this.copsEnabled) {
+        const copManifest = registerUnitAnims(this, COP_SPRITE_CONFIG);
+        if (copManifest) {
+          this.copSpriteReady = true;
+          this.copSpriteScale = spriteDisplayScale(copManifest.figurePxH, FIGURE_PX, this.spriteScaleMul);
+          this.copSpriteActions = availableActions(this, COP_SPRITE_CONFIG);
+        }
       }
     }
 
@@ -1029,12 +1035,13 @@ export class IsoScene extends Phaser.Scene {
     // restart-surviving display handle (the #65 teardown owns that lifecycle now).
     // Pin the patrol substrate to THIS create/load epoch's RENDERED layout (business churn between
     // save and load re-rolls parcels, so primePatrolWorld also heals any saved cop coords that fell
-    // off the regenerated sidewalk graph). Then spawn ONLY behind ?cops=1 (a loaded save that already
-    // carries cops keeps them). Cop draws use the separate lawRngState cursor; state.rngState is
-    // never touched, so flagged and unflagged runs of the same seed play out identically elsewhere.
-    if (this.copsEnabled || this.state.beatCops?.length) {
+    // off the regenerated sidewalk graph). Then spawn ONLY behind the feature gate; a loaded save carrying
+    // cops keeps its patrol data. The realtime call receives the same gate below, so a legacy/profile rollback
+    // freezes those saved cops without drawing them, adding heat, or destructively rewriting the save.
+    // Cop draws use the separate lawRngState cursor; state.rngState is never touched.
+    if (this.copsEnabled) {
       primePatrolWorld(this.state, this.world);
-      if (this.copsEnabled && !this.state.beatCops?.length) spawnBeatCops(this.state);
+      if (!this.state.beatCops?.length) spawnBeatCops(this.state);
     }
     this.spawnUnits();
     // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
@@ -1100,8 +1107,6 @@ export class IsoScene extends Phaser.Scene {
     this.buildFxOverlay();
     this.buildSaveButton(); // SAVE/LOAD entry point (fixed HUD camera)
     this.buildShellOverlays(); // Lane G — pause overlay + settings panel (fixed HUD camera), + apply volumes
-    // consigliere: the extort-first tip on a fresh load (gated to once)
-    this.fireTipOnce('extort');
   }
 
   // ── onboarding objective (RTS-11) ────────────────────────────────────────────────────────
@@ -1682,8 +1687,11 @@ export class IsoScene extends Phaser.Scene {
       for (const c of activateContests(this.state)) this.spawnContestMuscle(c); // new borders → muscle in
       const res = resolveContestStep(this.state, this.contestPresence());
       for (const o of res.outcomes) {
-        if (o.flipped) { this.flashTerritory(o.districtId, true); this.audio?.confirm(); } // a block fell to the rival
-        if (o.ended === 'held') this.setStatus(`you repelled the invasion of ${this.districtName(o.districtId)}`);
+        if (o.flipped) { this.flashTerritory(o.districtId, true); this.audio?.wire('crisis'); } // a block fell to the rival
+        if (o.ended === 'held') {
+          this.audio?.confirm();
+          this.setStatus(`you repelled the invasion of ${this.districtName(o.districtId)}`);
+        }
         if (o.ended === 'lost') this.setStatus(`${this.districtName(o.districtId)} has fallen to the rival`);
       }
       for (const c of res.ended) this.despawnContestMuscle(c);
@@ -1942,7 +1950,9 @@ export class IsoScene extends Phaser.Scene {
     // / routes): the world freezes in place. The render block below + the camera/HUD still run every frame,
     // and input still flows, so the player can look around and issue/queue orders (an active pause). This is
     // a LOOP-level gate; tick()/applyCommand() are untouched.
-    if (!this.pause.paused) {
+    // Reading the opening/help overlay must never cost the player money, time, or tactical position.
+    // The first shipped build advanced rivals and payroll behind a wall of instructions.
+    if (!this.pause.paused && !this.legend?.visible) {
     let stepDt = scaledDt(dt, this.timeScale);
     if (this.skipWeekPending) { stepDt = skipWeekDt(this.state.weekElapsed ?? 0, SCENE_WEEK_SECONDS); this.skipWeekPending = false; }
 
@@ -1960,7 +1970,8 @@ export class IsoScene extends Phaser.Scene {
     // byte-identical to the pre-combat build.
     const obs = observeWorld(
       this.state, stepDt, SCENE_WEEK_SECONDS, SCENE_PULSE_SECONDS,
-      this.combatEnabled ? this.combatCtx() : undefined,
+      this.combatControlsEnabled ? this.combatCtx() : undefined,
+      this.copsEnabled,
     );
     this.state = obs.state;
     // RTS-24: on each settled week, run the content beat — civic INFLUENCE accrual (Mayor path),
@@ -2040,7 +2051,7 @@ export class IsoScene extends Phaser.Scene {
     if (obs.endgame || this.state.status !== 'playing') this.showEndgame();
     this.advanceDossier(); // LANE D — earn aged intel once per settlement (no-op between ticks; never edits the sim)
     this.advanceAutosave(); // LANE F — autosave once per settlement (no-op between ticks)
-    } // end !paused — sim advancement gate
+    } // end active sim-advancement gate (not paused and no blocking legend)
 
     const threats = new Map<string, ThreatView>(threatenedCollectors(this.state).map((t) => [t.collectorId, t]));
     const now = this.time.now;
@@ -2537,7 +2548,7 @@ export class IsoScene extends Phaser.Scene {
         // [A] is armed: this left-click sets the ATTACK-MOVE destination (instead of box-selecting).
         // ?combat=1 routes through the SIM verb (fog-gated acquisition); off ⇒ the #17 render stance.
         this.attackMovePending = false;
-        if (this.combatEnabled) this.commandCombatAttackMove(p);
+        if (this.combatControlsEnabled) this.commandCombatAttackMove(p);
         else this.commandAttackMove(p);
       } else {
         this.commandSelect(p, shift);
@@ -2724,6 +2735,9 @@ export class IsoScene extends Phaser.Scene {
     clearCombatOrders(this.state, [thug.id]); // a dispatch supersedes any ?combat=1 standing order (else it re-steals the path)
     // create the act through the WRAPPER (proves applyCommand is untouched) — it pushes onto state.extortionActs.
     applyCommandWithEmbodiedExtortion(this.state, { type: 'moveAndShakedown', familyId: 'player', thugId: thug.id, frontId: businessId }, () => {}, interaction);
+    // The order itself needs an immediate acknowledgement; the extort world cue belongs later, when the
+    // crew reaches the door. The VO governor keeps rapid retasking from becoming a chorus.
+    this.audio?.confirm();
     this.focusBizId = businessId;
     const name = inspectBusiness(this.state, businessId)?.name ?? 'the block';
     const verb = retake ? 'muscle' : 'shake down';
@@ -2819,6 +2833,9 @@ export class IsoScene extends Phaser.Scene {
         // the thug squared up and started leaning on them — open with a shove + the lean cue.
         if (c) this.triggerAttackMotion(thugView, undefined, c.x);
         this.signalBeat('extort');
+        // The longer consigliere tip belongs after the short order-confirmation has finished, not on intro
+        // dismissal where it would occupy the one-VO gate and swallow the player's first command response.
+        this.fireTipOnce('extort');
         this.setStatus(`your man is leaning on ${name} — hold the block while he works`);
         this.extortShoveAt.set(ev.thugId, this.time.now + EXTORT_SHOVE_INTERVAL_MS);
       } else if (ev.state === 'interrupted') {
@@ -2968,7 +2985,7 @@ export class IsoScene extends Phaser.Scene {
     // rival under the cursor would route 'attack' — the crew marches in + a reticle blooms on the fogged
     // tile — where empty ground routes 'move'). BOTH paths gate on THE fog predicate, combat flag on OR
     // off, so a fogged rival routes (and looks) exactly like plain ground.
-    const hitUnit = this.combatEnabled
+    const hitUnit = this.combatControlsEnabled
       ? pickVisibleHostile(this.units.map((v) => v.unit), gpoint, this.state.player.id, this.combatCtx().isVisible)
       : pickVisibleUnit(this.units.map((v) => v.unit), gpoint, (pos) => this.isVisibleTile(pos));
     const hitView = hitUnit ? this.units.find((v) => v.unit.id === hitUnit.id) : undefined;
@@ -2987,7 +3004,7 @@ export class IsoScene extends Phaser.Scene {
     if (verb === 'attack' && target.kind === 'rival') {
       // ?combat=1 — a right-clicked rival is the FOCUS-FIRE mark (persistent convergence); off ⇒
       // the one-shot #17 move-to-engage.
-      if (this.combatEnabled) this.commandFocusFire(target.unitId);
+      if (this.combatControlsEnabled) this.commandFocusFire(target.unitId);
       else this.commandAttackUnit(target.unitId);
     } else if (verb === 'extort' && target.kind === 'front') {
       if (this.selection.ids.length > 0) this.openBizMenu(target.businessId, p.x, p.y);
@@ -3038,6 +3055,7 @@ export class IsoScene extends Phaser.Scene {
     for (const id of res.moved) this.unitOrders.delete(id); // a fresh MOVE cancels any STOP/HOLD/ATTACK-MOVE stance
     clearCombatOrders(this.state, res.moved); // …and any ?combat=1 sim order (no-op when the slice is absent)
     this.drawTargetMarker(target, res.moved.length > 0);
+    if (res.moved.length > 0) this.audio?.confirm();
     this.setStatus(`moving ${res.moved.length} → (${target.gx},${target.gy})${res.failed.length ? ` · ${res.failed.length} blocked` : ''}`);
   }
 
@@ -3194,7 +3212,7 @@ export class IsoScene extends Phaser.Scene {
    * selected fighter (hidden hostiles never steer the retreat — no fog probe). Flag off ⇒ [W] stays
    * the dead key it is on the base build. */
   private commandDisengage(): void {
-    if (!this.combatEnabled) return;
+    if (!this.combatControlsEnabled) return;
     const ids = this.combatOrderIds();
     if (ids.length === 0) { this.setStatus('select crew first, then [W] to disengage'); return; }
     const res = orderDisengage(this.state, ids, this.combatCtx());
@@ -3369,7 +3387,9 @@ export class IsoScene extends Phaser.Scene {
     recordRacketRun(ensureRunStats(this.state)); // Lane L — a racket brought online
     const hq = hqTileOf(this.layout, 'player');
     if (hq) { const c = gridToScreen(hq.gx, hq.gy); this.floatText(c.x, c.y - 30, `OPENED ${kind.toUpperCase()} RACKET`, NOIR_PALETTE.brass); }
-    this.audio?.laundering(); this.audio?.confirm(); this.fireTipOnce('launder'); // RTS-34 typewriter (cooking the books) + RTS-27 confirm + money tip
+    this.audio?.laundering();
+    // The first money lesson replaces the generic acknowledgement; later rackets get the short confirm.
+    if (!this.fireTipOnce('launder')) this.audio?.confirm();
     this.setStatus(`opened a ${kind} racket in ${d.name}`);
   }
 
@@ -3393,16 +3413,19 @@ export class IsoScene extends Phaser.Scene {
    * the relevant one reduces the relevant pressure — no longer forced to spread $10 across all four.
    */
   private commandGrease(channel?: BribeChannel): void {
-    const ch = channel ?? hottestChannel(this.greasePressure());
+    const onboardingBeat = !channel && firstObjective(this.state).step === 'grease';
+    const ch = channel ?? (onboardingBeat ? 'police' : hottestChannel(this.greasePressure()));
     const cur = this.state.player.bribes[ch];
     applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: ch, amount: cur + 10 });
     this.state = harvestIncidents(this.state);
     const paid = this.state.player.bribes[ch] > cur;
     if (paid) {
       recordBribePaid(ensureRunStats(this.state), ch, this.state.player.bribes[ch] - cur); // Lane L — greased $ by channel
-      this.audio?.grease(ch); this.audio?.confirm(); this.fireTipOnce('grease'); // RTS-27 distinct cue per channel
+      this.audio?.grease(ch);
+      // Let the first channel lesson speak instead of immediately occupying the one-VO gate with a confirm.
+      if (!this.fireTipOnce('grease')) this.audio?.confirm();
     }
-    const how = channel ? '' : ' (hottest)';
+    const how = channel ? '' : onboardingBeat ? ' (first unlock)' : ' (hottest)';
     const greaseMsg = paid ? `greased ${bribeChannelLabel(ch)}${how} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`;
     this.setStatus(greaseMsg);
     // LANE K — surface the bribe outcome on THE WIRE so the player can read that a channel landed (or that
@@ -3411,10 +3434,18 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** RTS-27 — fire a consigliere VO tip the FIRST time its onboarding trigger occurs (don't spam). */
-  private fireTipOnce(which: 'extort' | 'grease' | 'launder' | 'war'): void {
-    if (this.tipsFired.has(which)) return;
-    this.tipsFired.add(which);
-    this.audio?.tip(which);
+  private fireTipOnce(which: 'extort' | 'grease' | 'launder' | 'war'): boolean {
+    if (this.tipsFired.has(which)) return false;
+    if (this.sound.locked) {
+      if (!this.tipUnlockQueued.has(which)) {
+        this.tipUnlockQueued.add(which);
+        this.sound.once('unlocked', () => { this.tipUnlockQueued.delete(which); this.fireTipOnce(which); });
+      }
+      return true;
+    }
+    const played = this.audio?.tip(which) ?? false;
+    if (played) this.tipsFired.add(which);
+    return played;
   }
 
   // ── the build verbs (RTS-20) — how the player leaves ESTABLISH ───────────────────────────────
@@ -6795,29 +6826,17 @@ export class IsoScene extends Phaser.Scene {
     const wrapW = Math.min(760, VW - 64) - padX * 2; // body wraps within the viewport (no horizontal overflow)
     const title = this.mkText(0, 0, GAME_TITLE, { fontFamily: NOIR_FONT, fontSize: '20px', color: NOIR_PALETTE.brass, fontStyle: 'bold' }).setOrigin(0.5, 0);
     const body = this.mkText(0, 0, [
-      'Prohibition-era Brassmere. Build a protection empire — quietly first, by war later.',
+      'Your outfit owns a room and a reputation. Tonight, make the first block pay.',
       '',
-      'CAMERA — move around and read the city',
-      '  ARROW keys / screen-edge pan · left-drag box-select · middle-drag pan · wheel zoom · [F] follow · [Z] frame city · [D] center on selection',
+      '1  LEFT-CLICK one of your two crewmen.',
+      '2  RIGHT-CLICK the glowing storefront and choose EXTORT.',
+      '3  Watch him reach the door and finish the shakedown.',
+      '4  Follow the coach card to bring the first take home.',
       '',
-      'MOUSE — drive your thugs',
-      '  LEFT-CLICK a thug to select (SHIFT-click adds more)',
-      '  RIGHT-CLICK a storefront → EXTORT (take protection) or ATTACK (shut it down)',
-      '  RIGHT-CLICK the street → move the selected thugs',
-      '  COMBAT CONTROL — [S] stop (hold tile) · [I] hold (stand & fight, no chase) · [A] then left-click → attack-move',
-      '  The coloured plate under a shop = its allegiance: fog new · brass yours · red rival.',
-      '',
-      'EXTORT-FIRST — the early game',
-      '  • Shake down the NEIGHBOURHOOD — every cheap front you can (low heat, steady money).',
-      '  • [T] set an automated COLLECTION ROUTE so the take banks itself — but GUARD it,',
-      '    a rival enforcer who catches the collector still robs you.',
-      '  • [6] recruit more thugs · [5] expand to the next block · [G] grease the hottest channel (or click one).',
-      '  • War comes later: [1] raid · [2] sabotage · [3] assassinate · [4] lockout · [V] demolish.',
-      '  • Select a thug → its ACTION ICONS show; [Q] set PATROL (hold a block, adds muscle presence).',
-      '',
-      '  [K] crew · [L] the wire · [H] help · [B] card view',
-    ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 3, align: 'left', wordWrap: { width: wrapW } }).setOrigin(0.5, 0);
-    const hint = this.mkText(0, 0, 'click anywhere to begin', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
+      'Drag to select · right-click street to move · wheel to zoom · [H] opens this card again.',
+      'The action bar and coach reveal the rest when it matters.',
+    ].join('\n'), { fontFamily: NOIR_FONT, fontSize: '12px', color: NOIR_PALETTE.bone, lineSpacing: 5, align: 'left', wordWrap: { width: wrapW } }).setOrigin(0.5, 0);
+    const hint = this.mkText(0, 0, 'click anywhere to begin · the city is paused while this is open', { fontFamily: NOIR_FONT, fontSize: '13px', color: NOIR_PALETTE.fog }).setOrigin(0.5, 0);
 
     // fit the border to the measured blocks, then place each block at its computed top.
     const sizes = [title, body, hint].map((t) => ({ w: t.width, h: t.height }));
@@ -6837,5 +6856,7 @@ export class IsoScene extends Phaser.Scene {
     if (this.legend?.visible) this.hideLegend(); else this.showLegend();
   }
   private showLegend(): void { this.legend?.setPosition(this.hudW() / 2, this.hudH() / 2).setVisible(true); }
-  private hideLegend(): void { this.legend?.setVisible(false); }
+  private hideLegend(): void {
+    this.legend?.setVisible(false);
+  }
 }

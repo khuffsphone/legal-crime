@@ -13,7 +13,7 @@
 //   1. TWIN WORLDS (pure) — a fogged-rival tile deep-equals an empty-ground tile at the pick that drives
 //      all three read channels, AND the opPreview selector itself stays 'visible only' (defense in depth).
 //   2. SCENE WIRING (source-scan, node-side — the beatCops/combat-PR pattern) — each channel actually
-//      calls the unconditional gate; the `this.combatEnabled ? …filter` leak pattern is gone everywhere.
+//      calls the unconditional gate; the `this.combatControlsEnabled ? …filter` leak pattern is gone everywhere.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -126,9 +126,9 @@ describe('fog-leak fix — SCENE WIRING (source-scan): every cursor channel funn
   });
 
   it('MUTATION TOOTH — the combat-only leak pattern is gone from every channel', () => {
-    // reverting ANY channel to `this.combatEnabled ? <list>.filter((u) => …isVisible(u.pos)) : <list>`
+    // reverting ANY channel to `this.combatControlsEnabled ? <list>.filter((u) => …isVisible(u.pos)) : <list>`
     // re-opens the flag-off leak and fails here.
-    expect(sceneSrc).not.toMatch(/this\.combatEnabled \? \w+\.filter\(\(u\) => (this\.combatCtx\(\)\.isVisible|isVis)\(u\.pos\)\)/);
+    expect(sceneSrc).not.toMatch(/this\.combatControlsEnabled \? \w+\.filter\(\(u\) => (this\.combatCtx\(\)\.isVisible|isVis)\(u\.pos\)\)/);
   });
 });
 

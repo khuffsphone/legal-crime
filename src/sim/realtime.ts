@@ -47,6 +47,7 @@ export function update(
   dt: number,
   weekDuration: number = WEEK_DURATION_SECONDS,
   combatCtx?: CombatCtx,
+  lawEnabled = true,
 ): UpdateResult {
   // RTS-19: bleed the player's offensive cooldown so the crew regroups in real time.
   if ((state.offenseCooldown ?? 0) > 0) {
@@ -69,7 +70,7 @@ export function update(
   // BEAT-COP P0 — patrol the neutral law markers (OBSERVATION-ONLY: no game number changes). Runs
   // after the embodied systems, before settlement. Draws only from the separate lawRngState cursor,
   // and no-ops when state.beatCops is absent — cop-less games stay byte-identical.
-  advanceBeatCops(state, dt);
+  if (lawEnabled) advanceBeatCops(state, dt);
   // COMBAT PR A — drive the standing combat orders (attack-move / focus-fire / disengage). Purely
   // additive: no-ops unless BOTH state.combatOrders exists (?combat=1 issued something) AND the
   // caller supplied the world ctx (grid + fog predicate) — headless/legacy callers pass nothing and
@@ -125,9 +126,10 @@ export function updateAndObserve(
   weekDuration: number = WEEK_DURATION_SECONDS,
   pulseSeconds?: number,
   combatCtx?: CombatCtx,
+  lawEnabled = true,
 ): ObserveResult {
   const before = snapshotPlayer(state);
-  const result = update(state, dt, weekDuration, combatCtx); // mutates state in place (logs included)
+  const result = update(state, dt, weekDuration, combatCtx, lawEnabled); // mutates state in place (logs included)
   // RTS-16: advance the turf war (rival territorial moves). A no-op on the legacy map (no
   // adjacency), so existing 5-district tests are unaffected.
   const strategy = advanceStrategy(state, dt, pulseSeconds).events;

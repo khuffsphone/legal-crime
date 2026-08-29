@@ -145,12 +145,13 @@ export function firstObjective(state: GameState): Objective {
   // check, ordered so a beat already done is simply skipped (never forced to repeat). ──
   const id2 = state.player.id;
 
-  // 1) GREASE — the four channels are the political toolkit; greasing buys down heat AND unlocks crew.
-  if (totalGrease(state) <= 0) {
+  // 1) GREASE — teach the exact first unlock contract. The Pistol Man requires The Beat, so paying a
+  // different channel cannot graduate this step and strand the player at the next instruction.
+  if (state.player.bribes.police < 10) {
     return {
       step: 'grease',
       title: 'GREASE A CHANNEL',
-      detail: 'You\'re earning — now buy some protection. Press [G] to grease a bribery channel ($10/wk). The four channels (The Beat / The Bench / City Hall / The Bureau) buy down heat, slow raids, and UNLOCK weapon specialists. Greasing The Beat is the place to start.',
+      detail: 'You\'re earning — now buy some protection. Press [G] to grease The Beat ($10/wk). The four channels (The Beat / The Bench / City Hall / The Bureau) answer different threats and unlock different specialists; The Beat opens your first Pistol Man.',
       targetBusinessId: null,
       done: false,
     };
@@ -272,8 +273,8 @@ const TUTORIAL_COPY: Record<TutorialStepId, { title: string; body: string; actio
   },
   grow: {
     title: 'PUT THE MONEY TO WORK',
-    body: "You're earning — now buy protection. Grease one of the four channels to cool heat, slow the raids, and unlock real specialists. That's the loop; the city is yours to take from here.",
-    action: 'press [G] to grease a channel',
+    body: "You're earning — now buy protection. Start with The Beat to slow street raids and unlock your first Pistol Man. The other channels answer different threats later.",
+    action: 'press [G] to grease The Beat',
   },
 };
 

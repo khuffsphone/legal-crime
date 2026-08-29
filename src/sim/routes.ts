@@ -130,6 +130,16 @@ export function advanceRoutes(state: GameState, layout: MapLayout, grid?: NavGri
     if (!unitArrived(col)) continue; // still walking — let movement carry it
 
     if (col.routePhase === 'toStop') {
+      // FP-01 — the opening fixed collector must not silently steal the back-pay that teaches [C] RUSH.
+      // While the player's guaranteed tutorial run is still unused, a per-business collector waits at
+      // its storefront and leaves the pile on the books. Dispatching the protected rush spends the free
+      // run, so this guard naturally falls away on the next frame; every later round is unchanged. Keep
+      // deliberate multi-stop routes and rival collectors out of this narrow onboarding exception.
+      if (
+        route.familyId === state.player.id &&
+        route.id.startsWith('route-biz-') &&
+        state.tutorialFreeRuns > 0
+      ) continue;
       const idx = col.routeIndex ?? 0;
       const stopId = route.stops[idx];
       const found = findBusiness(state, stopId);

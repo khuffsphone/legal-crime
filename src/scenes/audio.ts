@@ -114,7 +114,7 @@ const SAME_CLIP_DEBOUNCE = 70; // ms — swallow a retrigger of the SAME clip in
 // window/threshold are pure data in audioMap.ts (SOFT_SFX_MAX / SOFT_SFX_PRIORITY / SOFT_BURST_*);
 // these two are the Phaser-side durations the manager applies once those pure decisions are made. ──
 const SOFT_BURST_DUCK_MS = 450; // a soft burst ducks the beds this long (lighter than an urgent's 700)
-const VO_MAX_MS = 6000; // failsafe: forget a still-"playing" VO after this, so one VO can't wedge the gate
+const VO_MAX_MS = 8000; // exceeds the longest shipped tip while still preventing a wedged VO gate
 const SETTINGS_KEY = 'lcr.audio.settings.v1';
 
 export interface AudioSettings { master: number; sfx: number; vo: number; music: number; ambience: number; muted: boolean; }
@@ -248,40 +248,43 @@ export class AudioManager {
   /** Play a one-shot clip on its bus, honouring mute/volume, a per-clip debounce, and the per-bus
    * governors: ONE urgent at a time (ducks the beds), a concurrency CAP on non-urgent sfx (lowest
    * priority dropped, plus a duck under a burst), and ONE VO at a time. No-op if the clip isn't loaded. */
-  play(key: string, opts: { volScale?: number } = {}): void {
+  play(key: string, opts: { volScale?: number } = {}): boolean {
     const def = DEFS.get(key);
-    if (!def || !this.loaded.has(key) || this.busVolume(def.bus) <= 0) return;
+    if (this.scene.sound.locked || !def || !this.loaded.has(key) || this.busVolume(def.bus) <= 0) return false;
     const now = this.scene.time.now;
     const last = this.lastPlayed.get(key) ?? -1e9;
-    if (now - last < SAME_CLIP_DEBOUNCE) return; // debounce rapid repeats of the same clip
+    if (now - last < SAME_CLIP_DEBOUNCE) return false; // debounce rapid repeats of the same clip
 
     // ── URGENT GOVERNOR (unchanged) — one urgent sound at a time, ducks the beds ──
     if (def.urgent) {
-      if (now < this.urgentUntil) return;
+      if (now < this.urgentUntil) return false;
+      const started = this.scene.sound.play(key, { volume: this.voiceVolume(def, opts) });
+      if (!started) return false;
       this.urgentUntil = now + URGENT_DEBOUNCE;
       this.duck(700);
       this.lastPlayed.set(key, now);
-      this.scene.sound.play(key, { volume: this.voiceVolume(def, opts) });
-      return;
+      return true;
     }
 
     // ── ONE VO AT A TIME — drop a new VO while one is still speaking (was caller-convention only) ──
     if (def.bus === 'vo') {
-      if ((this.voActive && this.voActive.isPlaying) || now < this.voUntil) return;
+      if ((this.voActive && this.voActive.isPlaying) || now < this.voUntil) return false;
+      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+      if (!snd.play()) { snd.destroy(); return false; }
       this.lastPlayed.set(key, now);
       this.duck(900); // VO speaks over a ducked bed — duck only once the gate admits it
-      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
       this.voActive = snd;
       this.voUntil = now + VO_MAX_MS; // failsafe so a missed 'complete' can't wedge the gate forever
       snd.once('complete', () => { if (this.voActive === snd) { this.voActive = undefined; this.voUntil = 0; } });
-      snd.play();
-      return;
+      return true;
     }
 
     // ── SOFT-SFX GOVERNOR — cap concurrent non-urgent voices; drop/evict the lowest priority ──
     this.pruneSoftVoices();
     const admission = admitSoftSfx(this.activeSoftVoices.map((v) => v.voice), key, SOFT_SFX_MAX);
-    if (!admission.admit) return; // at the cap and outranked → drop rather than stack
+    if (!admission.admit) return false; // at the cap and outranked → drop rather than stack
+    const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+    if (!snd.play()) { snd.destroy(); return false; }
     if (admission.evict) {
       const victim = this.activeSoftVoices.find((v) => v.voice === admission.evict);
       if (victim) { this.scene.tweens.killTweensOf(victim.snd); victim.snd.stop(); this.dropSoftVoice(victim.snd); }
@@ -292,11 +295,10 @@ export class AudioManager {
     if (softBurstActive(this.recentSoftStarts, now, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD)) this.duck(SOFT_BURST_DUCK_MS);
 
     this.lastPlayed.set(key, now);
-    const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
     const tracked = { voice: { key, startedMs: now }, snd };
     this.activeSoftVoices.push(tracked);
     snd.once('complete', () => this.dropSoftVoice(snd));
-    snd.play();
+    return true;
   }
 
   /** Per-clip output volume = its bus level × the clip's own vol × an optional one-shot scale. */
@@ -316,11 +318,12 @@ export class AudioManager {
 
   /** Rotate a VO take from a list so it doesn't grate. The single-VO gate + the bed-duck now live in
    * play()'s VO branch, so a take dropped by the gate no longer ducks the beds for nothing. */
-  vo(takes: string[]): void {
+  vo(takes: string[]): boolean {
     const pick = pickTake(takes.filter((k) => this.loaded.has(k)), this.lastVoIndex);
-    if (!pick) return;
-    this.lastVoIndex = pick.index;
-    this.play(pick.key);
+    if (!pick) return false;
+    const played = this.play(pick.key);
+    if (played) this.lastVoIndex = pick.index;
+    return played;
   }
 
   // ── named seams (thin wrappers so the scene reads declaratively) ──
@@ -338,7 +341,7 @@ export class AudioManager {
   dispatch(): void { this.play('door'); }
   wire(cue: 'crisis' | 'routine'): void { this.play(cue === 'crisis' ? 'wire_crisis' : 'wire_routine'); }
   confirm(): void { this.vo(['vo_confirm_1', 'vo_confirm_2', 'vo_confirm_3']); }
-  tip(which: 'extort' | 'grease' | 'launder' | 'war'): void { this.vo([`vo_tip_${which}`]); }
+  tip(which: 'extort' | 'grease' | 'launder' | 'war'): boolean { return this.vo([`vo_tip_${which}`]); }
 
   // ── adaptive MUSIC state machine ──
   /** Start the looping ambience + the current phase bed (call once audio is unlocked). */

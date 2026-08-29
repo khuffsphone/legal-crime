@@ -443,24 +443,24 @@ describe('wiring exists (mutation-verified at the source): realtime hook + IsoSc
 
   it('realtime.update carries the additive combat hook and threads the ctx through updateAndObserve', () => {
     expect(simSrc).toContain('advanceCombatOrders(state, dt, combatCtx)');
-    expect(simSrc).toMatch(/update\(state, dt, weekDuration, combatCtx\)/); // updateAndObserve pass-through
+    expect(simSrc).toMatch(/update\(state, dt, weekDuration, combatCtx, lawEnabled\)/); // exact updateAndObserve pass-through
   });
 
-  it('IsoScene gates every combat input path behind ?combat=1 and reuses THE seams', () => {
-    // the flag field (copsEnabled pattern)
-    expect(sceneSrc).toMatch(/private combatEnabled = typeof window !== 'undefined' && combatRequested\(/);
+  it('IsoScene gates every combat input path behind the runtime profile and reuses THE seams', () => {
+    // FP-01 promotes combat into the showcase profile while retaining profile/per-layer rollback.
+    expect(sceneSrc).toContain('private combatControlsEnabled = this.featureProfile.combatControls;');
     // the frame loop hands the wrapper the ctx only when flagged
-    expect(sceneSrc).toContain('this.combatEnabled ? this.combatCtx() : undefined');
+    expect(sceneSrc).toContain('this.combatControlsEnabled ? this.combatCtx() : undefined');
     // [A]-armed click routes through the sim verb when flagged, the #17 stance otherwise
-    expect(sceneSrc).toMatch(/if \(this\.combatEnabled\) this\.commandCombatAttackMove\(p\);\s*\n\s*else this\.commandAttackMove\(p\);/);
+    expect(sceneSrc).toMatch(/if \(this\.combatControlsEnabled\) this\.commandCombatAttackMove\(p\);\s*\n\s*else this\.commandAttackMove\(p\);/);
     // right-click rival routes to focus-fire when flagged
-    expect(sceneSrc).toMatch(/if \(this\.combatEnabled\) this\.commandFocusFire\(target\.unitId\);\s*\n\s*else this\.commandAttackUnit\(target\.unitId\);/);
+    expect(sceneSrc).toMatch(/if \(this\.combatControlsEnabled\) this\.commandFocusFire\(target\.unitId\);\s*\n\s*else this\.commandAttackUnit\(target\.unitId\);/);
     // the rival pick itself is fog-safe when flagged (verb routing must not be an X-ray)
     expect(sceneSrc).toContain('? pickVisibleHostile(');
     // [W] disengage is bound, and the handler is a hard no-op without the flag
     expect(sceneSrc).toMatch(/keydown-W', \(\) => this\.commandDisengage\(\)/);
     const disengage = sceneSrc.slice(sceneSrc.indexOf('private commandDisengage('));
-    expect(disengage.slice(0, 300)).toContain('if (!this.combatEnabled) return;');
+    expect(disengage.slice(0, 300)).toContain('if (!this.combatControlsEnabled) return;');
   });
 
   it('denials speak through combatDenialText and target feedback rides shouldEmitFeedback', () => {
@@ -482,6 +482,6 @@ describe('wiring exists (mutation-verified at the source): realtime hook + IsoSc
     // flagged verb routing still uses the fog-safe hostile pick; the exhaustive per-channel wiring proof
     // lives in tests/fogLeak.test.ts. Here we only guard that the combat lane never re-adds the conditional.
     expect(sceneSrc).toContain('? pickVisibleHostile('); // flagged right-click stays fog-safe
-    expect(sceneSrc).not.toMatch(/this\.combatEnabled \? \w+\.filter\(\(u\) => (this\.combatCtx\(\)\.isVisible|isVis)\(u\.pos\)\)/);
+    expect(sceneSrc).not.toMatch(/this\.combatControlsEnabled \? \w+\.filter\(\(u\) => (this\.combatCtx\(\)\.isVisible|isVis)\(u\.pos\)\)/);
   });
 });

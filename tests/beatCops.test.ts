@@ -274,11 +274,20 @@ describe('beat-cop P0 — layer flag + fog gate (Ticket 6)', () => {
     expect(body).toMatch(/debugRevealAll \|\| isRevealed\(this\.fog, wp\.gx, wp\.gy\)/);
   });
 
-  it('the scene create() gate: stale views cleared, substrate primed, spawn strictly behind ?cops=1', () => {
+  it('a disabled law gate preserves persisted patrols without advancing them or witness heat', () => {
+    const s = big(31);
+    spawnBeatCops(s, world(s));
+    const before = structuredClone({ cops: s.beatCops, lawRngState: s.lawRngState, heat: s.player.heat });
+    update(s, 1, 1e9, undefined, false);
+    expect({ cops: s.beatCops, lawRngState: s.lawRngState, heat: s.player.heat }).toEqual(before);
+  });
+
+  it('the scene create/realtime gates preserve saves and keep cop simulation strictly feature-gated', () => {
     const src = readFileSync(join(process.cwd(), 'src', 'scenes', 'IsoScene.ts'), 'utf8');
     expect(src).toContain('this.copViews.clear()');                    // scene.restart() corpse purge
     expect(src).toContain('primePatrolWorld(this.state, this.world)'); // patrol graph = RENDERED layout
-    // spawn is guarded by BOTH the opt-in flag and slice absence — un-flagged games never grow cops
-    expect(src).toMatch(/if \(this\.copsEnabled && !this\.state\.beatCops\?\.length\) spawnBeatCops\(this\.state\)/);
+    expect(src).not.toContain('this.state.beatCops = []');             // rollback must not destroy saved cops
+    expect(src).toMatch(/if \(this\.copsEnabled\) \{\s+primePatrolWorld\(this\.state, this\.world\);\s+if \(!this\.state\.beatCops\?\.length\) spawnBeatCops\(this\.state\);\s+\}/);
+    expect(src).toMatch(/this\.combatControlsEnabled \? this\.combatCtx\(\) : undefined,\s+this\.copsEnabled,/);
   });
 });

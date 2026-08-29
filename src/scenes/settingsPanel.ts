@@ -1,8 +1,8 @@
 // Lane G — the SETTINGS PANEL: a reusable noir modal mounted by BOTH the main menu (MainMenuScene) and the
 // in-game pause overlay (inside IsoScene). It edits the persisted settings.ts store: master/SFX/music volume,
 // the screen-shake and lighting-quality toggles, and the keybind-remap list. Volume routes ONLY through the
-// AudioManager's public named setters when one is supplied (in-game); in the menu it just persists and is
-// applied when the game boots. Keybind capture uses a WINDOW capture-phase listener so the captured key never
+// host's public named setters when one is supplied (AudioManager in-game, a score adapter in the menu).
+// Keybind capture uses a WINDOW capture-phase listener so the captured key never
 // also triggers a game action, and remaps go through the conflict-refusing central map (no new conflicts).
 //
 // Camera discipline: the host supplies a `register` hook. Inside IsoScene that hook is `hudFx` (so the world
@@ -23,7 +23,7 @@ import {
 
 export interface SettingsPanelHost {
   scene: Phaser.Scene;
-  /** Live volume routing (in-game). Absent in the menu — there it only persists. */
+  /** Live volume routing supplied by either the game AudioManager or the menu score adapter. */
   audio?: {
     setMasterVolume(v: number): void;
     setSfxVolume(v: number): void;

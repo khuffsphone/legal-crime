@@ -1,0 +1,1242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brassmere.game/schemas/asset-manifest.schema.json",
+  "title": "Brassmere FP-01 Asset Production Manifest",
+  "description": "Provider-neutral production, provenance, rights, integration, and approval records for FP-01 assets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "manifestId",
+    "project",
+    "milestone",
+    "createdAt",
+    "updatedAt",
+    "owner",
+    "assets"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "manifestId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "project": {
+      "const": "Brassmere"
+    },
+    "milestone": {
+      "const": "FP-01"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notes": {
+      "type": "string"
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/assetRecord"
+      }
+    }
+  },
+  "$defs": {
+    "nullableString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "nullableUri": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uri"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reviewResult": {
+      "enum": [
+        "not-reviewed",
+        "pass",
+        "changes-required",
+        "rejected",
+        "waived"
+      ]
+    },
+    "assetRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assetId",
+        "title",
+        "kind",
+        "lifecycleState",
+        "intent",
+        "creativeBrief",
+        "provenance",
+        "rights",
+        "files",
+        "technical",
+        "integration",
+        "approval",
+        "notes"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "pattern": "^fp01(?:[._-][a-z0-9]+)+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "model3d",
+            "animation3d",
+            "sprite-sheet",
+            "image",
+            "texture",
+            "voice",
+            "sound-effect",
+            "music",
+            "ambience",
+            "cinematic"
+          ]
+        },
+        "lifecycleState": {
+          "enum": [
+            "brief",
+            "generating",
+            "candidate",
+            "selected",
+            "editing",
+            "integrated",
+            "review",
+            "approved",
+            "rejected",
+            "superseded"
+          ]
+        },
+        "intent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "creativeBrief": {
+          "$ref": "#/$defs/creativeBrief"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "rights": {
+          "$ref": "#/$defs/rights"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fileRecord"
+          }
+        },
+        "technical": {
+          "$ref": "#/$defs/technical"
+        },
+        "integration": {
+          "$ref": "#/$defs/integration"
+        },
+        "approval": {
+          "$ref": "#/$defs/approval"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lifecycleState": {
+                "enum": [
+                  "candidate",
+                  "selected",
+                  "editing",
+                  "integrated",
+                  "review",
+                  "approved",
+                  "rejected",
+                  "superseded"
+                ]
+              }
+            },
+            "required": [
+              "lifecycleState"
+            ]
+          },
+          "then": {
+            "properties": {
+              "files": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lifecycleState": {
+                "enum": [
+                  "integrated",
+                  "review",
+                  "approved"
+                ]
+              }
+            },
+            "required": [
+              "lifecycleState"
+            ]
+          },
+          "then": {
+            "properties": {
+              "files": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "const": "runtime"
+                    }
+                  },
+                  "required": [
+                    "role"
+                  ]
+                }
+              },
+              "integration": {
+                "properties": {
+                  "runtimePath": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "voice",
+                  "sound-effect",
+                  "music",
+                  "ambience"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "technical": {
+                "properties": {
+                  "audio": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "cinematic"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "technical": {
+                "properties": {
+                  "video": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "image",
+                  "texture",
+                  "sprite-sheet"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "technical": {
+                "properties": {
+                  "image": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "model3d",
+                  "animation3d"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "technical": {
+                "properties": {
+                  "model3d": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "approval": {
+                "properties": {
+                  "state": {
+                    "const": "approved"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            },
+            "required": [
+              "approval"
+            ]
+          },
+          "then": {
+            "properties": {
+              "lifecycleState": {
+                "const": "approved"
+              },
+              "rights": {
+                "properties": {
+                  "commercialUseConfirmed": {
+                    "const": true
+                  },
+                  "redistributionConfirmed": {
+                    "const": true
+                  }
+                }
+              },
+              "approval": {
+                "properties": {
+                  "decidedBy": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decidedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "gates": {
+                    "properties": {
+                      "creative": {
+                        "enum": [
+                          "pass",
+                          "waived"
+                        ]
+                      },
+                      "rights": {
+                        "enum": [
+                          "pass",
+                          "waived"
+                        ]
+                      },
+                      "technical": {
+                        "enum": [
+                          "pass",
+                          "waived"
+                        ]
+                      },
+                      "integration": {
+                        "enum": [
+                          "pass",
+                          "waived"
+                        ]
+                      },
+                      "fun": {
+                        "enum": [
+                          "pass",
+                          "waived"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lifecycleState": {
+                "const": "approved"
+              }
+            },
+            "required": [
+              "lifecycleState"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approval": {
+                "properties": {
+                  "state": {
+                    "const": "approved"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "creativeBrief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prompt",
+        "negativePrompt",
+        "script",
+        "direction",
+        "referenceAssetIds",
+        "referenceUris",
+        "iterationNotes"
+      ],
+      "properties": {
+        "prompt": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "negativePrompt": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "script": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "direction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "referenceAssetIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "referenceUris": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "iterationNotes": {
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "script": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin",
+        "provider",
+        "sourceAssetIds",
+        "referenceDisclosure",
+        "identitySafety"
+      ],
+      "properties": {
+        "origin": {
+          "enum": [
+            "ai-generated",
+            "ai-assisted",
+            "human-recorded",
+            "original-in-house",
+            "commissioned",
+            "licensed-third-party",
+            "public-domain"
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "sourceAssetIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "referenceDisclosure": {
+          "type": "string"
+        },
+        "identitySafety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "realPersonVoiceOrLikeness",
+            "protectedCharacterOrFranchise",
+            "notes"
+          ],
+          "properties": {
+            "realPersonVoiceOrLikeness": {
+              "type": "boolean"
+            },
+            "protectedCharacterOrFranchise": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "product",
+        "model",
+        "modelVersion",
+        "jobId",
+        "jobUri",
+        "generationTimestamp",
+        "accountPlan",
+        "parameters"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "examples": [
+            "Meshy AI",
+            "ElevenLabs",
+            "Google"
+          ]
+        },
+        "product": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "modelVersion": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "jobId": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "jobUri": {
+          "$ref": "#/$defs/nullableUri"
+        },
+        "generationTimestamp": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accountPlan": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "rights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "basis",
+        "commercialUseConfirmed",
+        "redistributionConfirmed",
+        "attributionRequired",
+        "attributionText",
+        "termsUri",
+        "termsEffectiveDate",
+        "planOrLicense",
+        "evidencePaths",
+        "reviewedBy",
+        "reviewedAt",
+        "restrictions"
+      ],
+      "properties": {
+        "basis": {
+          "enum": [
+            "provider-commercial-terms",
+            "direct-license",
+            "work-for-hire",
+            "original-in-house",
+            "public-domain",
+            "unresolved"
+          ]
+        },
+        "commercialUseConfirmed": {
+          "type": "boolean"
+        },
+        "redistributionConfirmed": {
+          "type": "boolean"
+        },
+        "attributionRequired": {
+          "type": "boolean"
+        },
+        "attributionText": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "termsUri": {
+          "$ref": "#/$defs/nullableUri"
+        },
+        "termsEffectiveDate": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "planOrLicense": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "evidencePaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reviewedBy": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "reviewedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restrictions": {
+          "type": "string"
+        }
+      }
+    },
+    "fileRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "path",
+        "mediaType",
+        "sizeBytes",
+        "sha256",
+        "createdAt"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "source",
+            "intermediate",
+            "master",
+            "runtime",
+            "preview",
+            "prompt-receipt",
+            "rights-receipt"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "technical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "temporal",
+        "audio",
+        "video",
+        "image",
+        "model3d",
+        "processingNotes"
+      ],
+      "properties": {
+        "temporal": {
+          "$ref": "#/$defs/temporal"
+        },
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/audioTechnical"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "video": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/videoTechnical"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/imageTechnical"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model3d": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/model3dTechnical"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "processingNotes": {
+          "type": "string"
+        }
+      }
+    },
+    "temporal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "durationSeconds",
+        "targetDurationSeconds",
+        "loop"
+      ],
+      "properties": {
+        "durationSeconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "targetDurationSeconds": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "minimum",
+                "maximum"
+              ],
+              "properties": {
+                "minimum": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "maximum": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "startSeconds",
+            "endSeconds",
+            "crossfadeSeconds"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "startSeconds": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "endSeconds": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "exclusiveMinimum": 0
+            },
+            "crossfadeSeconds": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "audioTechnical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container",
+        "codec",
+        "sampleRateHz",
+        "bitDepth",
+        "channels",
+        "loudnessTargetLufs",
+        "truePeakCeilingDbtp"
+      ],
+      "properties": {
+        "container": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "codec": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "sampleRateHz": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 8000
+        },
+        "bitDepth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 8
+        },
+        "channels": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "loudnessTargetLufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "truePeakCeilingDbtp": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "videoTechnical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container",
+        "codec",
+        "width",
+        "height",
+        "framesPerSecond",
+        "hasAudio",
+        "skippable"
+      ],
+      "properties": {
+        "container": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "codec": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "framesPerSecond": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "hasAudio": {
+          "type": "boolean"
+        },
+        "skippable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "imageTechnical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container",
+        "width",
+        "height",
+        "colorSpace",
+        "alpha"
+      ],
+      "properties": {
+        "container": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "colorSpace": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "alpha": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "model3dTechnical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container",
+        "units",
+        "upAxis",
+        "polygonCount",
+        "targetPolygonCountMaximum",
+        "rigged",
+        "animations"
+      ],
+      "properties": {
+        "container": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "units": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "upAxis": {
+          "enum": [
+            "X",
+            "Y",
+            "Z",
+            null
+          ]
+        },
+        "polygonCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "targetPolygonCountMaximum": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "rigged": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "animations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inGameKey",
+        "trigger",
+        "runtimePath",
+        "catalog",
+        "bus",
+        "variationGroup",
+        "fallbackKey",
+        "preload",
+        "implementationNotes"
+      ],
+      "properties": {
+        "inGameKey": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+        },
+        "trigger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimePath": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "catalog": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "bus": {
+          "description": "Runtime AudioBus route. Use sfx for weapon, impact, movement, and interface content subgroups; use vo for spoken voice.",
+          "enum": [
+            "sfx",
+            "vo",
+            "music",
+            "ambience",
+            null
+          ]
+        },
+        "variationGroup": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "fallbackKey": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "preload": {
+          "type": "boolean"
+        },
+        "implementationNotes": {
+          "type": "string"
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "owner",
+        "requestedAt",
+        "decidedBy",
+        "decidedAt",
+        "gates",
+        "notes"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "not-submitted",
+            "pending",
+            "changes-requested",
+            "approved",
+            "rejected",
+            "superseded"
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decidedBy": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "decidedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "creative",
+            "rights",
+            "technical",
+            "integration",
+            "fun"
+          ],
+          "properties": {
+            "creative": {
+              "$ref": "#/$defs/reviewResult"
+            },
+            "rights": {
+              "$ref": "#/$defs/reviewResult"
+            },
+            "technical": {
+              "$ref": "#/$defs/reviewResult"
+            },
+            "integration": {
+              "$ref": "#/$defs/reviewResult"
+            },
+            "fun": {
+              "$ref": "#/$defs/reviewResult"
+            }
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
