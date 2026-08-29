@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "generate:fp01-audio": "vite-node --script scripts/generate-fp01-audio.ts",
     "validate:audio-assets": "vite-node --script scripts/validate-audio-assets.ts",
     "validate:asset-manifests": "vite-node --script scripts/validate-asset-manifests.ts"
   },

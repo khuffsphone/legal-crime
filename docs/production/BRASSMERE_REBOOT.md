@@ -46,7 +46,11 @@ The core audio catalog references 49 physical files. Nine are absent:
 - pavement and gravel footsteps
 - one downed-body settle clip
 
-Seven legacy files labeled as event sound effects are 29-145 seconds long. Together with the nine missing files, the new gate reports 16 production blockers. They cannot serve as tight, synchronized action feedback without editorial replacement. The code has strong routing, ducking, concurrency and fallback logic, but middleware cannot make weak or missing source material exciting.
+Seven legacy files labeled as event sound effects were 29-145 seconds long. Together with nine missing
+files, the new gate initially reported 16 production blockers. FP-01 now ships 16 short deterministic
+one-shots (including a distinct collector pickup), retires the unused generic warning cue, and quarantines
+the malformed sources outside `public/`. Listening UAT remains required; middleware cannot make weak source
+material exciting merely because the technical gate is green.
 
 ### Systems outran the experience
 

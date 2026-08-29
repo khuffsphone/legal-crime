@@ -30,13 +30,14 @@ export interface RegisteredClipDef { key: string; file: string; bus: AudioBus; l
 // expected filenames and activate the moment they're dropped into public/audio/.
 const LIBRARY: ClipDef[] = [
   // ── SFX (provided) ──
-  { key: 'extort', file: 'LCR_sfx_extort.m4a', bus: 'sfx', vol: 0.9 }, // 🥃 a racket folds
-  { key: 'cashdrop', file: 'LCR_sfx_cashdrop.m4a', bus: 'sfx', vol: 0.85 }, // 🪙 banked / pickup
-  { key: 'tommygun', file: 'LCR_sfx_tommygun.m4a', bus: 'sfx', vol: 0.8, urgent: true }, // 🔫 violence
-  { key: 'pistol', file: 'LCR_sfx_pistol.m4a', bus: 'sfx', vol: 0.85, urgent: true }, // a single hit
-  { key: 'siren', file: 'LCR_sfx_siren.m4a', bus: 'sfx', vol: 0.7, urgent: true }, // the law at 85 / lockout
-  { key: 'warning', file: 'LCR_sfx_warning.m4a', bus: 'sfx', vol: 0.8, urgent: true }, // 🔔 teletype 50/70/85
-  { key: 'mutiny', file: 'LCR_sfx_mutiny.m4a', bus: 'sfx', vol: 0.85, urgent: true }, // crew defection stinger
+  { key: 'extort', file: 'sfx_extort.wav', bus: 'sfx', vol: 0.9 }, // 🥃 a racket folds
+  { key: 'cashpickup', file: 'sfx_cashpickup.wav', bus: 'sfx', vol: 0.7 }, // satchel filled at a front
+  { key: 'cashdrop', file: 'sfx_cashdrop.wav', bus: 'sfx', vol: 0.85 }, // 🪙 take banked at HQ
+  { key: 'tommygun', file: 'sfx_tommygun.wav', bus: 'sfx', vol: 0.8, urgent: true }, // 🔫 violence
+  { key: 'pistol', file: 'sfx_pistol.wav', bus: 'sfx', vol: 0.85, urgent: true }, // a single hit
+  { key: 'siren', file: 'sfx_siren.wav', bus: 'sfx', vol: 0.7, urgent: true }, // the law at 85 / lockout
+  // The old generic `warning` key had no live trigger and duplicated the distinct federal rung cues.
+  { key: 'mutiny', file: 'sfx_mutiny.wav', bus: 'sfx', vol: 0.85, urgent: true }, // crew defection stinger
   // ── per-weapon HIT-SFX hooks (attack-commit feedback). Keys are by CONTRACT (weaponFeedback.ts).
   // FILE-WINS (spec §9/§11 · Ticket 1): each key is WIRED to its physical WAV at public/audio/<key>.wav; the
   // SAME key is still synthesized at boot (audioSynth.ts) as a FALLBACK, and registerSynthSfx now SKIPS a key
@@ -328,6 +329,7 @@ export class AudioManager {
 
   // ── named seams (thin wrappers so the scene reads declaratively) ──
   banked(): void { this.play('cashdrop'); }
+  pickedUp(): void { this.play('cashpickup'); }
   extort(): void { this.play('extort'); }
   grease(channel: string): void { this.play(greaseCueKey(channel)); }
   federal(tier: number): void { this.play(federalCueKey(tier)); }

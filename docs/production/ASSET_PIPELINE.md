@@ -89,4 +89,9 @@ The core catalog gate requires `ffprobe` from FFmpeg and runs with:
 npm run validate:audio-assets
 ```
 
-It intentionally exits `1` while a referenced file is missing, an event SFX exceeds five seconds, a catalog key is duplicated, a non-synth entry has no file, or policy contains a stale key. FP-01 currently expects 16 media blockers (nine missing files and seven overlong event cues); the gate becomes CI-required only after those files are replaced and the command exits `0`. Production classification may exempt a clip from the event-SFX limit as music, ambience, cinematic audio, or VO only when that is its genuine content role; runtime audio still routes through `music`, `ambience`, `vo`, or `sfx`. The seven known event cues must be edited or replaced, not relabeled.
+It intentionally exits `1` while a referenced file is missing, an event SFX exceeds five seconds, a catalog
+key is duplicated, a non-synth entry has no file, or policy contains a stale key. FP-01 initially found 16
+media blockers; `scripts/generate-fp01-audio.ts` now creates the provisional repair pack and the gate exits
+`0`. Production classification may exempt a clip from the event-SFX limit as music, ambience, cinematic
+audio, or VO only when that is its genuine content role; runtime audio still routes through `music`,
+`ambience`, `vo`, or `sfx`. The long legacy cues were quarantined, not relabeled.

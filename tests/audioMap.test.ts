@@ -107,6 +107,9 @@ describe('soft-sfx priority table — info-critical > economy > texture', () => 
     expect(softSfxPriority('extort')).toBeGreaterThan(softSfxPriority('door'));
     expect(softSfxPriority('grease_beat')).toBeGreaterThan(softSfxPriority('typewriter'));
     expect(softSfxPriority('cashdrop')).toBe(softSfxPriority('extort')); // economy tier ties
+    expect(softSfxPriority('cashpickup')).toBe(softSfxPriority('cashdrop'));
+    expect(softSfxPriority('sfx_down_body')).toBeGreaterThan(softSfxPriority('cashdrop'));
+    expect(softSfxPriority('sfx_step_pavement')).toBeLessThan(softSfxPriority('door'));
   });
   it('an unlisted soft cue falls back to the economy-tier default', () => {
     expect(softSfxPriority('something_new')).toBe(SOFT_SFX_DEFAULT_PRIORITY);

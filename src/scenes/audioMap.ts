@@ -167,8 +167,10 @@ export const SOFT_SFX_MAX = 3;
  * When the cap is full the LOWEST priority loses (the incoming cue if it ties or is weaker — no thrash). */
 export const SOFT_SFX_PRIORITY: Record<string, number> = {
   wire_routine: 3, // the Wire's routine tick — info-critical, stays audible over chatter
-  extort: 2, cashdrop: 2, // a racket folds / cash banked
+  extort: 2, cashpickup: 2, cashdrop: 2, // a racket folds / cash gathered / cash banked
   grease_beat: 2, grease_bench: 2, grease_cityhall: 2, grease_bureau: 2, // a channel greased
+  sfx_down_body: 3, // a visible unit-down must survive incidental movement texture
+  sfx_step_pavement: 0, sfx_step_gravel: 0, // texture — always the first voices shed under pressure
   door: 1, typewriter: 1, // texture — a slammed door, the adding machine
 };
 /** Priority for a soft cue not in the table (treated as economy-tier feedback). */

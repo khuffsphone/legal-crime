@@ -41,7 +41,7 @@ describe('FP-01 core audio catalog extraction', () => {
     const source = readFileSync(new URL('../src/scenes/audio.ts', import.meta.url), 'utf8');
     const clips = parseCoreAudioCatalog(source);
     expect(clips.length).toBeGreaterThan(40);
-    expect(clips).toContainEqual(expect.objectContaining({ key: 'extort', file: 'LCR_sfx_extort.m4a', bus: 'sfx' }));
+    expect(clips).toContainEqual(expect.objectContaining({ key: 'extort', file: 'sfx_extort.wav', bus: 'sfx' }));
     expect(clips).toContainEqual(expect.objectContaining({ key: 'music_establish', bus: 'music' }));
     expect(clips).toContainEqual(expect.objectContaining({ key: 'sfx_step_wood', file: '', synth: true }));
   });

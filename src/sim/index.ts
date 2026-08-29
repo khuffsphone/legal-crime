@@ -234,6 +234,7 @@ export {
   collectorsVulnerable,
   type RouteSetup,
   type RouteStatus,
+  type RouteAdvanceEvent,
 } from './routes';
 export {
   CITY_ARCHETYPES,

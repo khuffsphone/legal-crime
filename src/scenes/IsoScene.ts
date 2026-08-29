@@ -336,6 +336,7 @@ import {
 import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, FIGURE_PX, type RigPose,
 } from './gait';
+import { advanceFootstepCadence, footstepKeyForTile } from './footstepFeedback';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
 import { hottestChannel, type GreasePressure } from './greaseTargets';
 import { drawThugFig2 } from './figureDraw2';
@@ -494,6 +495,7 @@ interface UnitView {
   gaitPhase?: number; // 0..1 — DISTANCE-driven gait clock (the anti-skate keystone)
   loco?: number;      // 0 idle → 1 walk → 2 run, eased for cross-fades
   lastSX?: number; lastSY?: number; // last world screen-pos, to measure per-frame ground distance
+  footstepTravelPx?: number; // distance remainder to the next cadence-locked shoe contact
 }
 
 /** RTS-32 — which units get the procedural rig: a plain button-man (thug) of either faction. Weapon
@@ -1891,6 +1893,7 @@ export class IsoScene extends Phaser.Scene {
     const lede = tier === 'confirmed' ? 'Confirmed threat' : tier === 'suspected' ? 'Rival lookouts' : 'Word on the street';
     const message = `${lede}: ${report.where} — ${tg.reason} · ${report.eta}`;
     this.recordInfoEvent('rival.telegraph', message, order.gx, order.gy);
+    this.audio?.wire('crisis'); // the actionable warning now has the same needs-you ring as its Wire row
     this.rivalStrikes.set(rid, {
       phase: 'telegraphed', kind: order.kind, gx: order.gx, gy: order.gy,
       fireAtMs: this.time.now + report.leadMs, expireAtMs: 0, // tier-extended reaction window (fairness)
@@ -1995,7 +1998,16 @@ export class IsoScene extends Phaser.Scene {
     // loop, so the only cash movement between here and processCollectorArrivals is banked takings.
     const cashBeforeDeposits = this.state.player.cash;
     // RTS-22/29: advance the fixed per-business collectors (gather → bank → loop). No-op without one.
-    advanceRoutes(this.state, this.layout, this.navGrid);
+    const routeEvents = advanceRoutes(this.state, this.layout, this.navGrid);
+    for (const event of routeEvents) {
+      if (event.kind !== 'pickup' || event.familyId !== 'player' || event.amount <= 0) continue;
+      this.audio?.pickedUp();
+      const collector = this.units.find((view) => view.unit.id === event.collectorId);
+      if (collector) {
+        const pos = unitScreenPos(collector.unit);
+        if (this.onScreen(pos.x, pos.y)) this.floatText(pos.x, pos.y - 30, `BAGGED  $${event.amount}`, NOIR_PALETTE.brass);
+      }
+    }
     // RTS-35b: react to the embodied-extortion transitions (the sim already drove the acts + fired the
     // EXISTING conversion on resolve); ensure a collector exists for every business we earn from.
     this.processExtortionEvents(obs.result.extortion);
@@ -2011,9 +2023,14 @@ export class IsoScene extends Phaser.Scene {
     this.applyUnitOrders(); // COMBAT CONTROL VERBS — HOLD stands; ATTACK-MOVE diverts to engage then advances
     // AUDIO E-H (F1): capture the deposits so the atmosphere hook can source collector cues from THEM
     // (processCollectorArrivals), never obs.result.arrivedUnitIds (which carries rival arrivals → x-ray).
-    const collectorDeposits = processCollectorArrivals(this.state, this.layout);
+    const collectorDeposits: DepositEvent[] = [
+      ...routeEvents
+        .filter((event) => event.kind === 'deposit')
+        .map((event) => ({ collectorId: event.collectorId, familyId: event.familyId, banked: event.amount })),
+      ...processCollectorArrivals(this.state, this.layout),
+    ];
     for (const dep of collectorDeposits) {
-      this.flashDeposit(dep.collectorId, dep.banked);
+      if (dep.familyId === 'player') this.flashDeposit(dep.collectorId, dep.banked);
       // LANE K — a collector REPORTED IN: log the bank so income shows up on THE WIRE, not just a one-frame
       // float. ⭐ NO-X-RAY: PLAYER deposits only — processCollectorArrivals also yields rival collectors, and
       // a rival's bank is NOT a player-knowable fact. Positional to the player's OWN HQ vault (click-to-jump),
@@ -2071,6 +2088,21 @@ export class IsoScene extends Phaser.Scene {
       const depth = depthValue(Math.round(tile.gx), Math.round(tile.gy)) * 10 + 8;
       const moving = v.unit.path.length > 0;
       const seed = v.idleSeed ?? 0;
+      const lastScreenX = v.lastSX ?? s.x;
+      const lastScreenY = v.lastSY ?? s.y;
+      const travelPx = Math.hypot(s.x - lastScreenX, s.y - lastScreenY); // camera-independent world travel
+      v.lastSX = s.x;
+      v.lastSY = s.y;
+      const stridePx = v.unit.speed >= RUN_BOB_SPEED ? RUN_STRIDE : WALK_STRIDE;
+      const footstep = advanceFootstepCadence(v.footstepTravelPx ?? 0, moving ? travelPx : 0, stridePx);
+      v.footstepTravelPx = footstep.travelPx;
+      if (footstep.emit) {
+        const revealed = v.faction === 'player' || isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
+        if (shouldEmitFeedback(revealed, this.onScreen(s.x, s.y))) {
+          const volume = v.unit.role === 'collector' ? 0.48 : v.faction === 'player' ? 0.36 : 0.24;
+          this.audio?.play(footstepKeyForTile(tileKindAt(this.world, tile.gx, tile.gy)), { volScale: volume });
+        }
+      }
       // RTS-30e LOCOMOTION: a footstep BOB while moving (faster cadence = a RUN read for an urgent
       // unit), and a gentle IDLE BREATH + sway when still (a slow ≥1.3s loop — units never freeze).
       let bob: number, breath = 1, sway = 0;
@@ -2119,11 +2151,7 @@ export class IsoScene extends Phaser.Scene {
 
       // RTS-32 — the ARTICULATED RIG (thug-role units): a DISTANCE-driven gait so the foot never skates.
       if (v.rig) {
-        const lsx = v.lastSX ?? s.x, lsy = v.lastSY ?? s.y;
-        const dist = Math.hypot(s.x - lsx, s.y - lsy); // world-screen travel since last frame (camera-independent)
-        v.lastSX = s.x; v.lastSY = s.y;
-        const stride = v.unit.speed >= RUN_BOB_SPEED ? RUN_STRIDE : WALK_STRIDE;
-        v.gaitPhase = advanceGaitPhase(v.gaitPhase ?? 0, moving ? dist : 0, stride); // ⭐ cadence ∝ ground speed
+        v.gaitPhase = advanceGaitPhase(v.gaitPhase ?? 0, moving ? travelPx : 0, stridePx); // ⭐ cadence ∝ ground speed
         v.loco = easeLoco(v.loco ?? 0, locoTarget(v.unit.speed, moving, RUN_BOB_SPEED), dt * 1000, 150); // ~150ms cross-fade / stop-settle
         const faceRight = facesRight(unitFacing(v.unit));
         if (this.spritesEnabled && this.spriteSheetReady) {
@@ -2832,7 +2860,8 @@ export class IsoScene extends Phaser.Scene {
       if (ev.state === 'shakedown' && ev.prevState !== 'shakedown') {
         // the thug squared up and started leaning on them — open with a shove + the lean cue.
         if (c) this.triggerAttackMotion(thugView, undefined, c.x);
-        this.signalBeat('extort');
+        this.wireFlashUntil = this.time.now + 900;
+        this.audio?.play('door', { volScale: 0.85 }); // contact at the storefront; `extort` is reserved for the fold
         // The longer consigliere tip belongs after the short order-confirmation has finished, not on intro
         // dismissal where it would occupy the one-VO gate and swallow the player's first command response.
         this.fireTipOnce('extort');
@@ -2919,7 +2948,7 @@ export class IsoScene extends Phaser.Scene {
     this.focusBizId = businessId;
     const c = gridToScreen(tile.gx, tile.gy);
     this.flashAttackIntent(unitScreenPos(thug).x, unitScreenPos(thug).y, c.x, c.y); // the danger-MOTION intent tether (no static wash)
-    this.signalBeat('attack');
+    this.audio?.confirm();
     const name = inspectBusiness(this.state, businessId)?.name ?? 'the racket';
     this.setStatus(wasBusy
       ? `pulled your man off his last job — he's moving in to wreck ${name}`
@@ -3029,7 +3058,7 @@ export class IsoScene extends Phaser.Scene {
     clearCombatOrders(this.state, res.moved); // …and any stale ?combat=1 sim order (no-op when absent)
     const from = unitScreenPos(thug), to = unitScreenPos(rival);
     this.flashAttackIntent(from.x, from.y, to.x, to.y);
-    this.signalBeat('attack');
+    this.audio?.confirm();
     this.setStatus(`${res.moved.length > 1 ? `${res.moved.length} thugs` : 'your man'} moving in on the rival — they trade blows on contact`);
   }
 
@@ -3142,7 +3171,6 @@ export class IsoScene extends Phaser.Scene {
         tileOfFront: (frontId) => businessTileOf(this.layout, frontId) ?? undefined,
       },
       collectorDeposits,
-      collectorArrivals: collectorDeposits.map((d) => ({ collectorId: d.collectorId, familyId: d.familyId })),
       emitterSources: this.atmoEmitterSources,
       playerFamilyId: 'player',
     };
@@ -3183,7 +3211,7 @@ export class IsoScene extends Phaser.Scene {
     const res = orderAttackMove(this.state, this.combatOrderIds(), target, this.combatCtx());
     const issued = this.reportCombatOrder(res, (n) => `ATTACK-MOVE — ${n} advancing, engaging on sight`);
     this.drawTargetMarker(target, issued.length > 0);
-    if (issued.length > 0) this.signalBeat('attack');
+    if (issued.length > 0) this.audio?.confirm();
   }
 
   /** Right-click a VISIBLE rival fighter under ?combat=1 — FOCUS-FIRE: the whole selected crew
@@ -3193,7 +3221,7 @@ export class IsoScene extends Phaser.Scene {
     const res = orderFocusFire(this.state, this.combatOrderIds(), targetId, this.combatCtx());
     const issued = this.reportCombatOrder(res, (n) => `FOCUS — ${n > 1 ? `${n} thugs` : 'your man'} converging on the mark`);
     if (issued.length === 0) return;
-    this.signalBeat('attack');
+    this.audio?.confirm();
     const target = this.state.units.find((u) => u.id === targetId);
     const shooter = this.state.units.find((u) => u.id === issued[0]);
     if (!target || !shooter) return;
@@ -3268,7 +3296,7 @@ export class IsoScene extends Phaser.Scene {
     const res = resolveMoveCommand(this.units.map((v) => v.unit), ids, target, this.navGrid);
     for (const id of res.moved) this.unitOrders.set(id, attackMoveOrder(target));
     this.drawTargetMarker(target, res.moved.length > 0);
-    this.signalBeat('attack');
+    if (res.moved.length > 0) this.audio?.confirm();
     this.setStatus(`ATTACK-MOVE — ${res.moved.length} advancing, engaging hostiles en route`);
   }
 
@@ -3361,6 +3389,7 @@ export class IsoScene extends Phaser.Scene {
     // on top of the crew VO, and a visible brass "RUNNER OUT" punch at the spawn so the player SEES the
     // collector leave. Collectors stay AUTONOMOUS — this only juices the player-initiated [C] rush.
     this.audio?.dispatch();
+    this.audio?.pickedUp();
     this.audio?.confirm(); // RTS-27 crew-order confirm on dispatch
     this.rushUsed = true;  // the player learned [C] — the onboarding prompt can now retire
     const sp = gridToScreen(out.unit.pos.gx, out.unit.pos.gy);
@@ -3716,6 +3745,7 @@ export class IsoScene extends Phaser.Scene {
       this.cameraBeat('normalHit');            // POLISH v2 · PKG3 — a small punch on every trade
     } else {
       this.cameraBeat('kill');                 // POLISH v2 · PKG3 — a heavier hit-stop on a down
+      if (visible) this.audio?.play('sfx_down_body'); // one cadence-locked settle on the same visibility gate
       this.playKill(c.x, c.y, faction);        // ⭐ the kill beat (danger MOTION-only → desat slump → pool; onScreen-gated)
       this.removeUnitById(ev.unitId);          // the sim already dropped the unit; drop its on-map view
       this.setStatus(faction === 'player' ? 'one of your thugs went DOWN — pull back or reinforce' : 'a rival thug went DOWN in the brawl');

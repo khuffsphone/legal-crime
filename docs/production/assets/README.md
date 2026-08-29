@@ -9,10 +9,12 @@ This folder is the source of truth for generated-asset provenance and approval d
 | `asset-manifest.schema.json` | JSON Schema Draft 2020-12 contract for manifests and asset records |
 | `asset-manifest.template.json` | Empty, valid manifest to copy for a new production batch |
 | `fp01-asset-manifest.json` | Four FP-01 generation briefs: Meshy AI model, ElevenLabs voice, Google `Flow Music` score (Lyria model), and Google `Flow` cinematic (Veo model) |
+| `FP01_AUDIO_REPAIR_RECEIPT.md` | Generated runtime one-shots, measured durations, byte sizes, hashes, and provisional review state |
 
 The four starter records are briefs, not generated assets and not approvals. Their provider job, exact model/version, rights evidence, files, and hashes deliberately remain null, empty, or unconfirmed until production occurs and the exact account tier and terms effective on the generation date are captured.
 
-These four generation briefs are separate from the audio catalog's 16 repair blockers: nine missing physical clips and seven overlong event cues. Replacements for those blockers need their own production records; completing one of the four starter briefs does not clear the audio gate.
+These four generation briefs are separate from the audio repair pack. The repair receipt records the
+deterministic candidates that clear the runtime gate; they are not vendor outputs or final listening approval.
 
 ## Provider mapping
 

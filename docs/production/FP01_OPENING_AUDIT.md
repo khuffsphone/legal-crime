@@ -52,7 +52,8 @@ The first integration slice makes these changes without claiming the ten-minute 
 - The first grease instruction and bare `[G]` now target The Beat until its $10/week unlock is funded.
 - Tutorial voice tips are marked complete only when playback starts, retry after browser unlock, and reset with the run.
 - Turf loss uses crisis feedback; a successful defense receives the positive confirmation.
-- A runnable audio gate separately identifies 16 existing-catalog repair blockers: nine missing physical files and seven overlong event SFX.
+- The audio gate originally identified 16 catalog blockers. FP-01 now replaces 15 with deterministic
+  short physical candidates and retires the unused generic warning cue; the gate passes.
 - A provider-neutral schema and four-brief generation queue are ready to record Meshy AI, ElevenLabs, and Google jobs, rights evidence, file hashes, runtime mappings, and approval gates as production occurs. The Google briefs target the `Flow Music` product and Lyria model family, and the `Flow` product and Veo model family; their job, exact model/version, rights, and file fields remain intentionally null or unapproved until generation.
 
 ## One-shot verdict
@@ -63,7 +64,7 @@ The practical target is narrower and stronger: make the first shakedown, first p
 
 ## Remaining FP-01 blockers
 
-- Repair the 16 audio-catalog blockers, separate from the four starter generation briefs: replace seven malformed long event effects and deliver the nine missing physical clips.
+- Replace provisional generated audio with selected vendor masters only when listening UAT proves the upgrade.
 - Wire cadence- and distance-governed footsteps, fixed-route bank feedback, a body-down cue, and rival-warning audio.
 - Bind Sal and Vito's identities to the actual map units and expand the voice cast/variation contract.
 - Resolve the gross-versus-realized-income display and rebalance early extortion/deposit heat.
