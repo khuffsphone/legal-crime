@@ -67,7 +67,7 @@ describe('H3 wire-up — the single post-observe touch point', () => {
     const buildFrame = methodBody('buildAtmosphereFrame');
     expect(buildFrame).toMatch(/obs\.result\.extortion/);
     expect(buildFrame).toMatch(/obs\.result\.interceptions/);
-    expect(buildFrame).toMatch(/obs\.result\.combat\.length/);
+    expect(buildFrame).toMatch(/obs\.result\.combat\.filter\(.*isVisibleTile.*\)\.length/s);
     expect(buildFrame).toMatch(/this\.state\.log\.slice\(this\.atmoLogCursor\)/);
   });
 

@@ -70,6 +70,30 @@ export function combatEventKind(kind: 'hit' | 'down'): EventKind {
   return kind === 'down' ? 'unit.down' : 'combat.hit';
 }
 
+export interface CombatInfoIntent {
+  kind: EventKind;
+  message: string;
+  gx: number;
+  gy: number;
+}
+
+/** The single NO-X-RAY decision for combat information. Hidden rival-vs-rival combat must be
+ * observationally identical to empty fog across The Wire, minimap pings, edge alerts and [Q]. */
+export function combatInfoIntent(
+  ev: { kind: 'hit' | 'down'; faction: string; gx: number; gy: number },
+  playerFamilyId: string,
+  visible: boolean,
+): CombatInfoIntent | null {
+  if (!visible) return null;
+  const faction = ev.faction === playerFamilyId ? 'player' : 'rival';
+  return {
+    kind: combatEventKind(ev.kind),
+    message: ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`,
+    gx: ev.gx,
+    gy: ev.gy,
+  };
+}
+
 /** An embodied-extortion transition → its kind (or null for an intermediate transition that isn't logged). */
 export function extortionEventKind(ev: { converted: boolean; retook: boolean; failed: boolean }): EventKind | null {
   if (ev.converted) return ev.retook ? 'front.retaken' : 'front.converted';

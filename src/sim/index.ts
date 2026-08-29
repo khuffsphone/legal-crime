@@ -2,6 +2,7 @@
 // This module must never import Phaser or touch browser globals.
 
 export * from './types';
+export * from './crewIdentity';
 export * from './constants';
 export { Rng, mulberry32, seedToCursor } from './rng';
 export { createInitialState } from './state';

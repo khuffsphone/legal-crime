@@ -105,6 +105,23 @@ describe('fog-leak fix — SCENE WIRING (source-scan): every cursor channel funn
     expect(from('private combatCtx(', 200)).toContain('isVisible: (pos) => this.isVisibleTile(pos),');
   });
 
+  it('combat Wire feedback routes through combatInfoIntent with the canonical visibility predicate', () => {
+    const beat = from('private playCombatBeat(', 3500);
+    expect(beat).toContain('const revealed = this.isVisibleTile({ gx: ev.gx, gy: ev.gy });');
+    expect(beat).toContain('combatInfoIntent(ev, this.state.player.id, revealed)');
+    expect(beat).toContain('if (info) this.recordInfoEvent(info.kind, info.message, info.gx, info.gy);');
+    expect(beat).toContain("if (visible) this.cameraBeat('normalHit')");
+    expect(beat).toContain("if (visible) this.cameraBeat('kill')");
+    expect(beat).toContain('if (visible) this.playKill(c.x, c.y, faction)');
+  });
+
+  it('hidden combat cannot alter the adaptive score or instantiate a downed-body view', () => {
+    expect(sceneSrc).toContain('obs.result.combat.some((ev) => this.isVisibleTile({ gx: ev.gx, gy: ev.gy }))');
+    const bodies = from('private syncDownedBodies(', 1100);
+    expect(bodies).toContain('const shown = this.isVisibleTile({ gx: b.gx, gy: b.gy });');
+    expect(bodies).toContain('if (!img && !shown) continue;');
+  });
+
   it('hover tooltip picks through the unconditional gate', () => {
     expect(from('private hoverText(', 900)).toContain('pickVisibleUnit(hoverUnits, gpoint, (pos) => this.isVisibleTile(pos))');
   });
@@ -159,7 +176,7 @@ describe('fog-leak fix — FRONT-INFO surfaces: a fogged front names no rival ea
   });
 
   it('left-click building selection resolves the front through the fog-safe pick', () => {
-    expect(from('private commandSelect(', 2900)).toContain('this.visibleBusinessAt(p.worldX, p.worldY)');
+    expect(from('private commandSelect(', 4000)).toContain('this.visibleBusinessAt(p.worldX, p.worldY)');
   });
 
   it('right-click verb routing resolves the front through the fog-safe pick', () => {

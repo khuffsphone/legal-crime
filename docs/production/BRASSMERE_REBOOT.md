@@ -75,6 +75,10 @@ Every major action in that loop needs all six signals:
 5. visible state/economy consequence
 6. a new decision or threat within seconds
 
+## Presentation ruling
+
+FP-01 uses the hybrid pipeline in [HYBRID_ART_DECISION.md](./HYBRID_ART_DECISION.md): deterministic 3D-rendered character/hero-prop sprites over a procedural city, with procedural unit art retained as the mandatory fallback. This is the normal product direction, not an experimental URL-only lane.
+
 ## Milestone FP-01: The First Ten Minutes
 
 ### Required player sequence
@@ -118,7 +122,7 @@ Every major action in that loop needs all six signals:
 
 1. **Started:** add a single typed showcase feature profile and make it the normal launch.
 2. **Gate implemented; source work pending:** validate asset loading and repair missing/incorrect event audio.
-3. Replace placeholder confirmation VO with a coherent cast and naming contract.
+3. **Identity routing started:** Sal/Vito now own their map bodies, selection/order feedback and provisional shipped takes. Replace those generic takes with the final ElevenLabs cast pack.
 4. Tune one shakedown, one collector deposit and one street fight to final-quality timing.
 5. Run visual/audio browser UAT and fix the first ten minutes.
 6. Only then resume broader district, campaign and content expansion.

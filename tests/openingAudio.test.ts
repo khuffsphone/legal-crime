@@ -33,8 +33,14 @@ describe('FP-01 opening audio contract', () => {
   it('acknowledges successful opening move and shakedown orders before their world impacts', () => {
     const extort = iso.slice(iso.indexOf('private commandExtortBusiness('), iso.indexOf('private extortBusyThugIds('));
     const move = iso.slice(iso.indexOf('private commandMove('), iso.indexOf('// ── COMBAT PR A', iso.indexOf('private commandMove(')));
-    expect(extort).toContain('this.audio?.confirm();');
-    expect(move).toContain('if (res.moved.length > 0) this.audio?.confirm();');
+    expect(extort).toContain('this.confirmUnit(thug);');
+    expect(move).toContain('if (res.moved.length > 0) this.confirmUnitIds(res.moved);');
+  });
+
+  it('names a newly selected actor and gives selection VO lower priority than an order', () => {
+    const select = iso.slice(iso.indexOf('private commandSelect('), iso.indexOf('private commandContextual('));
+    expect(select).toContain("this.confirmUnit(hit, 'selection')");
+    expect(select).toContain('this.crewOrderLabel(this.selection.ids)');
   });
 
   it('keeps the opening tip behind unlock and schedules it after the command acknowledgement', () => {

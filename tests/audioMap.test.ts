@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   musicBedForPhase, stingForPhase, wireCueForSeverity, wireShouldRing, greaseCueKey,
   federalCueKey, combatCueKey, nextTakeIndex, pickTake, cycleVolume, clampVolume, orphanCueKey,
+  confirmationTakesForPersona,
   softSfxPriority, admitSoftSfx, softBurstActive,
   SOFT_SFX_MAX, SOFT_SFX_DEFAULT_PRIORITY, SOFT_BURST_WINDOW_MS, SOFT_BURST_THRESHOLD,
   type SoftVoice,
@@ -74,6 +75,12 @@ describe('VO take-rotation — no immediate repeat', () => {
     for (let i = 0; i < 4; i++) { const p = pickTake(takes, idx)!; seen.push(p.key); idx = p.index; }
     expect(seen).toEqual(['a', 'b', 'c', 'a']);
     expect(pickTake([], 0)).toBeNull();
+  });
+
+  it('routes Sal and Vito to distinct first barks while retaining a shared variation', () => {
+    expect(confirmationTakesForPersona('sal')).toEqual(['vo_confirm_1', 'vo_confirm_3']);
+    expect(confirmationTakesForPersona('vito')).toEqual(['vo_confirm_2', 'vo_confirm_3']);
+    expect(confirmationTakesForPersona('crew')).toEqual(['vo_confirm_1', 'vo_confirm_2', 'vo_confirm_3']);
   });
 });
 

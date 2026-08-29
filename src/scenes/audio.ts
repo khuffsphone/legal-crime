@@ -9,8 +9,9 @@
 
 import Phaser from 'phaser';
 import {
-  type AudioBus, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
+  type AudioBus, type ConfirmIntent, type ConfirmPersona, type MusicPhase, musicBedForPhase, stingForPhase, federalCueKey, greaseCueKey,
   combatCueKey, pickTake, conductBeds, orphanCueKey, holdBed, BED_MIN_INTERVAL_MS,
+  confirmationTakesForPersona,
   type SoftVoice, admitSoftSfx, SOFT_SFX_MAX, softBurstActive, SOFT_BURST_WINDOW_MS,
   SOFT_BURST_THRESHOLD,
 } from './audioMap';
@@ -127,6 +128,7 @@ export class AudioManager {
   private loaded = new Set<string>();
   private lastPlayed = new Map<string, number>();
   private urgentUntil = 0; // one urgent sound at a time
+  private activeUrgentVoices = new Set<Phaser.Sound.BaseSound>();
   // SOFT-SFX GOVERNOR — the non-urgent voices currently sounding (capped at SOFT_SFX_MAX; the lowest
   // priority is dropped/evicted, never stacked) + the recent soft-cue start times for burst detection.
   private activeSoftVoices: { voice: SoftVoice; snd: Phaser.Sound.BaseSound }[] = [];
@@ -134,6 +136,7 @@ export class AudioManager {
   // ONE VO AT A TIME — the VO currently speaking (was only caller-convention before). New VO drops while set.
   private voActive?: Phaser.Sound.BaseSound;
   private voUntil = 0;
+  private voActiveKind?: 'selection' | 'other';
   private musicSound?: Phaser.Sound.BaseSound;
   private ambienceSound?: Phaser.Sound.BaseSound;
   // RTS-31 — the conductor's live beds (≤1 after a crossfade settles) + the beds mid-fade-out, so a
@@ -145,6 +148,8 @@ export class AudioManager {
   private bedSinceMs = Number.NEGATIVE_INFINITY; // when the live bed CLIP last switched (the sink-level dwell)
   private currentPhase: MusicPhase = 'TITLE';
   private lastVoIndex = -1;
+  private lastConfirmIndex = new Map<ConfirmPersona, number>();
+  private destroyed = false;
 
   /** Register every clip for loading (call from a scene preload). Routed through the GUARDED, unit-tested
    * registerAudioPreload: a missing/404 clip is skipped quietly (and silent placeholder WAVs ship at the
@@ -251,7 +256,7 @@ export class AudioManager {
    * priority dropped, plus a duck under a burst), and ONE VO at a time. No-op if the clip isn't loaded. */
   play(key: string, opts: { volScale?: number } = {}): boolean {
     const def = DEFS.get(key);
-    if (this.scene.sound.locked || !def || !this.loaded.has(key) || this.busVolume(def.bus) <= 0) return false;
+    if (this.destroyed || this.scene.sound.locked || !def || !this.loaded.has(key) || this.busVolume(def.bus) <= 0) return false;
     const now = this.scene.time.now;
     const last = this.lastPlayed.get(key) ?? -1e9;
     if (now - last < SAME_CLIP_DEBOUNCE) return false; // debounce rapid repeats of the same clip
@@ -259,8 +264,13 @@ export class AudioManager {
     // ── URGENT GOVERNOR (unchanged) — one urgent sound at a time, ducks the beds ──
     if (def.urgent) {
       if (now < this.urgentUntil) return false;
-      const started = this.scene.sound.play(key, { volume: this.voiceVolume(def, opts) });
-      if (!started) return false;
+      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+      if (!snd.play()) { snd.destroy(); return false; }
+      this.activeUrgentVoices.add(snd);
+      snd.once('complete', () => {
+        this.activeUrgentVoices.delete(snd);
+        snd.destroy();
+      });
       this.urgentUntil = now + URGENT_DEBOUNCE;
       this.duck(700);
       this.lastPlayed.set(key, now);
@@ -275,8 +285,9 @@ export class AudioManager {
       this.lastPlayed.set(key, now);
       this.duck(900); // VO speaks over a ducked bed — duck only once the gate admits it
       this.voActive = snd;
+      this.voActiveKind = 'other';
       this.voUntil = now + VO_MAX_MS; // failsafe so a missed 'complete' can't wedge the gate forever
-      snd.once('complete', () => { if (this.voActive === snd) { this.voActive = undefined; this.voUntil = 0; } });
+      snd.once('complete', () => { if (this.voActive === snd) { this.voActive = undefined; this.voActiveKind = undefined; this.voUntil = 0; } });
       return true;
     }
 
@@ -342,12 +353,33 @@ export class AudioManager {
   // distinct from the bank's coin so SEND and ARRIVE don't sound alike).
   dispatch(): void { this.play('door'); }
   wire(cue: 'crisis' | 'routine'): void { this.play(cue === 'crisis' ? 'wire_crisis' : 'wire_routine'); }
-  confirm(): void { this.vo(['vo_confirm_1', 'vo_confirm_2', 'vo_confirm_3']); }
+  /** Crew-order bark with a separate rotation cursor per persona take set. A Sal-routed take cannot
+   * advance Vito's set (or vice versa); final character-specific VO remains a media-production gate. */
+  confirm(persona: ConfirmPersona = 'crew', intent: ConfirmIntent = 'order'): void {
+    // Selection is low priority. A real order may cut a still-playing selection bark so immediate input
+    // always receives feedback; tips and other VO remain non-interruptible under the one-VO rule.
+    if (intent === 'order' && this.voActiveKind === 'selection' && this.voActive) {
+      this.scene.tweens.killTweensOf(this.voActive);
+      this.voActive.stop();
+      this.voActive.destroy();
+      this.voActive = undefined;
+      this.voActiveKind = undefined;
+      this.voUntil = 0;
+    }
+    const takes = confirmationTakesForPersona(persona).filter((key) => this.loaded.has(key));
+    const pick = pickTake(takes, this.lastConfirmIndex.get(persona) ?? -1);
+    if (!pick) return;
+    if (this.play(pick.key)) {
+      this.lastConfirmIndex.set(persona, pick.index);
+      this.voActiveKind = intent === 'selection' ? 'selection' : 'other';
+    }
+  }
   tip(which: 'extort' | 'grease' | 'launder' | 'war'): boolean { return this.vo([`vo_tip_${which}`]); }
 
   // ── adaptive MUSIC state machine ──
   /** Start the looping ambience + the current phase bed (call once audio is unlocked). */
   startBeds(): void {
+    if (this.destroyed) return;
     if (!this.ambienceSound && this.loaded.has('ambience_city')) {
       this.ambienceSound = this.scene.sound.add('ambience_city', { loop: true, volume: this.bedVol('ambience', 'ambience_city') });
       this.ambienceSound.play();
@@ -359,6 +391,7 @@ export class AudioManager {
    * EVERY non-target bed (RTS-31), and HARD-CUTS any bed still fading from a prior change — so rapid
    * skip-week phase flips can never stack orphan beds (the old bug played 3 beds at once). */
   setPhase(phase: MusicPhase, force = false): void {
+    if (this.destroyed) return;
     const bed = musicBedForPhase(phase);
     // SINK-LEVEL DWELL — hold the current bed unless this is a different clip AND (forced, or the min
     // interval has elapsed). This is what makes transitions RARE even when the caller's requested phase
@@ -426,11 +459,13 @@ export class AudioManager {
   // no-op all apply (a not-yet-shipped .wav is silent, never an error), exactly like play(). Stereo-flat:
   // the manager has no positional audio, so the adapter drops the intents' pan/tile before calling in.
   private atmoVoices = new Map<string, { snd: Phaser.Sound.BaseSound; key: string }>();
+  private retiringAtmoVoices: Phaser.Sound.BaseSound[] = [];
 
   /** Start (or re-point) a looping atmosphere voice under a stable voiceId, fading in. No-op on an
    * unloaded/unknown key (F2 graceful degradation). Re-pointing a live voiceId to the same key just
    * re-trims; to a new key retires the old loop first, so a voiceId never stacks two loops. */
   loopVoice(voiceId: string, key: string, opts: { volScale?: number; fadeInMs?: number } = {}): void {
+    if (this.destroyed) return;
     const def = DEFS.get(key);
     if (!def || !this.loaded.has(key)) return; // unknown/unloaded → silent no-op (matches play())
     const existing = this.atmoVoices.get(voiceId);
@@ -459,8 +494,53 @@ export class AudioManager {
     this.atmoVoices.delete(voiceId);
     const snd = v.snd;
     this.scene.tweens.killTweensOf(snd);
-    if (fadeOutMs > 0) this.scene.tweens.add({ targets: snd, volume: 0, duration: fadeOutMs, onComplete: () => snd.stop() });
-    else snd.stop();
+    if (fadeOutMs > 0) {
+      this.retiringAtmoVoices.push(snd);
+      this.scene.tweens.add({
+        targets: snd, volume: 0, duration: fadeOutMs,
+        onComplete: () => {
+          snd.stop();
+          snd.destroy();
+          this.retiringAtmoVoices = this.retiringAtmoVoices.filter((voice) => voice !== snd);
+        },
+      });
+    } else {
+      snd.stop();
+      snd.destroy();
+    }
+  }
+
+  /** Scene-lifecycle teardown. Phaser's sound manager is game-global, so a scene restart must stop and
+   * destroy every sound instance this manager owns or the old score/ambience can survive under the new one. */
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    const sounds = new Set<Phaser.Sound.BaseSound>();
+    if (this.musicSound) sounds.add(this.musicSound);
+    if (this.ambienceSound) sounds.add(this.ambienceSound);
+    if (this.voActive) sounds.add(this.voActive);
+    for (const sound of this.activeUrgentVoices) sounds.add(sound);
+    for (const bed of this.liveBeds) sounds.add(bed.snd);
+    for (const sound of this.retiringBeds) sounds.add(sound);
+    for (const voice of this.activeSoftVoices) sounds.add(voice.snd);
+    for (const voice of this.atmoVoices.values()) sounds.add(voice.snd);
+    for (const sound of this.retiringAtmoVoices) sounds.add(sound);
+    for (const sound of sounds) {
+      this.scene.tweens.killTweensOf(sound);
+      sound.stop();
+      sound.destroy();
+    }
+    this.liveBeds = [];
+    this.retiringBeds = [];
+    this.activeUrgentVoices.clear();
+    this.activeSoftVoices = [];
+    this.atmoVoices.clear();
+    this.retiringAtmoVoices = [];
+    this.musicSound = undefined;
+    this.ambienceSound = undefined;
+    this.voActive = undefined;
+    this.voActiveKind = undefined;
+    this.voUntil = 0;
   }
 
   /** A clip is available to play (loaded). */

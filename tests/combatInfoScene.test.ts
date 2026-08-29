@@ -1,0 +1,166 @@
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { initLog, latestUnreadPositional } from '../src/scenes/info/logStore';
+import { createInitialState, spawnUnit, type CombatEvent } from '../src/sim';
+
+// Import the real scene without booting Phaser. Object.create avoids scene field initializers; the harness
+// supplies only the dependencies playCombatBeat/recordInfoEvent touch for an off-screen combat event.
+vi.mock('phaser', () => ({ default: { Scene: class Scene {} } }));
+
+let IsoSceneClass: new (...args: never[]) => object;
+
+beforeAll(async () => {
+  ({ IsoScene: IsoSceneClass } = await import('../src/scenes/IsoScene'));
+});
+
+function harness(opts?: { revealed?: boolean; debugRevealAll?: boolean }) {
+  const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+  Object.assign(scene, {
+    state: { player: { id: 'player', gangsters: [] }, units: [] },
+    fog: new Set(opts?.revealed ? ['5,6'] : []),
+    debugRevealAll: opts?.debugRevealAll ?? false,
+    time: { now: 1000 },
+    wireLog: initLog(),
+    alerts: [],
+    pings: [],
+    units: [],
+    onScreen: () => false,
+    cameraBeat: vi.fn(),
+    triggerHitReact: vi.fn(),
+    playKill: vi.fn(),
+    removeUnitById: vi.fn(),
+    setStatus: vi.fn(),
+  });
+  return scene;
+}
+
+function event(kind: 'hit' | 'down'): CombatEvent {
+  return { kind, attackerId: 'rival-a-1', unitId: 'rival-b-1', faction: 'rival-b', gx: 5, gy: 6 };
+}
+
+describe('IsoScene combat information — behavioral NO-X-RAY guard', () => {
+  it.each(['hit', 'down'] as const)('keeps a hidden rival %s byte-identical to empty fog', (kind) => {
+    const scene = harness();
+    const before = JSON.stringify({ log: scene.wireLog, alerts: scene.alerts, pings: scene.pings });
+    scene.playCombatBeat(event(kind));
+
+    expect(JSON.stringify({ log: scene.wireLog, alerts: scene.alerts, pings: scene.pings })).toBe(before);
+    expect(latestUnreadPositional(scene.wireLog)).toBeUndefined();
+    expect(scene.cameraBeat).not.toHaveBeenCalled();
+    expect(scene.playKill).not.toHaveBeenCalled();
+    expect(scene.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('records a revealed off-screen hit in The Wire without an alert or ping', () => {
+    const scene = harness({ revealed: true });
+    scene.playCombatBeat(event('hit'));
+
+    expect(scene.wireLog.entries[0]).toMatchObject({ kind: 'combat.hit', gx: 5, gy: 6 });
+    expect(scene.alerts).toEqual([]);
+    expect(scene.pings).toEqual([]);
+    expect(scene.cameraBeat).not.toHaveBeenCalled();
+  });
+
+  it('records a revealed off-screen down and raises its alert and ping', () => {
+    const scene = harness({ revealed: true });
+    scene.playCombatBeat(event('down'));
+
+    expect(scene.wireLog.entries[0]).toMatchObject({ kind: 'unit.down', gx: 5, gy: 6 });
+    expect(scene.alerts[0]).toMatchObject({ gx: 5, gy: 6, tier: 'warning' });
+    expect(scene.pings[0]).toMatchObject({ gx: 5, gy: 6, tier: 'warning' });
+    expect(latestUnreadPositional(scene.wireLog)).toMatchObject({ gx: 5, gy: 6 });
+    expect(scene.cameraBeat).not.toHaveBeenCalled();
+    expect(scene.playKill).not.toHaveBeenCalled();
+  });
+
+  it('honors debugRevealAll through the canonical scene predicate', () => {
+    const scene = harness({ debugRevealAll: true });
+    scene.playCombatBeat(event('down'));
+    expect(scene.wireLog.entries[0]).toMatchObject({ kind: 'unit.down', gx: 5, gy: 6 });
+  });
+
+  it('removes a named player casualty from the strategic roster on a field down', () => {
+    const scene = harness({ revealed: true });
+    const sal = spawnUnit('muscle-1', 5, 6);
+    sal.factionId = 'player';
+    sal.gangsterId = 'player-g-0';
+    scene.state.player.gangsters = [{
+      id: 'player-g-0', name: 'Sal', skill: 3, loyalty: 70, upkeep: 100,
+      assignment: { type: 'idle' },
+    }];
+    scene.state.units = [sal];
+    scene.units = [{ unit: sal, faction: 'player' }];
+
+    scene.playCombatBeat({ ...event('down'), unitId: sal.id, faction: 'player' });
+    expect(scene.state.player.gangsters).toEqual([]);
+    expect(scene.setStatus).toHaveBeenCalledWith('Sal went DOWN — pull back or reinforce');
+  });
+
+  it('does not instantiate a persistent body view for a hidden downed rival', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    const addImage = vi.fn();
+    Object.assign(scene, {
+      state: {
+        player: { id: 'player', gangsters: [] },
+        downedBodies: [{ id: 'hidden-body', factionId: 'rival-a', gx: 55, gy: 56, ageSec: 0 }],
+      },
+      fog: new Set(),
+      debugRevealAll: false,
+      downedBodyViews: new Map(),
+      add: { image: addImage },
+    });
+
+    scene.syncDownedBodies();
+    expect(addImage).not.toHaveBeenCalled();
+    expect(scene.downedBodyViews.size).toBe(0);
+  });
+
+  it('counts only revealed combat in the atmosphere side-chain', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    Object.assign(scene, {
+      state: { player: { id: 'player' }, log: [] },
+      fog: new Set(['5,6']),
+      debugRevealAll: false,
+      time: { now: 1000 },
+      cameras: { main: { worldView: { x: 0, y: 0, width: 800, height: 600 }, zoom: 0.6 } },
+      atmoLogCursor: 0,
+      atmosphereDistrictAt: () => null,
+      isAudioFeedbackEligible: () => true,
+      layout: {},
+      atmoEmitterSources: [],
+    });
+    const visible = event('hit');
+    const hidden = { ...event('hit'), gx: 50, gy: 60 };
+    const frame = scene.buildAtmosphereFrame({
+      result: { combat: [visible, hidden], extortion: [], interceptions: [] },
+    }, []);
+
+    expect(frame.observation.combatEventCount).toBe(1);
+  });
+});
+
+describe('IsoScene save restoration — serialized bodies are authoritative', () => {
+  it('does not resurrect Sal/Vito when a valid restored save has no live map units', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    const state = createInitialState(1, { startingCrew: true });
+    Object.assign(scene, { restoredFromSave: true, state, units: [], attachView: vi.fn() });
+
+    scene.spawnUnits();
+    expect(state.units).toEqual([]);
+    expect(scene.attachView).not.toHaveBeenCalled();
+  });
+
+  it('attaches saved units without appending fresh starting bodies', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    const state = createInitialState(1, { startingCrew: true });
+    const saved = spawnUnit('muscle-2', 2, 1);
+    saved.factionId = state.player.id;
+    state.units.push(saved);
+    Object.assign(scene, { restoredFromSave: true, state, units: [], attachView: vi.fn() });
+
+    scene.spawnUnits();
+    expect(state.units).toEqual([saved]);
+    expect(saved.gangsterId).toBe('player-g-1');
+    expect(scene.attachView).toHaveBeenCalledOnce();
+    expect(scene.attachView).toHaveBeenCalledWith(saved, 'player');
+  });
+});

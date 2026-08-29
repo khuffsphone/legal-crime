@@ -4,6 +4,16 @@
 
 export type MusicPhase = 'TITLE' | 'ESTABLISH' | 'FIRST BLOOD' | 'CONTEST' | 'DECAPITATE' | 'GAMEOVER';
 export type AudioBus = 'sfx' | 'vo' | 'music' | 'ambience';
+export type ConfirmPersona = 'sal' | 'vito' | 'crew';
+export type ConfirmIntent = 'selection' | 'order';
+
+/** Provisional identity routing over the three shipped generic confirmation takes. Sal and Vito start
+ * on different clips, but this is variation routing—not a substitute for their final cast VO packs. */
+export function confirmationTakesForPersona(persona: ConfirmPersona): string[] {
+  if (persona === 'sal') return ['vo_confirm_1', 'vo_confirm_3'];
+  if (persona === 'vito') return ['vo_confirm_2', 'vo_confirm_3'];
+  return ['vo_confirm_1', 'vo_confirm_2', 'vo_confirm_3'];
+}
 
 /** The looping MUSIC BED for a match phase (the adaptive state-machine target). FIRST BLOOD and
  * CONTEST share the conflict bed; DECAPITATE is the war bed; TITLE/GAMEOVER their own. */
