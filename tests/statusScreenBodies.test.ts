@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInitialState } from '../src/sim/state';
+import { effectiveDecay, raidChance } from '../src/sim/law';
 import type { GameState, Business, BeatCop, IncidentRecord } from '../src/sim';
 import { fullyVisible, sealed } from '../src/scenes/ui/statusVisibility';
 import { buildScreenView } from '../src/scenes/ui/statusScreenBodies';
@@ -140,6 +141,18 @@ describe('status bodies — SAFE screens stay readable under `sealed` (no over-g
     const v = json(build('federalLadder', state, sealed));
     expect(v).toContain('Federal exposure');
     expect(v).toMatch(/CLEAR|NOTICE|WATCH|RAID/);
+  });
+
+  it('Heat / Beat uses The Beat for raid odds and City Hall for cooling, not the total retainer', () => {
+    const { state } = fixture();
+    state.player.heat = 80;
+    state.player.bribes = { police: 10, judges: 50, politicians: 40, feds: 30 };
+    state.player.bribeLevel = 130;
+    const rows = build('heatBeatMeter', state, sealed).sections.flatMap((section) => section.rows);
+    const raid = rows.find((row) => 'label' in row && row.label === 'Raid risk');
+    const decay = rows.find((row) => 'label' in row && row.label === 'Weekly decay');
+    expect(raid && 'value' in raid ? raid.value : null).toBe(`${Math.round(raidChance(80, 10) * 100)}%`);
+    expect(decay && 'value' in decay ? decay.value : null).toBe(`−${Math.round(effectiveDecay(40))}`);
   });
 
   it('thugRoster lists own crew (unit rows) under sealed', () => {

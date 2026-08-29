@@ -20,8 +20,8 @@ replace a file at the same runtime path after its own provenance and rights revi
 | `public/audio/sfx_hit_rifle.wav` | 0.300s | 57644 | `bcf3499133394524ff42d31f0f38ed0419a7e8489a3a6bf7fb9f22c55cd3f6ca` |
 | `public/audio/sfx_hit_hitman.wav` | 0.110s | 21164 | `6c8490ada5da9b62eda5a98f6a7edd953318ee6c6f4e096b41241f17cc69c760` |
 | `public/audio/sfx_hit_demolitions.wav` | 0.660s | 126764 | `514c9d09a60046b6fb58a5c3d145267bf7ac3748afa11b1233557b03602410c2` |
-| `public/audio/sfx_step_pavement.wav` | 0.100s | 19244 | `160e5eae2052a667d8dbadced7d59e382aac9eb15bacca06b2df20aada0ca807` |
-| `public/audio/sfx_step_gravel.wav` | 0.130s | 25004 | `c6ae9efc410f0c6c641d7a0c8ec9e4f395bd7cbc75377550b07b78f7f0c11608` |
+| `public/audio/sfx_step_pavement.wav` | 0.250s | 48044 | `58ed3ab82bf1829f03be837bcc7d86b05315668664a420bbf13e75865317fa5b` |
+| `public/audio/sfx_step_gravel.wav` | 0.280s | 53804 | `82b7a8184decfe177d92aa1b6aaf0788a7ecf5db114a2e82fd3516cf43ec5c6d` |
 | `public/audio/sfx_down_body.wav` | 0.520s | 99884 | `30ac57f0ced46553aa8439eb1c93ee795d2e37e05793d53518bef369ccc11370` |
 
 The seven superseded 29–145 second tracks are quarantined under

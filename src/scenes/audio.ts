@@ -55,8 +55,8 @@ const LIBRARY: ClipDef[] = [
   // synth fallback + file-wins rule as the hits. wood + interior are RESERVED (spec §8.2) — no confirmed wood
   // TileKind / interior traversal system yet, so they STAY registered as synth-only (file:'') and ship NO WAV;
   // do NOT force-map them until a real traversal context exists. ──
-  { key: 'sfx_step_pavement', file: 'sfx_step_pavement.wav', bus: 'sfx', vol: 0.4 },
-  { key: 'sfx_step_gravel', file: 'sfx_step_gravel.wav', bus: 'sfx', vol: 0.4 },
+  { key: 'sfx_step_pavement', file: 'sfx_step_pavement.wav', bus: 'sfx', vol: 0.35 },
+  { key: 'sfx_step_gravel', file: 'sfx_step_gravel.wav', bus: 'sfx', vol: 0.35 },
   { key: 'sfx_step_wood', file: '', bus: 'sfx', vol: 0.4, synth: true }, // RESERVED §8.2 — no wood surface yet
   { key: 'sfx_step_interior', file: '', bus: 'sfx', vol: 0.35, synth: true }, // RESERVED §8.2 — no interior yet
   // ── downed-body SETTLE (spec §8.1/§11 · Ticket 1 · NEW key). Body/coat weight + cobble/floor contact when a
@@ -120,6 +120,7 @@ const VO_MAX_MS = 8000; // exceeds the longest shipped tip while still preventin
 const SETTINGS_KEY = 'lcr.audio.settings.v1';
 
 export interface AudioSettings { master: number; sfx: number; vo: number; music: number; ambience: number; muted: boolean; }
+export interface OneShotOptions { volScale?: number; rate?: number; }
 const DEFAULT_SETTINGS: AudioSettings = { master: 0.8, sfx: 1, vo: 1, music: 0.8, ambience: 0.7, muted: false };
 
 export class AudioManager {
@@ -254,7 +255,7 @@ export class AudioManager {
   /** Play a one-shot clip on its bus, honouring mute/volume, a per-clip debounce, and the per-bus
    * governors: ONE urgent at a time (ducks the beds), a concurrency CAP on non-urgent sfx (lowest
    * priority dropped, plus a duck under a burst), and ONE VO at a time. No-op if the clip isn't loaded. */
-  play(key: string, opts: { volScale?: number } = {}): boolean {
+  play(key: string, opts: OneShotOptions = {}): boolean {
     const def = DEFS.get(key);
     if (this.destroyed || this.scene.sound.locked || !def || !this.loaded.has(key) || this.busVolume(def.bus) <= 0) return false;
     const now = this.scene.time.now;
@@ -264,7 +265,7 @@ export class AudioManager {
     // ── URGENT GOVERNOR (unchanged) — one urgent sound at a time, ducks the beds ──
     if (def.urgent) {
       if (now < this.urgentUntil) return false;
-      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts), rate: opts.rate ?? 1 });
       if (!snd.play()) { snd.destroy(); return false; }
       this.activeUrgentVoices.add(snd);
       snd.once('complete', () => {
@@ -280,7 +281,7 @@ export class AudioManager {
     // ── ONE VO AT A TIME — drop a new VO while one is still speaking (was caller-convention only) ──
     if (def.bus === 'vo') {
       if ((this.voActive && this.voActive.isPlaying) || now < this.voUntil) return false;
-      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+      const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts), rate: opts.rate ?? 1 });
       if (!snd.play()) { snd.destroy(); return false; }
       this.lastPlayed.set(key, now);
       this.duck(900); // VO speaks over a ducked bed — duck only once the gate admits it
@@ -295,7 +296,7 @@ export class AudioManager {
     this.pruneSoftVoices();
     const admission = admitSoftSfx(this.activeSoftVoices.map((v) => v.voice), key, SOFT_SFX_MAX);
     if (!admission.admit) return false; // at the cap and outranked → drop rather than stack
-    const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts) });
+    const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts), rate: opts.rate ?? 1 });
     if (!snd.play()) { snd.destroy(); return false; }
     if (admission.evict) {
       const victim = this.activeSoftVoices.find((v) => v.voice === admission.evict);

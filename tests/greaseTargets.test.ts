@@ -4,7 +4,7 @@
 // reduces the relevant pressure (via the existing pure sim helpers); that grease hits only the chosen channel;
 // and that the targeting carries no positional / rival info (no NO-X-RAY leak).
 import { describe, it, expect } from 'vitest';
-import { hottestChannel, channelPressures, type GreasePressure } from '../src/scenes/greaseTargets';
+import { greaseEffectReceipt, hottestChannel, channelPressures, type GreasePressure } from '../src/scenes/greaseTargets';
 import { BRIBE_CHANNELS, bustAvoidChance } from '../src/sim/bribery';
 import { raidChance, effectiveDecay } from '../src/sim/law';
 import { federalExposure } from '../src/sim/federal';
@@ -61,5 +61,20 @@ describe('no NO-X-RAY leak — targeting is abstract (no positional / rival info
     expect(keys).toEqual([...BRIBE_CHANNELS].sort());
     // GreasePressure carries no unit/fog/rival fields — grease can reveal nothing about hidden rivals.
     expect(Object.keys(calm).sort()).toEqual(['bustArmed', 'federalExposure', 'heat', 'raidRisk']);
+  });
+});
+
+describe('grease receipts keep the four effects truthful', () => {
+  const context = { heat: 80, exposureBefore: 90, exposureAfter: 85 };
+
+  it('says The Beat lowers raid odds without promising a Heat/Exposure drop', () => {
+    const read = greaseEffectReceipt('police', 0, 10, context);
+    expect(read).toMatch(/raid odds/i);
+    expect(read).toMatch(/Heat\/Exposure unchanged/i);
+  });
+
+  it('names future cooling for City Hall and immediate exposure relief for The Bureau', () => {
+    expect(greaseEffectReceipt('politicians', 0, 10, context)).toMatch(/weekly Heat cooling.*future settlements/i);
+    expect(greaseEffectReceipt('feds', 0, 10, context)).toMatch(/Exposure 90 → 85/i);
   });
 });

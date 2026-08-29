@@ -68,6 +68,24 @@ describe('three win paths — distinct, labeled progress', () => {
     expect(s.status).toBe('won');
   });
 
+  it('does not award Mayor at 99.5 influence or GO STRAIGHT just below its exact target', () => {
+    const mayor = big();
+    mayor.player.cash = 100;
+    mayor.player.dirtyCash = 0;
+    mayor.player.bribes.politicians = MAYOR_CITYHALL_REQ;
+    mayor.player.influence = MAYOR_INFLUENCE_REQ - 0.5;
+    expect(mayorProgress(mayor).pct).toBe(99);
+    expect(metWinPath(mayor)).toBeNull();
+    expect(evaluateEndgame(mayor)).toBeNull();
+
+    const straight = big();
+    straight.player.cash = GO_STRAIGHT_TARGET - 0.1;
+    straight.player.dirtyCash = 0;
+    expect(goStraightProgress(straight).pct).toBe(99);
+    expect(metWinPath(straight)).toBeNull();
+    expect(evaluateEndgame(straight)).toBeNull();
+  });
+
   it('DOMINATION still resolves the canon force win', () => {
     const s = big();
     for (let i = 0; i < 6; i++) hold(s, `district-${i}`, 'player', 60); // 6/9 ≥ 60%
@@ -81,6 +99,16 @@ describe('three win paths — distinct, labeled progress', () => {
     const before = influenceOf(s);
     advanceCivics(s);
     expect(influenceOf(s)).toBeGreaterThan(before);
+  });
+
+  it('City Hall payments above the advertised $40 gate cannot turbo-charge influence', () => {
+    const atGate = big(17);
+    const overpaid = big(17);
+    atGate.player.bribes.politicians = MAYOR_CITYHALL_REQ;
+    overpaid.player.bribes.politicians = 400;
+    advanceCivics(atGate);
+    advanceCivics(overpaid);
+    expect(influenceOf(overpaid)).toBe(influenceOf(atGate));
   });
 });
 

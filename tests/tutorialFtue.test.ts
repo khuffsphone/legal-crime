@@ -14,7 +14,7 @@ import type { GameState } from '../src/sim/types';
 
 /** A state earning at the home front (income established) with optional pending takings. */
 function earning(uncollected = 0): GameState {
-  const s = createInitialState(1);
+  const s = createInitialState(1, { tutorialFreeRuns: 1 });
   const front = s.districts[0].businesses[0];
   front.extortedBy = 'player';
   front.uncollected = uncollected;
@@ -39,14 +39,22 @@ describe('tutorialCard — the four-beat core-loop spine', () => {
     expect(card!.index).toBe(2);
     expect(card!.targetBusinessId).toBeNull();
     expect(card!.action).toMatch(/\[C\]/);
+    expect(card!.body).toMatch(/normally.*automatically/i);
+    expect(card!.body).toMatch(/protected FIRST take/i);
+    expect(card!.body).toMatch(/\[C\].*optional/i);
   });
 
   it('a collector carrying cash flips the card to PROTECT (step 3)', () => {
     const s = earning();
-    s.units.push(spawnCollector('c', 5, 5, 'player', 300));
+    const runner = spawnCollector('c', 5, 5, 'player', 300);
+    runner.protectedRun = true;
+    s.tutorialFreeRuns = 0; // [C] spent the one-time gate when this protected runner departed
+    s.units.push(runner);
     const card = tutorialCard(s);
     expect(card!.step).toBe('protect');
     expect(card!.index).toBe(3);
+    expect(card!.body).toMatch(/protected and cannot be robbed/i);
+    expect(card!.body).toMatch(/Later automatic collectors/i);
   });
 
   it('earning with nothing pending teaches the final loop beat GROW (step 4)', () => {
@@ -54,6 +62,8 @@ describe('tutorialCard — the four-beat core-loop spine', () => {
     expect(card!.step).toBe('grow');
     expect(card!.index).toBe(4);
     expect(card!.action).toMatch(/\[G\]/);
+    expect(card!.body).toMatch(/Beat.*raid odds/i);
+    expect(card!.body).toMatch(/does not lower raw Heat or Federal Exposure/i);
   });
 
   it('every card carries a one-line teach and a concrete action', () => {
@@ -66,6 +76,22 @@ describe('tutorialCard — the four-beat core-loop spine', () => {
       expect(card.action.length).toBeGreaterThan(0);
       expect(TUTORIAL_STEPS).toContain(card.step);
     }
+  });
+
+  it('never regresses to COLLECT after the protected lesson when automatic takings accrue later', () => {
+    const s = earning(200);
+    s.tutorialFreeRuns = 0;
+    const card = tutorialCard(s)!;
+    expect(card.step).toBe('grow');
+    expect(card.index).toBe(4);
+  });
+
+  it('stays retired after G even when later automatic takings are waiting', () => {
+    const s = earning(200);
+    s.tutorialFreeRuns = 0;
+    s.player.bribes.police = 10;
+    expect(tutorialCard(s)).toBeNull();
+    expect(tutorialComplete(s)).toBe(true);
   });
 });
 
@@ -101,7 +127,10 @@ describe('tutorialCard — the index is monotonic across the loop', () => {
     const extort = tutorialCard(createInitialState(1))!;
     const collect = tutorialCard(earning(200))!;
     const protectState = earning();
-    protectState.units.push(spawnCollector('c', 5, 5, 'player', 300));
+    const runner = spawnCollector('c', 5, 5, 'player', 300);
+    runner.protectedRun = true;
+    protectState.tutorialFreeRuns = 0;
+    protectState.units.push(runner);
     const protect = tutorialCard(protectState)!;
     const grow = tutorialCard(earning())!;
     expect([extort.index, collect.index, protect.index, grow.index]).toEqual([1, 2, 3, 4]);

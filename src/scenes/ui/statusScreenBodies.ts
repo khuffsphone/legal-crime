@@ -183,8 +183,8 @@ export function buildHeatBeatMeter(state: GameState, vis: StatusVisibility): Scr
     sections: [
       { heading: 'STREET HEAT', rows: [
         { kind: 'meter', label: 'Heat', value: p.heat, max: HEAT_MAX, tone: 'blood' },
-        { kind: 'value', label: 'Raid risk', value: pct(raidChance(p.heat, p.bribeLevel)), tone: 'blood' },
-        { kind: 'value', label: 'Weekly decay', value: `−${Math.round(effectiveDecay(p.bribeLevel))}`, tone: 'neutral' },
+        { kind: 'value', label: 'Raid risk', value: pct(raidChance(p.heat, p.bribes.police)), tone: 'blood' },
+        { kind: 'value', label: 'Weekly decay', value: `−${Math.round(effectiveDecay(p.bribes.politicians))}`, tone: 'neutral' },
       ] },
       { heading: 'SOURCES (itemizable)', rows: [
         { kind: 'source', label: 'Illegal operations', contribution: `+${Math.round(opHeat)}/tick`, tone: 'blood' },

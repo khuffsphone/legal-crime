@@ -60,8 +60,8 @@ runtime synth fallback if a physical file fails to load. `sfx_down_body` is phys
 - sfx_hit_rifle.wav        — tommy hit (0.22–0.40s, 4–6 taps)           · synth fallback
 - sfx_hit_hitman.wav       — hitman hit (0.08–0.18s, dry muted snap)    · synth fallback
 - sfx_hit_demolitions.wav  — demo hit (0.55–0.95s, satchel boom+tail)   · synth fallback
-- sfx_step_pavement.wav    — pavement footstep (0.055–0.10s)            · synth fallback
-- sfx_step_gravel.wav      — gravel footstep (0.07–0.13s)               · synth fallback
+- sfx_step_pavement.wav    — dark heel/toe pavement step (~0.25s)       · synth fallback
+- sfx_step_gravel.wav      — low boot + gravel crunch (~0.29s)          · synth fallback
 - sfx_down_body.wav        — downed-body settle (0.30–0.65s)            · NO synth → silent if missing
 
 RESERVED (spec §8.2 — registered, NO file, NO forced surface map until a real context exists):

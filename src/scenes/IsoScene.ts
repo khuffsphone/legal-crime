@@ -283,7 +283,7 @@ import {
 } from './saveStore';
 // Lane G — the menu/settings shell.
 import { loadSettings, clampUiScale, type Settings } from './settings';
-import { resolveKeybinds, normalizeKey, type KeyAction } from './keybinds';
+import { resolveKeybinds, normalizeKey, isFreshKeydown, type KeyAction } from './keybinds';
 import { SettingsPanel } from './settingsPanel';
 import { fitOverlayPanel } from './overlayLayout';
 import { PauseOverlay } from './pauseOverlay';
@@ -341,9 +341,12 @@ import {
 import {
   advanceGaitPhase, poseFor, locoTarget, easeLoco, rigLOD, WALK_STRIDE, RUN_STRIDE, computeIntimidateLean, FIGURE_PX, type RigPose,
 } from './gait';
-import { advanceFootstepCadence, footstepKeyForTile } from './footstepFeedback';
+import {
+  advanceFootstepCadence, footstepKeyForTile, footstepPlayback,
+  RUN_FOOTFALL_TILES, WALK_FOOTFALL_TILES,
+} from './footstepFeedback';
 import { drawThugRig, drawRigDebug, PLAYER_RIG, RIVAL_RIG } from './rigDraw';
-import { hottestChannel, type GreasePressure } from './greaseTargets';
+import { greaseEffectReceipt, hottestChannel, type GreasePressure } from './greaseTargets';
 import { drawThugFig2 } from './figureDraw2';
 import { figurePlan, parseFigScale, FIG2_REFERENCE_PX } from './figureStyle';
 // ?sprites — the OPT-IN 3D-rendered iso sprite-sheet view for the thug (procedural figure stays the
@@ -500,8 +503,10 @@ interface UnitView {
   rigText?: Phaser.GameObjects.Text;       // ?debugRig=1 phase + state readout
   gaitPhase?: number; // 0..1 — DISTANCE-driven gait clock (the anti-skate keystone)
   loco?: number;      // 0 idle → 1 walk → 2 run, eased for cross-fades
-  lastSX?: number; lastSY?: number; // last world screen-pos, to measure per-frame ground distance
-  footstepTravelPx?: number; // distance remainder to the next cadence-locked shoe contact
+  lastSX?: number; lastSY?: number; // last world screen-pos, retained for gait/visual travel
+  footstepLastGX?: number; footstepLastGY?: number; // grid anchor keeps iso direction out of cadence
+  footstepTravelTiles?: number; // grid-distance remainder to the next shoe contact
+  footstepIndex?: number; // deterministic playback variation cursor
 }
 
 /** RTS-32 — which units get the procedural rig: a plain button-man (thug) of either faction. Weapon
@@ -1260,14 +1265,16 @@ export class IsoScene extends Phaser.Scene {
   }
 
   /** SKIP — retire the coach card for the rest of the session (the [Esc] / world-click affordance). The
-   * ongoing objective banner resumes immediately, so an experienced player loses the hand-holding, not the
-   * guidance. Pure UI: nothing is written to the sim. */
+   * ongoing objective banner resumes immediately, and the one-time collection lesson gate is released so
+   * the fixed collector behaves normally for an experienced player. */
   private skipTutorial(): void {
     if (this.tutorialProgress.skipped || !this.tutorialShowing) return;
     this.tutorialProgress = { skipped: true };
+    // Skipping the one-time [C] lesson must not leave the first automatic collector frozen forever.
+    this.state.tutorialFreeRuns = 0;
     this.tutorialShowing = false;
     this.tutorialCardC?.setVisible(false);
-    this.setStatus('Tutorial skipped — press [H] anytime for the full controls.');
+    this.setStatus('Tutorial skipped — collections now run automatically. Press [H] for controls.');
   }
 
   // ── the city ─────────────────────────────────────────────────────────────────────────────
@@ -2134,13 +2141,24 @@ export class IsoScene extends Phaser.Scene {
       v.lastSX = s.x;
       v.lastSY = s.y;
       const stridePx = v.unit.speed >= RUN_BOB_SPEED ? RUN_STRIDE : WALK_STRIDE;
-      const footstep = advanceFootstepCadence(v.footstepTravelPx ?? 0, moving ? travelPx : 0, stridePx);
-      v.footstepTravelPx = footstep.travelPx;
+      const lastGX = v.footstepLastGX ?? tile.gx;
+      const lastGY = v.footstepLastGY ?? tile.gy;
+      const travelTiles = Math.hypot(tile.gx - lastGX, tile.gy - lastGY);
+      v.footstepLastGX = tile.gx;
+      v.footstepLastGY = tile.gy;
+      const spacingTiles = v.unit.speed >= RUN_BOB_SPEED ? RUN_FOOTFALL_TILES : WALK_FOOTFALL_TILES;
+      const footstep = advanceFootstepCadence(v.footstepTravelTiles ?? 0, moving ? travelTiles : 0, spacingTiles);
+      v.footstepTravelTiles = footstep.travelTiles;
       if (footstep.emit) {
         const revealed = v.faction === 'player' || isRevealed(this.fog, Math.round(tile.gx), Math.round(tile.gy));
         if (shouldEmitFeedback(revealed, this.onScreen(s.x, s.y))) {
           const volume = v.unit.role === 'collector' ? 0.48 : v.faction === 'player' ? 0.36 : 0.24;
-          this.audio?.play(footstepKeyForTile(tileKindAt(this.world, tile.gx, tile.gy)), { volScale: volume });
+          const variation = footstepPlayback(v.footstepIndex ?? 0, seed);
+          v.footstepIndex = (v.footstepIndex ?? 0) + 1;
+          this.audio?.play(footstepKeyForTile(tileKindAt(this.world, tile.gx, tile.gy)), {
+            volScale: volume * variation.gain,
+            rate: variation.rate,
+          });
         }
       }
       // RTS-30e LOCOMOTION: a footstep BOB while moving (faster cadence = a RUN read for an urgent
@@ -2932,10 +2950,13 @@ export class IsoScene extends Phaser.Scene {
         }
         const setup = ensureBusinessCollector(this.state, this.layout, 'player', ev.frontId, this.navGrid);
         if (setup) this.attachView(setup.unit, 'player');
+        const collectionRead = this.state.tutorialFreeRuns > 0
+          ? 'the protected first take is waiting — press [C] once'
+          : 'collections now run automatically';
         // RTS-35d — a RETAKE reads as muscling the block back off the rival (ownership flipped rival→player).
         this.setStatus(ev.retook
-          ? `${name} is yours again — muscled it back off the rival (a collector is on the way)`
-          : `${name} folded — it pays protection now (a collector is on the way)`);
+          ? `${name} is yours again — ${collectionRead}`
+          : `${name} folded — it pays protection now; ${collectionRead}`);
         this.extortShoveAt.delete(ev.thugId);
         continue;
       }
@@ -3500,7 +3521,7 @@ export class IsoScene extends Phaser.Scene {
     this.floatText(sp.x, sp.y - 34, '▸ RUNNER OUT', NOIR_PALETTE.brass);
     const dName = this.districtName(out.districtId);
     if (out.unit.protectedRun) {
-      this.setStatus(`RUSHED a collector from ${dName} for $${out.carrying} — first run rides home SAFE`);
+      this.setStatus(`RUSHED a collector from ${dName} for $${out.carrying} — first run rides home SAFE; future collections run automatically`);
     } else if (hotBefore) {
       const c = gridToScreen(out.unit.pos.gx, out.unit.pos.gy);
       this.floatText(c.x, c.y - 30, 'RUSHED INTO DANGER!', NOIR_PALETTE.blood);
@@ -3549,6 +3570,7 @@ export class IsoScene extends Phaser.Scene {
     const onboardingBeat = !channel && firstObjective(this.state).step === 'grease';
     const ch = channel ?? (onboardingBeat ? 'police' : hottestChannel(this.greasePressure()));
     const cur = this.state.player.bribes[ch];
+    const exposureBefore = federalExposure(this.state.player);
     applyCommand(this.state, { type: 'setBribe', familyId: 'player', channel: ch, amount: cur + 10 });
     this.state = harvestIncidents(this.state);
     const paid = this.state.player.bribes[ch] > cur;
@@ -3559,7 +3581,15 @@ export class IsoScene extends Phaser.Scene {
       if (!this.fireTipOnce('grease')) this.audio?.confirm();
     }
     const how = channel ? '' : onboardingBeat ? ' (first unlock)' : ' (hottest)';
-    const greaseMsg = paid ? `greased ${bribeChannelLabel(ch)}${how} → $${this.state.player.bribes[ch]}/wk` : `can't afford to grease ${bribeChannelLabel(ch)}`;
+    const after = this.state.player.bribes[ch];
+    const effect = greaseEffectReceipt(ch, cur, after, {
+      heat: this.state.player.heat,
+      exposureBefore,
+      exposureAfter: federalExposure(this.state.player),
+    });
+    const greaseMsg = paid
+      ? `greased ${bribeChannelLabel(ch)}${how} → $${after}/wk — ${effect}`
+      : `can't afford to grease ${bribeChannelLabel(ch)}`;
     this.setStatus(greaseMsg);
     // LANE K — surface the bribe outcome on THE WIRE so the player can read that a channel landed (or that
     // they came up short). Non-positional (an abstract channel action) — logs only, no arrow/ping.
@@ -4910,7 +4940,7 @@ export class IsoScene extends Phaser.Scene {
     // TOP BAR — labeled stat cells (CLEAN / DIRTY / NET / HEAT METER / CREW / WEEK) + a PHASE chip.
     const cellDefs = [
       { key: 'clean', label: 'CLEAN $' }, { key: 'dirty', label: 'DIRTY $' }, { key: 'net', label: 'NET /wk' },
-      { key: 'heat', label: 'HEAT vs FED LADDER' }, { key: 'crew', label: 'CREW' }, { key: 'week', label: 'WEEK' },
+      { key: 'heat', label: 'FEDERAL EXPOSURE' }, { key: 'crew', label: 'CREW' }, { key: 'week', label: 'WEEK' },
     ];
     for (const cd of cellDefs) {
       // RTS-25: labels ≥13px; the empire-at-a-glance TOTALS jump to 24px in the condensed display
@@ -5123,7 +5153,7 @@ export class IsoScene extends Phaser.Scene {
       { id: 'extort', group: 'core', icon: '⊕', name: 'EXTORT', hotkey: 'E', run: () => this.commandExtort(), tip: 'Send a free thug to lean on the focused [%] front. Repeated visits fold it into a paying earner — no cash cost, just walking time + a spare thug.' },
       { id: 'collect', group: 'core', icon: '$', name: 'RUSH', hotkey: 'C', run: () => this.commandCollect(), tip: 'RUSH COLLECTION — collectors run themselves; this sends one for the accrued takings NOW instead of waiting for its next auto-run. No-op if nothing has accrued or a rushed collector is already on its way.' },
       { id: 'reinvest', group: 'core', icon: '▲', name: 'REINVEST', hotkey: 'R', run: () => this.commandReinvest(), tip: 'Open the priciest racket you can afford in your strongest district.' },
-      { id: 'grease', group: 'core', icon: '✦', name: 'GREASE', hotkey: 'G', run: () => this.commandGrease(), tip: 'Bump the next bribe channel by $10/wk — buys down heat / raises the raid bar against you.' },
+      { id: 'grease', group: 'core', icon: '✦', name: 'GREASE', hotkey: 'G', run: () => this.commandGrease(), tip: 'Raise the hottest bribe channel by $10/wk. The Beat lowers raid odds; City Hall cools raw Heat on future settlements; The Bureau lowers Federal Exposure; The Bench improves bust survival.' },
       { id: 'vice', group: 'core', icon: '♣', name: 'VICE', hotkey: 'U', run: () => this.commandViceUpgrade(), tip: 'Climb the vice ladder on the racket under your cursor — more yield, more heat. Hover one of YOUR rackets first.' },
       { id: 'krew', group: 'core', icon: '☷', name: 'KREW', hotkey: 'K', run: () => this.toggleCrew(), tip: 'Show / hide your crew roster + loyalty.' },
       { id: 'raid', group: 'offense', icon: '⚔', name: 'RAID', hotkey: '1', run: () => this.commandRaid(), tip: 'Raid a reachable rival front — shuts it down for weeks. Costs cash + heat.' },
@@ -5841,7 +5871,7 @@ export class IsoScene extends Phaser.Scene {
       case 'clean': return 'CLEAN $ — laundered, safe money you can freely spend.';
       case 'dirty': return 'DIRTY $ — crime proceeds. A big hoard radiates heat; launder it.';
       case 'net': return `NET /wk — income minus upkeep ($${p.weeklyUpkeep}) & bribes. ${net >= 0 ? 'in the black.' : 'the bleed is winning — extort more or cut costs.'}`;
-      case 'heat': return 'HEAT vs the FEDERAL LADDER (50/70/85). At 85 a raid can bust you — grease The Beat / launder / cool off.';
+      case 'heat': return 'FEDERAL EXPOSURE = raw Heat + dirty-cash exposure − Bureau relief. The Beat lowers raid odds only; City Hall cools raw Heat over time; The Bureau lowers this meter.';
       case 'crew': return 'CREW — your thugs. More = more extortion, defense, and muscle for a hit (need 12 strength).';
       case 'week': return 'WEEK — the settlement clock. Income accrues each week; next settles when the sliver fills.';
       default: return '';
@@ -6274,6 +6304,7 @@ export class IsoScene extends Phaser.Scene {
    * action bound to the pressed key, unless a modal owns input or a modifier combo is held. */
   private dispatchKeybind(e: KeyboardEvent): void {
     if (this.pauseMenu?.isOpen() || this.settingsPanel?.isOpen()) return; // a modal swallows gameplay verbs
+    if (!isFreshKeydown(e)) return;                                      // held keys are one command, not a purchase loop
     if (e.altKey || e.ctrlKey || e.metaKey) return;                       // leave Ctrl/Alt/Meta combos alone
     const key = normalizeKey(e.key);
     if (!key) return;

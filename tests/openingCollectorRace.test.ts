@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInitialState } from '../src/sim/state';
 import {
   advanceRoutes,
@@ -98,5 +100,12 @@ describe('FP-01 opening collection race', () => {
 
     expect(front.uncollected).toBe(0);
     expect(deliberate.carrying).toBe(320);
+  });
+
+  it('releases the one-time collection gate when the player skips the tutorial', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'scenes', 'IsoScene.ts'), 'utf8');
+    const skip = source.slice(source.indexOf('  private skipTutorial('), source.indexOf('// ── the city', source.indexOf('  private skipTutorial(')));
+    expect(skip).toContain('this.state.tutorialFreeRuns = 0');
+    expect(skip).toMatch(/collections now run automatically/i);
   });
 });
