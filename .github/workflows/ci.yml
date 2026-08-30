@@ -12,6 +12,8 @@ jobs:
         with:
           node-version: 20
       - run: npm --include=dev ci
+      - name: Install audio validation dependencies
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg
       - run: npm --include=dev run typecheck
       - run: npm --include=dev run build
       - run: npm --include=dev test
