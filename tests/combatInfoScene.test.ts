@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { initLog, latestUnreadPositional } from '../src/scenes/info/logStore';
-import { createInitialState, spawnUnit, type CombatEvent } from '../src/sim';
+import { createInitialState, spawnCollector, spawnUnit, type CombatEvent } from '../src/sim';
 
 // Import the real scene without booting Phaser. Object.create avoids scene field initializers; the harness
 // supplies only the dependencies playCombatBeat/recordInfoEvent touch for an off-screen combat event.
@@ -42,6 +42,45 @@ function event(kind: 'hit' | 'down'): CombatEvent {
 }
 
 describe('IsoScene combat information — behavioral NO-X-RAY guard', () => {
+  it('destroys the separate 3D atlas sprite when a unit leaves play', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    const spriteSheet = { destroy: vi.fn() };
+    const unit = spawnUnit('dead-rival', 5, 6);
+    unit.factionId = 'rival-a';
+    Object.assign(scene, {
+      units: [{ unit, faction: 'rival', spriteSheet }],
+      state: { units: [unit] },
+      unitOrders: new Map(), extortShoveAt: new Map(), controlGroups: {},
+      selection: { ids: [] }, collectorInfoId: undefined,
+    });
+
+    scene.removeUnitById(unit.id);
+
+    expect(spriteSheet.destroy).toHaveBeenCalledOnce();
+    expect(scene.units).toEqual([]);
+    expect(scene.state.units).toEqual([]);
+  });
+
+  it('removes a stale collector view by object identity without touching its replacement', () => {
+    const scene = Object.create(IsoSceneClass.prototype) as Record<string, any>;
+    const stale = spawnCollector('same-id', 1, 1, 'player', 0);
+    const replacement = spawnCollector('same-id', 1, 1, 'player', 0);
+    const staleSprite = { destroy: vi.fn() };
+    const replacementSprite = { destroy: vi.fn() };
+    const staleView = { unit: stale, faction: 'player', spriteSheet: staleSprite };
+    const liveView = { unit: replacement, faction: 'player', spriteSheet: replacementSprite };
+    Object.assign(scene, {
+      state: { units: [replacement] }, units: [staleView, liveView], collectorInfoId: undefined,
+    });
+
+    scene.reconcileCollectorViews();
+
+    expect(staleSprite.destroy).toHaveBeenCalledOnce();
+    expect(replacementSprite.destroy).not.toHaveBeenCalled();
+    expect(scene.units).toEqual([liveView]);
+    expect(scene.state.units).toEqual([replacement]);
+  });
+
   it.each(['hit', 'down'] as const)('keeps a hidden rival %s byte-identical to empty fog', (kind) => {
     const scene = harness();
     const before = JSON.stringify({ log: scene.wireLog, alerts: scene.alerts, pings: scene.pings });

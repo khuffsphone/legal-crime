@@ -12,6 +12,7 @@ describe('FP-01 runtime feature profile', () => {
       combatControls: true,
       atmosphereAudio: false,
       facadeKit: true,
+      facadeOverlays: true,
       citizens: true,
     });
   });
@@ -25,13 +26,14 @@ describe('FP-01 runtime feature profile', () => {
       combatControls: false,
       atmosphereAudio: false,
       facadeKit: false,
+      facadeOverlays: false,
       citizens: false,
     });
   });
 
   it('allows precise per-layer rollback and opt-in overrides', () => {
-    const showcase = resolveFeatureProfile('?sprites=off&audio=1&citizens=false');
-    expect(showcase).toMatchObject({ name: 'showcase', sprites: false, atmosphereAudio: true, citizens: false, props: true });
+    const showcase = resolveFeatureProfile('?sprites=off&audio=1&citizens=false&facadeoverlays=off');
+    expect(showcase).toMatchObject({ name: 'showcase', sprites: false, atmosphereAudio: true, citizens: false, props: true, facadeOverlays: false });
 
     const legacy = resolveFeatureProfile('?profile=legacy&sprites=1&combat=on&cops=true');
     expect(legacy).toMatchObject({ name: 'legacy', sprites: true, combatControls: true, cops: true, props: false });

@@ -201,6 +201,18 @@ describe('depositCollector / processCollectorArrivals — reaching HQ deposits (
     expect(s.units.some((u) => u.id === route.id)).toBe(true);
   });
 
+  it('prunes a legacy empty one-shot saved at HQ without creating a second deposit', () => {
+    const s = seeded(0);
+    const layout = buildMapLayout(s);
+    const stale = spawnCollector('legacy-empty-runner', layout.hqTiles.player.gx, layout.hqTiles.player.gy, 'player', 0);
+    s.units.push(stale);
+    const cashBefore = s.player.cash;
+
+    expect(processCollectorArrivals(s, layout)).toEqual([]);
+    expect(s.units).not.toContain(stale);
+    expect(s.player.cash).toBe(cashBefore);
+  });
+
   it('allows a later [C] rush after the prior one has banked and retired', () => {
     const s = seeded(300);
     const layout = buildMapLayout(s);

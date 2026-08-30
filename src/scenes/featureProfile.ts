@@ -13,6 +13,7 @@ export interface RuntimeFeatureProfile {
   readonly combatControls: boolean;
   readonly atmosphereAudio: boolean;
   readonly facadeKit: boolean;
+  readonly facadeOverlays: boolean;
   readonly citizens: boolean;
 }
 
@@ -27,6 +28,9 @@ const SHOWCASE: Omit<RuntimeFeatureProfile, 'name'> = {
   // coordinator dark until its asset gate is green; core music/VO/SFX remain active via AudioManager.
   atmosphereAudio: false,
   facadeKit: true,
+  // State decals are projected through the live wall geometry, so they remain aligned and legible.
+  // `?facadeoverlays=off` keeps a narrow rollback valve for UAT.
+  facadeOverlays: true,
   citizens: true,
 };
 
@@ -37,6 +41,7 @@ const LEGACY: Omit<RuntimeFeatureProfile, 'name'> = {
   combatControls: false,
   atmosphereAudio: false,
   facadeKit: false,
+  facadeOverlays: false,
   citizens: false,
 };
 
@@ -66,6 +71,7 @@ export function resolveFeatureProfile(search: string): RuntimeFeatureProfile {
     combatControls: overridden(p, 'combat', base.combatControls),
     atmosphereAudio: overridden(p, 'audio', base.atmosphereAudio),
     facadeKit: overridden(p, 'facadekit', base.facadeKit),
+    facadeOverlays: overridden(p, 'facadeoverlays', base.facadeOverlays),
     citizens: overridden(p, 'citizens', base.citizens),
   };
 }

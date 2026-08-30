@@ -276,10 +276,16 @@ export function processCollectorArrivals(state: GameState, layout: MapLayout): D
   const events: DepositEvent[] = [];
   const completedRunnerIds = new Set<string>();
   for (const u of state.units) {
-    if (u.role !== 'collector' || (u.carrying ?? 0) <= 0 || !unitArrived(u)) continue;
+    if (u.role !== 'collector' || !unitArrived(u)) continue;
     if (u.routeId !== undefined) continue; // RTS-22: automated route collectors bank via advanceRoutes
     const hq = u.factionId ? hqTileOf(layout, u.factionId) : undefined;
     if (!hq || !tileEquals(unitTile(u), hq)) continue;
+    // SAVE HEALING — older builds serialized a completed one-shot after its cash reached zero. It has no
+    // economic work left and no route, so retire it without producing another deposit or heat event.
+    if ((u.carrying ?? 0) <= 0) {
+      completedRunnerIds.add(u.id);
+      continue;
+    }
     const banked = depositCollector(state, u);
     events.push({ collectorId: u.id, familyId: u.factionId!, banked });
     completedRunnerIds.add(u.id);
@@ -287,7 +293,8 @@ export function processCollectorArrivals(state: GameState, layout: MapLayout): D
   // A manual [C] RUSH is a one-shot messenger, not another permanent map unit. Leaving the emptied
   // runner at HQ made the first tutorial collector look stalled forever and accumulated inert bodies
   // across later rushes/saves. Retire only runners that actually completed here; route collectors keep
-  // their stable identities and continue their HQ↔shop loops in advanceRoutes.
+  // their stable identities and continue their HQ↔shop loops in advanceRoutes. This also prunes an inert
+  // legacy-save runner already standing empty at HQ.
   if (completedRunnerIds.size > 0) {
     state.units = state.units.filter((u) => !completedRunnerIds.has(u.id));
   }

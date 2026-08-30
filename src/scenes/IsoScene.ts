@@ -120,6 +120,8 @@ import {
   type CoreVerbId,
   type CoreVerbContext,
   districtHolder,
+  districtIdentity as simDistrictIdentity,
+  postureOf,
   controlOf,
   districtsHeld,
   familyStrength,
@@ -200,6 +202,8 @@ import {
   FOG_REVEAL_RADIUS,
   type FogState,
   type GameState,
+  type Business,
+  type District,
   type Gangster,
   type MapLayout,
   type Selection,
@@ -261,6 +265,12 @@ import {
   nextTimeScale, scaledDt, skipWeekDt, flagEnabled,
 } from './playability';
 import { resolveFeatureProfile } from './featureProfile';
+import {
+  facadeOverlayPlan,
+  facadeOverlayStateFor,
+  facadeOverlayVisible,
+  type FacadeOverlayState,
+} from './env/facadeOverlays';
 import { pickSelectedMuscle, type MuscleCandidate } from './dispatch';
 import { orderVerbFor, type OrderTarget } from './orderRouting';
 import {
@@ -607,6 +617,7 @@ export class IsoScene extends Phaser.Scene {
   // RTS-26: the drawn building per business + its current style key + tile, so a vice upgrade can
   // MORPH it (speakeasy → casino) by redrawing on the event (cached between events, never per-frame).
   private bizBuildings = new Map<string, { gfx: Phaser.GameObjects.Graphics; styleKey: string; gx: number; gy: number; depth: number; shut: boolean; boards?: Phaser.GameObjects.Graphics }>();
+  private bizFacadeDecals = new Map<string, { gfx: Phaser.GameObjects.Graphics; state?: FacadeOverlayState; styleKey?: string }>();
   private routeGfx?: Phaser.GameObjects.Graphics; // RTS-22 the drawn collection route
   private ctxMenu?: Phaser.GameObjects.Container; // RTS-22 right-click EXTORT/ATTACK menu
   private ctxRect?: { x: number; y: number; w: number; h: number };
@@ -798,6 +809,7 @@ export class IsoScene extends Phaser.Scene {
   private spritesEnabled = this.featureProfile.sprites;
   private propsEnabled = this.featureProfile.props;
   private facadeKitEnabled = this.featureProfile.facadeKit;
+  private facadeOverlaysEnabled = this.featureProfile.facadeOverlays;
   private spriteScaleMul = spriteScaleParam(typeof window !== 'undefined' ? (window.location?.search ?? '') : '');
   private spriteSheetReady = false;
   private copSpriteReady = false; // ?sprites — the cop atlas registered (marker stays fallback if not)
@@ -949,6 +961,7 @@ export class IsoScene extends Phaser.Scene {
     this.bizOwnerGlow.clear();
     this.bizDistrict.clear();
     this.bizBuildings.clear();
+    this.bizFacadeDecals.clear();
     this.districtLabels.clear();
     this.downedBodyViews.clear();
     this.pendingBodyContacts.clear(); // never replay a death/contact cue when reconstructing a loaded save
@@ -1080,6 +1093,10 @@ export class IsoScene extends Phaser.Scene {
       if (!this.state.beatCops?.length) spawnBeatCops(this.state);
     }
     this.spawnUnits();
+    // Loaded saves may contain a collector whose fixed route was lost or malformed. Heal the pair before
+    // the first rendered frame; newly created collectors receive their view here exactly once.
+    this.syncBusinessCollectors();
+    this.reconcileCollectorViews();
     // RTS-30a: the fog veil is rendered CULLED inside drawGround (per visible tile); here we just seed
     // the opening pocket around the HQ + starting units into the revealed set.
     // LANE F — on a load, restore the fog EXACTLY as saved (explored stays explored; hidden rivals stay
@@ -1338,6 +1355,13 @@ export class IsoScene extends Phaser.Scene {
           facadeKit: this.facadeKitEnabled, // ?facadekit — low-tier vector storefront (no-op for non-low-tier kinds)
         });
         this.bizBuildings.set(biz.id, { gfx: roof.gfx, styleKey, gx: t.gx, gy: t.gy, depth: bdepth, shut: isShutDown(biz) });
+        // Growth/closure state lives on one separately cached decal. It is redrawn only when its state
+        // or host silhouette changes, then visibility follows the same fog predicate as the plate below.
+        if (this.facadeOverlaysEnabled && styleKey !== 'warehouse') {
+          const decal = this.add.graphics().setDepth(bdepth + 0.25).setVisible(false);
+          this.worldFx(decal);
+          this.bizFacadeDecals.set(biz.id, { gfx: decal });
+        }
         const glow = this.add
           .image(roof.roofX, roof.roofY - 6, TEX.glow)
           .setDepth(depthValue(t.gx, t.gy) * 10 + 6)
@@ -2019,11 +2043,7 @@ export class IsoScene extends Phaser.Scene {
     const idx = this.units.findIndex((v) => v.unit.id === id);
     if (idx >= 0) {
       const v = this.units[idx];
-      // PLAYTEST FIX (Part 2) — release the health bar WITH the rest of the view. v.hpBar is a single Graphics
-      // holding BOTH the fill AND the dark backing/track; it was missing from this list, so on death (when the
-      // fill is ~0) the frozen backing leaked on screen as an orphaned "shadow". Tying it to the unit's render
-      // lifecycle here destroys fill + shadow together when the unit/downed-body is finally removed.
-      for (const o of [v.sprite, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.nameTag, v.hpBar, v.rig, v.rigDebug, v.rigText]) o?.destroy();
+      this.destroyUnitView(v);
       this.units.splice(idx, 1);
     }
     this.state.units = this.state.units.filter((u) => u.id !== id);
@@ -2038,6 +2058,25 @@ export class IsoScene extends Phaser.Scene {
     // RTS-30d-3: a dead/despawned unit drops out of the selection (the brass ring + its card vote go with it).
     if (this.selection.ids.includes(id)) this.selection = selectMany(this.selection.ids.filter((x) => x !== id));
     if (this.collectorInfoId === id) this.hideCollectorInfo();
+  }
+
+  /** Destroy every object owned by one embodied unit. Atlas sprites and procedural rigs are separate
+   * objects, so both must follow the same lifecycle. */
+  private destroyUnitView(v: UnitView): void {
+    for (const o of [v.sprite, v.spriteSheet, v.shadow, v.factionRing, v.selRing, v.cashTag, v.dangerRing, v.nameTag, v.hpBar, v.rig, v.rigDebug, v.rigText]) o?.destroy();
+  }
+
+  /** Some save-healing paths replace/remove a collector directly in pure simulation. Reconcile by object
+   * identity so even a malformed claimant that reused the replacement's id cannot leave a frozen view. */
+  private reconcileCollectorViews(): void {
+    const live = new Set(this.state.units);
+    for (let i = this.units.length - 1; i >= 0; i -= 1) {
+      const view = this.units[i];
+      if (view.unit.role !== 'collector' || live.has(view.unit)) continue;
+      this.destroyUnitView(view);
+      this.units.splice(i, 1);
+      if (this.collectorInfoId === view.unit.id && !this.state.units.some((unit) => unit.id === view.unit.id)) this.hideCollectorInfo();
+    }
   }
 
   private updateUnits(dt: number): void {
@@ -2153,6 +2192,8 @@ export class IsoScene extends Phaser.Scene {
     // Manual [C] collectors are one-shot runners. processCollectorArrivals retired their sim bodies;
     // keep the view through flashDeposit above so the bank animation has an origin, then remove it too.
     for (const dep of completedRushDeposits) this.removeUnitById(dep.collectorId);
+    // Also catches legacy empty runners (no deposit event) and malformed route claimants repaired above.
+    this.reconcileCollectorViews();
     // Lane L — RUN STATS: the cash gained across the deposit calls above is the funds banked this frame.
     recordFundsBanked(runStats, this.state.player.cash - cashBeforeDeposits);
     // RTS-16: the turf war moved — call out captures and routed families over the district.
@@ -2496,7 +2537,56 @@ export class IsoScene extends Phaser.Scene {
       // per-frame — windows go dark + X-boards over the door when raided, warm again when reopened).
       const rec = this.bizBuildings.get(b.id);
       if (rec && rec.shut !== shut) this.relightBuilding(b.id, shut);
+      const districtIndex = this.state.districts.findIndex((d) => d.id === b.districtId);
+      if (districtIndex >= 0) this.refreshFacadeDecal(b, this.state.districts[districtIndex], districtIndex, revealed);
     }
+  }
+
+  /** Project one mutually-exclusive closure/growth treatment onto the real lit wall. The supplied PNGs
+   * are source-art references; using the wall projector avoids their opposite slope and subpixel scale. */
+  private refreshFacadeDecal(biz: Business, district: District, districtIndex: number, revealed: boolean): void {
+    const view = this.bizFacadeDecals.get(biz.id);
+    const rec = this.bizBuildings.get(biz.id);
+    if (!view || !rec) return;
+    const supportedHost = rec.styleKey === 'storefront' || rec.styleKey === 'speakeasy' || rec.styleKey === 'casino';
+    const playerFortified = districtHolder(district) === this.state.player.id
+      && businessEarner(biz) === this.state.player.id
+      && postureOf(district) === 'FORTIFIED';
+    const state = facadeOverlayStateFor({
+      supportedHost,
+      shutDown: isShutDown(biz),
+      playerFortified,
+      viceRung: biz.viceRung ?? 0,
+      districtWealth: simDistrictIdentity(district, districtIndex).wealth,
+    });
+    // Same `revealed` value as the allegiance plate: a state decal must never become an x-ray tell.
+    view.gfx.setVisible(facadeOverlayVisible(state, revealed, this.cameras.main.zoom, this.facadeOverlaysEnabled));
+    if (state === null || (view.state === state && view.styleKey === rec.styleKey)) return;
+
+    const style = BUILDING_STYLES[rec.styleKey];
+    const c = gridToScreen(rec.gx, rec.gy);
+    const wall = {
+      cx: c.x,
+      cy: c.y,
+      hw: style.footHalfW ?? 54,
+      hh: style.footHalfH ?? 27,
+      h: style.height * ENV_HEIGHT_SCALE,
+    };
+    const plan = facadeOverlayPlan(state, wall);
+    view.gfx.clear();
+    for (const entry of plan.rects) {
+      view.gfx.fillStyle(entry.color, entry.alpha);
+      view.gfx.fillPoints(entry.points, true);
+    }
+    for (const entry of plan.strokes) {
+      view.gfx.lineStyle(entry.width, entry.color, entry.alpha);
+      view.gfx.beginPath();
+      view.gfx.moveTo(entry.from.x, entry.from.y);
+      view.gfx.lineTo(entry.to.x, entry.to.y);
+      view.gfx.strokePath();
+    }
+    view.state = state;
+    view.styleKey = rec.styleKey;
   }
 
   /** RTS-26 — redraw one racket's building lit/shut on the state transition (raided ↔ reopened).
@@ -2509,7 +2599,7 @@ export class IsoScene extends Phaser.Scene {
     const c = gridToScreen(rec.gx, rec.gy);
     const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES[rec.styleKey], rec.depth, { lit: !shut, facadeKit: this.facadeKitEnabled });
     let boards: Phaser.GameObjects.Graphics | undefined;
-    if (shut) {
+    if (shut && !this.bizFacadeDecals.has(bizId)) {
       boards = this.add.graphics().setDepth(rec.depth + 1);
       boards.fillStyle(hexNum('#3a2c20'), 1); // timber X-boards over the door
       boards.fillRect(c.x - 8, c.y + 6, 16, 3);
@@ -3820,9 +3910,11 @@ export class IsoScene extends Phaser.Scene {
     if (!upgraded) return;
     rec.gfx.destroy();
     const c = gridToScreen(rec.gx, rec.gy);
-    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.casino, rec.depth, { lit: !rec.shut });
+    const roof = drawIsoBuilding(this, c.x, c.y, BUILDING_STYLES.casino, rec.depth, { lit: !rec.shut, facadeKit: this.facadeKitEnabled });
     this.worldFx(roof.gfx);
     this.bizBuildings.set(bizId, { ...rec, gfx: roof.gfx, styleKey: 'casino' });
+    const decal = this.bizFacadeDecals.get(bizId);
+    if (decal) { decal.state = undefined; decal.styleKey = undefined; }
     // lift the coin/glow markers to the taller roof
     const m = this.bizMarkers.get(bizId);
     if (m) { m.roofY = roof.roofY; m.coin.setY(roof.roofY - 6); if (m.glow) m.glow.setY(roof.roofY - 6); }

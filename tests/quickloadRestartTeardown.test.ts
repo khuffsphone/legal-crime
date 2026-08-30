@@ -96,7 +96,7 @@ describe('quickload restart teardown — F9 crash regression net', () => {
     }
     const requiredMapClears = [
       'bizMarkers', 'bizPlates', 'bizOwnerGlow', 'bizDistrict', 'bizBuildings', 'districtLabels',
-      'downedBodyViews',
+      'downedBodyViews', 'bizFacadeDecals',
     ];
     for (const f of requiredMapClears) {
       expect(body, `clears this.${f}`).toContain(`this.${f}.clear()`);
