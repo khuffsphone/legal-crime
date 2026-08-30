@@ -13,7 +13,7 @@ const PLAYER = 'player';
 
 describe('F1 — log events (mutation table)', () => {
   it("MUTATION raid-mapped-to-police: plain 'raid' is the PLAYER's op → player_offense_raid, never police", () => {
-    const cues = mapLogEvents([log('raid')]);
+    const cues = mapLogEvents([log('raid')], PLAYER);
     expect(cues).toHaveLength(1);
     expect(cues[0].key).toBe('player_offense_raid');
     expect(cues[0].key.startsWith('police_')).toBe(false);
@@ -21,42 +21,50 @@ describe('F1 — log events (mutation table)', () => {
   });
 
   it('MUTATION raid-cash-mapped-to-player-offense: the police trio comes ONLY from raid-cash/-operation/-bust', () => {
-    expect(mapLogEvents([log('raid-cash')])[0].key).toBe('police_raid_cash');
-    expect(mapLogEvents([log('raid-operation')])[0].key).toBe('police_raid_operation');
-    expect(mapLogEvents([log('raid-bust')])[0].key).toBe('police_raid_bust');
+    expect(mapLogEvents([log('raid-cash', { familyId: PLAYER })], PLAYER)[0].key).toBe('police_raid_cash');
+    expect(mapLogEvents([log('raid-operation', { familyId: PLAYER })], PLAYER)[0].key).toBe('police_raid_operation');
+    expect(mapLogEvents([log('raid-bust', { familyId: PLAYER })], PLAYER)[0].key).toBe('police_raid_bust');
     for (const k of ['raid-cash', 'raid-operation', 'raid-bust']) {
-      const [cue] = mapLogEvents([log(k)]);
+      const [cue] = mapLogEvents([log(k, { familyId: PLAYER })], PLAYER);
       expect(cue.key).not.toBe('player_offense_raid');
       expect(cue.priority).toBe(90);
     }
   });
 
+  it('NO-X-RAY: police raid logs map only for the player; rival or missing ownership fails closed', () => {
+    for (const kind of ['raid-cash', 'raid-operation', 'raid-bust']) {
+      expect(mapLogEvents([log(kind, { familyId: 'rival-1' })], PLAYER)).toEqual([]);
+      expect(mapLogEvents([log(kind)], PLAYER)).toEqual([]);
+      expect(mapLogEvents([log(kind, { familyId: 42 })], PLAYER)).toEqual([]);
+    }
+  });
+
   it('MUTATION hardcoded-federal-keys: tiers route through audioMap.federalCueKey (identity per tier)', () => {
     for (const tier of [1, 2, 3]) {
-      const [cue] = mapLogEvents([log('fed-warning', { tier })]);
+      const [cue] = mapLogEvents([log('fed-warning', { tier })], PLAYER);
       expect(cue.key).toBe(federalCueKey(tier)); // the SHIPPED mapping is the source of truth
     }
-    expect(mapLogEvents([log('fed-warning', { tier: 3 })])[0].priority).toBe(100);
-    expect(mapLogEvents([log('fed-warning', { tier: 2 })])[0].priority).toBe(96);
-    expect(mapLogEvents([log('fed-warning', { tier: 1 })])[0].priority).toBe(95);
+    expect(mapLogEvents([log('fed-warning', { tier: 3 })], PLAYER)[0].priority).toBe(100);
+    expect(mapLogEvents([log('fed-warning', { tier: 2 })], PLAYER)[0].priority).toBe(96);
+    expect(mapLogEvents([log('fed-warning', { tier: 1 })], PLAYER)[0].priority).toBe(95);
   });
 
   it('fed-cooldown and fed-armed are explicit keys at their H.3 priorities', () => {
-    expect(mapLogEvents([log('fed-cooldown')])[0]).toMatchObject({ key: 'federal_cooldown', priority: 80 });
-    expect(mapLogEvents([log('fed-armed')])[0]).toMatchObject({ key: 'federal_armed', priority: 98 });
+    expect(mapLogEvents([log('fed-cooldown')], PLAYER)[0]).toMatchObject({ key: 'federal_cooldown', priority: 80 });
+    expect(mapLogEvents([log('fed-armed')], PLAYER)[0]).toMatchObject({ key: 'federal_armed', priority: 98 });
   });
 
   it("player_offense_raid is positional ONLY when the log event carries an explicit tile", () => {
-    expect(mapLogEvents([log('raid')])[0].positional).toBe(false);
-    const [tiled] = mapLogEvents([log('raid', { gx: 4, gy: 7 })]);
+    expect(mapLogEvents([log('raid')], PLAYER)[0].positional).toBe(false);
+    const [tiled] = mapLogEvents([log('raid', { gx: 4, gy: 7 })], PLAYER);
     expect(tiled.positional).toBe(true);
     expect(tiled.tile).toEqual({ gx: 4, gy: 7 });
-    const [malformed] = mapLogEvents([log('raid', { gx: 'x', gy: 7 })]); // non-numeric ⇒ not a tile
+    const [malformed] = mapLogEvents([log('raid', { gx: 'x', gy: 7 })], PLAYER); // non-numeric ⇒ not a tile
     expect(malformed.positional).toBe(false);
   });
 
   it('unrelated log kinds are silent in F (combat/economy owned elsewhere)', () => {
-    expect(mapLogEvents([log('interception'), log('extort-success'), log('mutiny'), log('hq-struck')])).toEqual([]);
+    expect(mapLogEvents([log('interception'), log('extort-success'), log('mutiny'), log('hq-struck')], PLAYER)).toEqual([]);
   });
 });
 

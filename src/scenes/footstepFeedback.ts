@@ -1,10 +1,16 @@
-import type { TileKind } from '../sim';
+import type { TileKind, UnitRole } from '../sim';
 
 export type FootstepKey = 'sfx_step_pavement' | 'sfx_step_gravel';
 
 /** Ground-distance spacing: an unhurried shoe cadence, not a rapid mechanical click-track. */
 export const WALK_FOOTFALL_TILES = 0.6;
 export const RUN_FOOTFALL_TILES = 0.84;
+
+/** Per-unit trim before the clip's own SFX-catalog trim. Collectors stay clearest because their route is gameplay-critical. */
+export function footstepRoleGain(role: UnitRole | undefined, faction: 'player' | 'rival'): number {
+  if (role === 'collector') return 0.48;
+  return faction === 'player' ? 0.36 : 0.24;
+}
 
 /** Parks and unfinished ground read as loose grit; every paved city surface uses the hard step. */
 export function footstepKeyForTile(kind: TileKind): FootstepKey {

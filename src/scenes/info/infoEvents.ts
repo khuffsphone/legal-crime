@@ -70,9 +70,16 @@ export function combatEventKind(kind: 'hit' | 'down'): EventKind {
   return kind === 'down' ? 'unit.down' : 'combat.hit';
 }
 
-export interface CombatInfoIntent {
+/** A player-knowable event ready for the Wire adapter. Positional fields are optional because a known
+ * district change can still be reported without inventing a jump target when world layout is unavailable. */
+export interface InfoIntent {
   kind: EventKind;
   message: string;
+  gx?: number;
+  gy?: number;
+}
+
+export interface CombatInfoIntent extends InfoIntent {
   gx: number;
   gy: number;
 }
@@ -109,4 +116,34 @@ export function bribeEventKind(landed: boolean): EventKind {
 /** A turf-war capture → district.lost (the player lost it) or district.captured (the player took it). */
 export function captureEventKind(lostByPlayer: boolean): EventKind {
   return lostByPlayer ? 'district.lost' : 'district.captured';
+}
+
+/**
+ * A strategic capture -> a player-knowable Wire intent.
+ *
+ * Own gains/losses are always knowable. A third-party capture is knowable only after the district has
+ * been scouted; otherwise it collapses to `null`, preventing its name, timing and location from leaking
+ * through the Wire, minimap ping, edge alert or jump-to-event surfaces.
+ */
+export function captureInfoIntent(
+  capture: { before: string | null; after: string | null },
+  playerId: string,
+  district: { name: string; gx?: number; gy?: number },
+  districtKnown: boolean,
+): InfoIntent | null {
+  const lostByPlayer = capture.before === playerId && capture.after !== playerId;
+  const gainedByPlayer = capture.after === playerId && capture.before !== playerId;
+  if (!lostByPlayer && !gainedByPlayer && !districtKnown) return null;
+
+  const message = lostByPlayer
+    ? `${district.name} LOST to a rival`
+    : gainedByPlayer
+      ? `${district.name} captured`
+      : `${district.name} changed hands`;
+  return {
+    kind: captureEventKind(lostByPlayer),
+    message,
+    ...(district.gx !== undefined ? { gx: district.gx } : {}),
+    ...(district.gy !== undefined ? { gy: district.gy } : {}),
+  };
 }

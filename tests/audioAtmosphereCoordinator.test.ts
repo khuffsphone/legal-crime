@@ -52,7 +52,7 @@ describe('H2 — coordinator (mutation table)', () => {
 
   it('MUTATION priority-ignored: one-shot intents come out highest-priority-first', () => {
     const step = stepAtmosphere(createAtmosphereState(1), frame({
-      observation: { logEvents: [log('raid'), log('fed-warning', { tier: 3 }), log('raid-bust')] },
+      observation: { logEvents: [log('raid'), log('fed-warning', { tier: 3 }), log('raid-bust', { familyId: 'player' })] },
     }));
     const shots = step.intents.filter((i) => i.op === 'playOneShot').map((i) => (i as { key: string }).key);
     expect(shots).toEqual(['federal_raid', 'police_raid_bust', 'player_offense_raid']); // 100 > 90 > 45
@@ -60,6 +60,20 @@ describe('H2 — coordinator (mutation table)', () => {
     const firstShot = step.intents.findIndex((i) => i.op === 'playOneShot');
     const lastDuck = step.intents.map((i) => i.op).lastIndexOf('duck');
     expect(lastDuck).toBeLessThan(firstShot);
+  });
+
+  it('NO-X-RAY: rival and unowned police raid logs never reach atmosphere playback', () => {
+    const step = stepAtmosphere(createAtmosphereState(1), frame({
+      observation: {
+        logEvents: [
+          log('raid-bust', { familyId: 'rival-1' }),
+          log('raid-operation'),
+          log('raid-cash', { familyId: 'player' }),
+        ],
+      },
+    }));
+    const shots = step.intents.filter((i) => i.op === 'playOneShot').map((i) => (i as { key: string }).key);
+    expect(shots).toEqual(['police_raid_cash']);
   });
 
   it('MUTATION collector-route-input-ignored + arrivedUnitIds-dependency: deposits drive collector cues; no arrivedUnitIds anywhere', () => {
@@ -88,7 +102,7 @@ describe('H2 — coordinator (mutation table)', () => {
       converted: true, retook: false, sabotaged: false, failed: false,
     }));
     const step = stepAtmosphere(createAtmosphereState(1), frame({
-      observation: { logEvents: [log('raid-bust')], extortion },
+      observation: { logEvents: [log('raid-bust', { familyId: 'player' })], extortion },
     }));
     const shots = step.intents.filter((i) => i.op === 'playOneShot').map((i) => (i as { key: string }).key);
     expect(shots[0]).toBe('police_raid_bust'); // priority 90 admitted first

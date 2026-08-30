@@ -37,6 +37,8 @@ Treat the following as the expected behavior, not as open design questions:
 11. A dead rival family must leave no immortal fighters, collectors, routes, contests, or queued strikes.
 12. The collection HUD always calls the fixed routes `AUTO`, shows `W$` (waiting) versus `R$` (on road), expands those terms in `[V]`, and presents `[C]` only as an optional `RUSH`.
 13. Music and ambience remain ducked for the full duration of admitted VO and recover when that line completes.
+14. Fog is a strategic-information boundary: unscouted rival captures, holdings, HQs, operations, incidents,
+    combat, and offense targets must not change any HUD, Wire, minimap, tooltip, audio, VFX, alert, or hotkey result.
 
 ## Test setup
 
@@ -154,6 +156,32 @@ Also verify:
 
 Mark death voice **BLOCKED/NOT PRESENT** if no final wounded/downed voice asset is audible. Do not treat the body-contact thud as voice evidence.
 
+## Test I — strategic fog / NO-X-RAY
+
+Run this on a fresh game with no reveal/debug flags and without moving a player unit until step 8.
+
+1. Dismiss the opening card, then capture screenshots of the Wire, minimap, City rail, world labels, and visible fog boundary.
+2. Press `.` (`SKIP WEEK`) nine times. Do not pan into or explore sealed territory.
+3. Require the explored footprint to remain unchanged. Hidden rival expansion must produce no named Wire row,
+   capture flash, edge arrow, minimap ping, red/amber district fill, camera jump target, world label, rival HQ art,
+   adaptive-music change, or incident sound.
+4. Require every unscouted City row to remain `UNKNOWN`; rival rows must not show family names, exact block counts,
+   HQ integrity, dead/alive status, lockout status, or a `weakest` target.
+5. Sweep the pointer across sealed soot. Require no tooltip that reveals district holder, police presence, control,
+   business ownership/economics, unit identity, or HQ location.
+6. Press `[1]`, `[2]`, `[3]`, and `[4]` once each before discovering a target. Each must safely refuse or remain
+   unavailable. Require no cash/heat change, rival mutation, target name, remote VFX, audio outcome, or camera movement.
+7. Open the status screens for operations, fronts, and incidents. Hidden activity may appear only as one generic,
+   metadata-free rumor—never one row per hidden item, a hidden count, event type, week, family, or district.
+8. Scout exactly one rival district through normal movement. Require only newly earned information for that district
+   to appear; all other sealed districts must remain observationally unchanged.
+9. If a rival-v-rival fight occurs in sealed fog, require no Wire row, unread badge, ring, body, marker, VFX, camera
+   motion, minimap signal, or music escalation. Do not infer PASS if no hidden fight can be observed to occur.
+
+Fail this test at P0/P1 if one hidden event versus many hidden events produces distinguishable player-facing
+output. Zero hidden activity versus some hidden activity may differ only through the single generic rumor allowed
+in step 7; no other hidden count, kind, timing, identity, location, audio, or visual difference is permitted.
+
 ## Required evidence
 
 Capture screenshots at minimum for:
@@ -166,6 +194,7 @@ Capture screenshots at minimum for:
 6. First rival warning and street fight.
 7. Casualty at hit/fall, body linger, and post-cleanup.
 8. Every defect.
+9. Test I before/after nine skipped weeks, plus the first legitimately scouted rival district.
 
 For audio findings, write what was actually heard, which character/surface/action produced it, whether it was repeatable, and what other buses were audible at the time.
 

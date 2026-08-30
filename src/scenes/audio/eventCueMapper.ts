@@ -5,7 +5,9 @@
 // F.1 law, bound to the LIVE shapes (recon-verified):
 // - log kind 'raid' is the PLAYER's offensive operation (ledger type 'offense') → player_offense_raid.
 //   It is NEVER police-coded. The police trio comes ONLY from 'raid-cash' / 'raid-operation' / 'raid-bust'.
-// - federal tiers route through audioMap.federalCueKey (never hardcoded per-tier keys here);
+// - Police raid log entries carry data.familyId. They map ONLY when that exact id is the player;
+//   missing/malformed ownership fails closed so an off-screen rival raid can never become an audio
+//   reveal. federal tiers route through audioMap.federalCueKey (never hardcoded per-tier keys here);
 //   'fed-cooldown' → federal_cooldown and 'fed-armed' → federal_armed are explicit new keys.
 // - InterceptionEvent carries NO tile (verified) → interception_collector_robbed is NEVER positional.
 // - Collector beats come from processCollectorArrivals' DepositEvent[] — NEVER from the realtime
@@ -49,7 +51,7 @@ function tileOfLogEvent(e: GameEvent): GridPos | undefined {
 }
 
 // ── state.log slice (caller passes the NEW entries — cursor pattern) ─────────────────────────────
-export function mapLogEvents(entries: readonly GameEvent[]): EventCueIntent[] {
+export function mapLogEvents(entries: readonly GameEvent[], playerFamilyId: string): EventCueIntent[] {
   const out: EventCueIntent[] = [];
   for (const e of entries) {
     switch (e.kind) {
@@ -57,12 +59,15 @@ export function mapLogEvents(entries: readonly GameEvent[]): EventCueIntent[] {
         out.push(cue('player_offense_raid', 'log:raid', 'evt:player_offense_raid', tileOfLogEvent(e)));
         break;
       case 'raid-cash':
+        if (e.data?.familyId !== playerFamilyId) break;
         out.push(cue('police_raid_cash', 'log:raid-cash', 'evt:police_raid_cash'));
         break;
       case 'raid-operation':
+        if (e.data?.familyId !== playerFamilyId) break;
         out.push(cue('police_raid_operation', 'log:raid-operation', 'evt:police_raid_operation'));
         break;
       case 'raid-bust':
+        if (e.data?.familyId !== playerFamilyId) break;
         out.push(cue('police_raid_bust', 'log:raid-bust', 'evt:police_raid_bust'));
         break;
       case 'fed-warning': {

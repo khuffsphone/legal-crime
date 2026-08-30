@@ -3,6 +3,7 @@ import {
   advanceFootstepCadence,
   footstepKeyForTile,
   footstepPlayback,
+  footstepRoleGain,
   RUN_FOOTFALL_TILES,
   WALK_FOOTFALL_TILES,
 } from '../src/scenes/footstepFeedback';
@@ -14,6 +15,13 @@ describe('FP-01 footstep feedback', () => {
     for (const kind of ['avenue', 'street', 'sidewalk', 'plaza', 'building'] as const) {
       expect(footstepKeyForTile(kind)).toBe('sfx_step_pavement');
     }
+  });
+
+  it('keeps route-critical collectors clearest while subordinating ordinary movement', () => {
+    expect(footstepRoleGain('collector', 'player')).toBe(0.48);
+    expect(footstepRoleGain('collector', 'rival')).toBe(0.48);
+    expect(footstepRoleGain('enforcer', 'player')).toBe(0.36);
+    expect(footstepRoleGain('enforcer', 'rival')).toBe(0.24);
   });
 
   it('emits by grid distance, retains the remainder, and stays silent while stopped', () => {

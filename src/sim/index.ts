@@ -316,6 +316,7 @@ export {
 } from './offense';
 export {
   offenseReadout,
+  offenseReadoutForTargets,
   matchPhase,
   hudPhase,
   offensePreview,
@@ -326,6 +327,7 @@ export {
   isNearlyHeld,
   type OffenseKey,
   type OffenseOption,
+  type OffenseTargetIds,
   type MatchPhase,
   type PhaseReadout,
   type HudPhase,
