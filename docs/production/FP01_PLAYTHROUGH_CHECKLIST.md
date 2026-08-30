@@ -27,6 +27,7 @@ Use this checklist on the deployed candidate after automated gates pass. A sourc
 
 - [ ] Background music begins once after audio unlock and does not stack.
 - [ ] Voices remain clear over the music.
+- [ ] Music and ambience stay ducked for each complete spoken line, then recover cleanly without pumping or remaining suppressed.
 - [ ] Fog conceals unscouted areas and reveals terrain only through legitimate exploration.
 - [ ] Leave the opening/tutorial card open for 20 seconds. Week, funds, Heat, rivals, and unit positions must remain frozen.
 - [ ] Select Sal and Vito separately. Confirm the correct name and acknowledgement for each.
@@ -48,6 +49,7 @@ Use this checklist on the deployed candidate after automated gates pass. A sourc
 - [ ] Confirm the order acknowledgement, walk, physical shakedown, proprietor reaction, control change, and accrued-takings feedback.
 - [ ] Confirm the tutorial says `[C]` is the required one-time protected **RUSH**, not the permanent way income is collected.
 - [ ] Before `[C]`, confirm the automatic route waits and does not steal the tutorial's first payday.
+- [ ] Confirm the always-visible collection chip reads `AUTO`, shows `W$` for the first take waiting, and labels `[C]` as `RUSH`; open `[V]` for the full WAIT/ROAD explanation.
 - [ ] Press `[C]` once.
 - [ ] While the first collector is in flight, hold `[C]`. Confirm no duplicate collector, pickup, deposit, or cash credit; a clear in-flight message should appear.
 - [ ] Exactly one collector departs, picks up exactly once, reaches HQ, deposits exactly once, and increases cash exactly once.
@@ -57,6 +59,8 @@ Use this checklist on the deployed candidate after automated gates pass. A sourc
 ## 4. Automatic collections after the tutorial
 
 - [ ] After the first protected deposit, do not press `[C]` for at least two settlements.
+- [ ] Confirm the collection chip distinguishes `W$` (waiting at fronts) from `R$` (on the road), and the `[V]` drawer spells both out.
+- [ ] Confirm it reports `RUSH IN FLIGHT` during a manual rush and `AUTO — NOTHING DUE` when no takings await collection.
 - [ ] Confirm the fixed collector automatically collects and banks newly accrued takings.
 - [ ] Confirm each automatic pickup and deposit produces readable visual/audio feedback.
 - [ ] Confirm no duplicate fixed collectors or double credit appears after multiple settlements.

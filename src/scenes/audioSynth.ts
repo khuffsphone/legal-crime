@@ -152,23 +152,27 @@ export function synthSamples(key: SynthKey, sampleRate: number): Float32Array {
       for (let i = 0; i < crack.length; i++) out[i] += crack[i] * decayAt(i, sr * 0.01) * 0.8;
       return finish(out, sr);
     }
-    case 'sfx_step_pavement': { // dark leather heel + softer toe/sole contact, not a bright click
-      const n = secs(sr, 0.22); const out = new Float32Array(n);
-      const heel = noise(n, seed); lowpass(heel, 0.055);
-      const toe = noise(n, seed + 41); lowpass(toe, 0.09);
-      const toeAt = secs(sr, 0.065);
+    case 'sfx_step_pavement': { // leather heel → sole roll → restrained scuff; deliberately not a click
+      const n = secs(sr, 0.3); const out = new Float32Array(n);
+      const heel = noise(n, seed); lowpass(heel, 0.04);
+      const sole = noise(n, seed + 41); lowpass(sole, 0.07);
+      const scuff = noise(n, seed + 73); lowpass(scuff, 0.055);
+      const soleAt = secs(sr, 0.09);
+      const scuffAt = secs(sr, 0.15);
       for (let i = 0; i < n; i++) {
-        const body = Math.sin((2 * Math.PI * 105 * i) / sr) * decayAt(i, sr * 0.045) * 0.55;
-        const heelSlap = heel[i] * decayAt(i, sr * 0.034) * 0.8;
-        const ti = i - toeAt;
-        const toeContact = ti >= 0
-          ? (toe[ti] * decayAt(ti, sr * 0.04) * 0.36
-            + Math.sin((2 * Math.PI * 82 * ti) / sr) * decayAt(ti, sr * 0.035) * 0.2)
+        const body = Math.sin((2 * Math.PI * 78 * i) / sr) * decayAt(i, sr * 0.065) * 0.52;
+        const heelContact = heel[i] * decayAt(i, sr * 0.052) * 0.66;
+        const si = i - soleAt;
+        const soleContact = si >= 0
+          ? (sole[si] * decayAt(si, sr * 0.065) * 0.34
+            + Math.sin((2 * Math.PI * 64 * si) / sr) * decayAt(si, sr * 0.055) * 0.24)
           : 0;
-        out[i] = body + heelSlap + toeContact;
+        const ci = i - scuffAt;
+        const leatherScuff = ci >= 0 ? scuff[ci] * decayAt(ci, sr * 0.085) * 0.2 : 0;
+        out[i] = body + heelContact + soleContact + leatherScuff;
       }
-      lowpass(out, 0.18); // roll off the high-frequency noise that made the old asset click
-      return finish(out, sr, 0.58);
+      lowpass(out, 0.13); // aggressive high roll-off: shoe weight, no bright mechanical transient
+      return finish(out, sr, 0.5);
     }
     case 'sfx_step_wood': { // a hollow tap with a short resonant ring
       const n = secs(sr, 0.09); const out = noise(n, seed); lowpass(out, 0.3);
@@ -178,24 +182,24 @@ export function synthSamples(key: SynthKey, sampleRate: number): Float32Array {
       }
       return finish(out, sr, 0.6);
     }
-    case 'sfx_step_gravel': { // boot weight under a restrained, mid-band gravel crunch
-      const n = secs(sr, 0.26); const out = new Float32Array(n);
+    case 'sfx_step_gravel': { // boot weight followed by a loose, low gravel settle
+      const n = secs(sr, 0.34); const out = new Float32Array(n);
       const body = noise(n, seed); lowpass(body, 0.045);
       for (let i = 0; i < n; i++) {
         out[i] = body[i] * decayAt(i, sr * 0.075) * 0.55
           + Math.sin((2 * Math.PI * 92 * i) / sr) * decayAt(i, sr * 0.05) * 0.45;
       }
-      const grains = 11, glen = secs(sr, 0.026);
+      const grains = 9, glen = secs(sr, 0.034);
       for (let k = 0; k < grains; k++) {
         const off = Math.floor(mulberry32(seed + k * 13)() * n * 0.68);
         const g = noise(glen, seed + k * 31); lowpass(g, 0.16);
         for (let i = 0; i < glen && off + i < n; i++) {
-          out[off + i] += g[i] * decayAt(i, sr * 0.011) * 0.42;
+          out[off + i] += g[i] * decayAt(i, sr * 0.018) * 0.32;
         }
       }
       for (let i = 0; i < n; i++) out[i] *= decayAt(i, sr * 0.11);
-      lowpass(out, 0.22);
-      return finish(out, sr, 0.58);
+      lowpass(out, 0.16);
+      return finish(out, sr, 0.5);
     }
     case 'sfx_step_interior': { // a muffled, heavily low-passed soft tap
       const n = secs(sr, 0.07); const out = noise(n, seed); lowpass(out, 0.08);

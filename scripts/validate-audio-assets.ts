@@ -8,8 +8,9 @@
  *
  *   npx vite-node --script scripts/validate-audio-assets.ts
  */
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -37,6 +38,9 @@ export type AudioAssetIssueCode =
   | 'empty-file-without-synth'
   | 'invalid-file-path'
   | 'missing-file'
+  | 'content-unreadable'
+  | 'container-extension-mismatch'
+  | 'duplicate-file-content'
   | 'duration-unreadable'
   | 'event-sfx-too-long';
 
@@ -61,7 +65,11 @@ export interface ValidateAudioAssetOptions {
   policy: AudioAssetPolicy;
   fileExists?: (path: string) => boolean;
   durationSeconds?: (path: string) => number;
+  fileFingerprint?: (path: string) => string;
+  sniffContainer?: (path: string) => AudioContainer;
 }
+
+export type AudioContainer = 'wav' | 'mp4' | 'unknown';
 
 const CATEGORY_SET: ReadonlySet<string> = new Set(AUDIO_ASSET_CATEGORIES);
 
@@ -193,6 +201,30 @@ export function assertFfprobeAvailable(ffprobeCommand = 'ffprobe'): void {
   if (result.status !== 0) throw new Error(`${ffprobeCommand} -version exited ${String(result.status)}`);
 }
 
+/** Inspect the file header rather than trusting its extension. */
+export function sniffAudioContainer(path: string): AudioContainer {
+  const header = readFileSync(path).subarray(0, 12);
+  if (
+    header.length >= 12
+    && header.toString('ascii', 0, 4) === 'RIFF'
+    && header.toString('ascii', 8, 12) === 'WAVE'
+  ) return 'wav';
+  if (header.length >= 8 && header.toString('ascii', 4, 8) === 'ftyp') return 'mp4';
+  return 'unknown';
+}
+
+/** A content digest catches differently named cues that secretly carry the same audio payload. */
+export function fingerprintAudioFile(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+export function expectedContainerForFile(file: string): Exclude<AudioContainer, 'unknown'> | undefined {
+  const extension = extname(file).toLowerCase();
+  if (extension === '.wav') return 'wav';
+  if (extension === '.m4a' || extension === '.mp4') return 'mp4';
+  return undefined;
+}
+
 export function categoryForClip(
   clip: CoreAudioCatalogClip,
   categories: Readonly<Record<string, AudioAssetCategory>>,
@@ -210,10 +242,16 @@ export function validateAudioAssets(
 ): AudioAssetValidationResult {
   const fileExists = options.fileExists ?? existsSync;
   const durationSeconds = options.durationSeconds ?? probeAudioDurationSeconds;
+  // Unit tests often provide virtual paths. Byte inspection defaults on only for the real filesystem path;
+  // virtual callers can opt in through the injectable seams.
+  const inspectRealFiles = options.fileExists === undefined;
+  const fileFingerprint = options.fileFingerprint ?? (inspectRealFiles ? fingerprintAudioFile : undefined);
+  const inspectContainer = options.sniffContainer ?? (inspectRealFiles ? sniffAudioContainer : undefined);
   const audioRoot = resolve(options.audioDir);
   const issues: AudioAssetIssue[] = [];
   let fileBackedEntries = 0;
   const seenKeys = new Set<string>();
+  const seenFingerprints = new Map<string, { key: string; file: string }>();
   const catalogKeys = new Set(clips.map((clip) => clip.key));
 
   for (const [key, category] of Object.entries(options.policy.categories)) {
@@ -241,6 +279,37 @@ export function validateAudioAssets(
     }
     if (!fileExists(assetPath)) {
       issues.push({ code: 'missing-file', key: clip.key, file: clip.file, line: clip.line, category });
+      continue;
+    }
+
+    try {
+      if (inspectContainer) {
+        const actual = inspectContainer(assetPath);
+        const expected = expectedContainerForFile(clip.file);
+        if (expected && actual !== expected) {
+          issues.push({
+            code: 'container-extension-mismatch', key: clip.key, file: clip.file, line: clip.line, category,
+            detail: `expected ${expected}, found ${actual}`,
+          });
+        }
+      }
+      if (fileFingerprint) {
+        const fingerprint = fileFingerprint(assetPath);
+        const previous = seenFingerprints.get(fingerprint);
+        if (previous && previous.file !== clip.file) {
+          issues.push({
+            code: 'duplicate-file-content', key: clip.key, file: clip.file, line: clip.line, category,
+            detail: `byte-identical to ${previous.key} (${previous.file})`,
+          });
+        } else if (!previous) {
+          seenFingerprints.set(fingerprint, { key: clip.key, file: clip.file });
+        }
+      }
+    } catch (error) {
+      issues.push({
+        code: 'content-unreadable', key: clip.key, file: clip.file, line: clip.line, category,
+        detail: error instanceof Error ? error.message : String(error),
+      });
       continue;
     }
 
@@ -280,6 +349,9 @@ export function formatAudioAssetValidation(result: AudioAssetValidationResult, p
     else if (issue.code === 'empty-file-without-synth') lines.push(`  NO SOURCE  ${at}: empty file requires synth:true`);
     else if (issue.code === 'missing-file') lines.push(`  MISSING    ${at}`);
     else if (issue.code === 'invalid-file-path') lines.push(`  BAD PATH   ${at}`);
+    else if (issue.code === 'content-unreadable') lines.push(`  BAD FILE   ${at}: ${issue.detail ?? 'content unavailable'}`);
+    else if (issue.code === 'container-extension-mismatch') lines.push(`  BAD FORMAT ${at}: ${issue.detail ?? 'extension and container disagree'}`);
+    else if (issue.code === 'duplicate-file-content') lines.push(`  DUP AUDIO  ${at}: ${issue.detail ?? 'duplicate payload'}`);
     else if (issue.code === 'duration-unreadable') lines.push(`  UNREADABLE ${at}: ${issue.detail ?? 'duration unavailable'}`);
     else lines.push(
       `  TOO LONG   ${at}: ${issue.durationSeconds?.toFixed(3)}s; event SFX limit is ${policy.maxEventSfxSeconds}s`,

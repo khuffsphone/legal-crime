@@ -15,3 +15,5 @@ jobs:
       - run: npm --include=dev run typecheck
       - run: npm --include=dev run build
       - run: npm --include=dev test
+      - run: npm --include=dev run validate:audio-assets
+      - run: npm --include=dev run validate:asset-manifests

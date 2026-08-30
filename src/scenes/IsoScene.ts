@@ -59,6 +59,8 @@ import {
   removeCrewMemberForUnit,
   orphanedPlayerCrewUnitIds,
   collectorCarryView,
+  collectionStatusView,
+  collectionPillLabel,
   threatenedCollectors,
   anyCollectorInDanger,
   unitFacing,
@@ -339,7 +341,7 @@ import {
 // HUD PHASE 1 — the one-drawer panel system + the dossier strip that REPLACE the always-on side stack.
 import { PanelManager } from './hud/PanelManager';
 import { type PanelId } from './hud/panelState';
-import { buildDossierChips, dirtyPercent, type DossierChip } from './hud/dossierStrip';
+import { buildDossierChips, dirtyPercent, dossierFitScale, type DossierChip } from './hud/dossierStrip';
 import { AmbientLife } from './ambientLife';
 import { rollToward, winLossCompass, cashRollRate, crisisPulse, panelReveal } from './fx';
 // POLISH-PASS v2 — render-side feel/depth modules (math is pure + unit-tested; here we WIRE the numbers).
@@ -5313,6 +5315,7 @@ export class IsoScene extends Phaser.Scene {
     const W = this.hudW(), H = this.hudH();
     const hud = realtimeHudView(this.state, SCENE_WEEK_SECONDS);
     const pid = this.state.player.id;
+    const collections = collectionStatusView(this.state, pid);
     const earnDistricts = new Set<string>();
     for (const d of this.state.districts) for (const b of d.businesses) if (businessEarner(b) === pid) earnDistricts.add(d.id);
     const idle = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed && u.path.length === 0).length;
@@ -5323,6 +5326,10 @@ export class IsoScene extends Phaser.Scene {
       turfContested: this.state.contests?.length ?? 0,
       pathsDom: earnDistricts.size,
       pathsTotal: this.state.districts.length,
+      collectionAuto: collections.automaticCollectors,
+      collectionWaiting: collections.cashWaiting,
+      collectionRoad: collections.cashInTransit,
+      collectionRushState: collections.rushState,
       crewIdle: idle,
       ledgerDirtyPct: dirtyPercent(hud.player.cleanCash, hud.player.dirtyCash),
     });
@@ -5341,14 +5348,21 @@ export class IsoScene extends Phaser.Scene {
     bg.fillStyle(PAL.ink, 0.92).fillRect(0, y, W, stripH);
     bg.lineStyle(1, hexNum(SPEC.brass), 0.35).beginPath(); bg.moveTo(0, y + 0.5); bg.lineTo(W, y + 0.5); bg.strokePath();
     g.add(bg);
-    let x = 10;
-    for (const chip of chips) {
+    const entries = chips.map((chip) => {
       const open = !!this.panels?.isOpen(chip.id);
-      const t = this.mkText(x, y + stripH / 2, `[${chip.key}] ${chip.label}`, {
+      const text = this.mkText(0, y + stripH / 2, `[${chip.key}] ${chip.label}`, {
         fontFamily: NOIR_FONT, fontSize: '12px', color: open ? NOIR_PALETTE.brass : NOIR_PALETTE.bone, fontStyle: open ? 'bold' : 'normal',
       }).setOrigin(0, 0.5);
-      g.add(t);
-      const w = t.width + 16;
+      g.add(text);
+      return { chip, text };
+    });
+    const fixedWidth = entries.length * 22; // 16px hit padding + 6px inter-chip gap
+    const textWidth = entries.reduce((sum, entry) => sum + entry.text.width, 0);
+    const fit = dossierFitScale(textWidth, fixedWidth, W);
+    let x = 10;
+    for (const { chip, text } of entries) {
+      text.setPosition(x, y + stripH / 2).setScale(fit);
+      const w = text.width * fit + 16;
       this.dossierHits.push({ x: x - 6, y, w, h: stripH, id: chip.id });
       x += w + 6;
     }
@@ -5386,8 +5400,30 @@ export class IsoScene extends Phaser.Scene {
       case 'turf':
         return [`Districts held: ${districtsHeld(this.state, pid).length}/${this.state.districts.length}`,
           `Contested: ${this.state.contests?.length ?? 0}`, '', '(full turf board lands in a later HUD phase)'];
-      case 'paths':
-        return ['Collection routes + dominance.', '', '(full paths view lands in a later HUD phase)'];
+      case 'paths': {
+        const c = collectionStatusView(this.state, pid);
+        const routeDistricts = new Set<string>();
+        for (const d of this.state.districts) {
+          for (const b of d.businesses) if (businessEarner(b) === pid) routeDistricts.add(d.id);
+        }
+        const noun = c.automaticCollectors === 1 ? 'collector' : 'collectors';
+        const rush = c.rushState === 'in-flight'
+          ? 'RUSH IN FLIGHT — [C] is blocked until that runner banks.'
+          : c.rushState === 'ready'
+            ? `[C] RUSH can bring $${c.rushableNow} of the waiting $${c.cashWaiting} home early.`
+            : 'AUTO — NOTHING DUE. [C] does not need to be pressed.';
+        return [
+          'COLLECTIONS ARE AUTOMATIC',
+          `${c.automaticCollectors} fixed ${noun} · ${c.automaticOutbound} outbound · ${c.automaticReturning} returning`,
+          `WAITING AT FRONTS  $${c.cashWaiting}`,
+          `CASH ON THE ROAD   $${c.cashInTransit}`,
+          '',
+          rush,
+          '[C] only rushes accrued cash; it never starts or maintains the fixed routes.',
+          '',
+          `District reach: ${routeDistricts.size}/${this.state.districts.length}`,
+        ];
+      }
       case 'crew': {
         const muscle = this.state.units.filter((u) => u.factionId === pid && u.role !== 'collector' && !u.downed).length;
         return [`Muscle on the street: ${muscle}`, '', '(full crew roster lands in a later HUD phase)'];
@@ -6062,7 +6098,7 @@ export class IsoScene extends Phaser.Scene {
     // ── LEGACY SIDE STACK (HUD PHASE 1: retired when collapsed — summaries moved to the dossier strip) ──
     if (!this.hudCollapsed) {
       this.drawChannels(g, p);   // FOUR CHANNEL DIALS (→ Finance drawer, later phase)
-      this.drawRoutePill(g, p);  // ROUTE PILL (→ Paths drawer, later phase)
+      this.drawRoutePill(g);     // ROUTE PILL (→ Paths drawer, later phase)
       this.drawControl(g);       // CONTROL readout (→ Turf drawer, later phase)
     }
 
@@ -6175,22 +6211,18 @@ export class IsoScene extends Phaser.Scene {
 
   /** RTS-29 — the COLLECTORS pill: how many fixed per-business collectors are on the rounds + the cash
    * in transit (the sea-of-collectors heartbeat). One collector per extorted front; no player routing. */
-  private drawRoutePill(g: Phaser.GameObjects.Graphics, p: { uncollected: number }): void {
+  private drawRoutePill(g: Phaser.GameObjects.Graphics): void {
     if (!this.routePill) return;
     const r = this.channelPanelRect; const x = r.x, y = r.y + r.h + 8, w = r.w;
-    const cols = this.state.units.filter((u) => u.role === 'collector' && u.factionId === 'player' && u.routeId !== undefined);
-    const carrying = cols.reduce((a, u) => a + (u.carrying ?? 0), 0);
-    let text: string, col: string;
-    if (cols.length > 0) {
-      text = `◆ ${cols.length} COLLECTOR${cols.length === 1 ? '' : 'S'} on the rounds${carrying > 0 ? ` · banking $${carrying}` : ''}`;
-      col = NOIR_PALETTE.brass;
-    } else {
-      text = '◆ No collectors yet — lean on a [%] front ([E]) to start earning'; col = NOIR_PALETTE.fog;
-    }
+    const status = collectionStatusView(this.state, this.state.player.id);
+    const text = collectionPillLabel(status);
+    const col = status.automaticCollectors > 0 ? NOIR_PALETTE.brass : NOIR_PALETTE.fog;
     this.decoFrame(g, x, y, w, 26, PAL.brass, 0.8);
     this.setTC(this.routePill, text, col).setPosition(x + 8, y + 6);
-    this.hudRegions.push({ x, y, w, h: 26, explain: 'One collector per extorted front walks a fixed HQ↔shop track each week, banking the take. Collectors are SAFE while rivals are dormant; they become robbable once the war begins (RTS-30).' });
-    void p;
+    this.hudRegions.push({
+      x, y, w, h: 26,
+      explain: `COLLECTIONS ARE AUTOMATIC: ${status.automaticCollectors} fixed collector${status.automaticCollectors === 1 ? '' : 's'} walk HQ↔shop without input (${status.automaticOutbound} outbound, ${status.automaticReturning} returning). WAIT is cash still at fronts; ROAD is cash being carried. [C] is optional: it only rushes waiting cash home early.`,
+    });
   }
 
   /** RTS-29 — the CONTROL meter (the freed Market dock tab): "CONTROL ███░░ 7/10", named + capped. */

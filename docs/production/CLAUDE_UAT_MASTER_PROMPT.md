@@ -35,6 +35,8 @@ Treat the following as the expected behavior, not as open design questions:
 9. Footsteps must read as restrained shoes or boots, not high-pitched clicks, and must remain subordinate to voices and music.
 10. At `1x`, a visible casualty must lose gameplay agency immediately, perform a short fall, land with one contact sound, remain clearly readable as a body, fade late, and be fully removed within 6.5 seconds.
 11. A dead rival family must leave no immortal fighters, collectors, routes, contests, or queued strikes.
+12. The collection HUD always calls the fixed routes `AUTO`, shows `W$` (waiting) versus `R$` (on road), expands those terms in `[V]`, and presents `[C]` only as an optional `RUSH`.
+13. Music and ambience remain ducked for the full duration of admitted VO and recover when that line completes.
 
 ## Test setup
 
@@ -52,9 +54,10 @@ Treat the following as the expected behavior, not as open design questions:
 
 1. Confirm background music begins once after audio unlock and does not stack.
 2. Confirm voices are clear and intelligible over music.
-3. Confirm fog conceals unscouted areas and reveals content only through legitimate exploration.
-4. Leave the opening/tutorial card visible for 20 seconds. Confirm the week, funds, Heat, rival activity, and unit positions remain frozen.
-5. Select Sal and Vito separately. Confirm the displayed identity and acknowledgement match each character.
+3. For one short acknowledgement and one long tutorial line, confirm the beds remain ducked until the line ends and then recover cleanly.
+4. Confirm fog conceals unscouted areas and reveals content only through legitimate exploration.
+5. Leave the opening/tutorial card visible for 20 seconds. Confirm the week, funds, Heat, rival activity, and unit positions remain frozen.
+6. Select Sal and Vito separately. Confirm the displayed identity and acknowledgement match each character.
 
 ## Test B — footsteps
 
@@ -71,21 +74,23 @@ Fail this test if footsteps resemble high-pitched clicks, chatter every frame, c
 2. Confirm the order acknowledgement, walk, physical action, proprietor reaction, control change, and accrued-takings feedback.
 3. Confirm tutorial text clearly identifies `[C]` as the required one-time protected **RUSH** and explains that normal collections become automatic afterward.
 4. Before pressing `[C]`, verify that the normal automatic collector does not take the first tutorial payday.
-5. Tap `[C]` once.
-6. While that run is active, hold `[C]` for two seconds. Require no duplicate collector, pickup, deposit, or cash credit, plus a clear in-flight message.
-7. Require exactly one protected collector, one pickup, one HQ deposit, and one cash increase.
-8. Require the one-shot runner to exit and disappear after the deposit feedback. Fail if it remains parked at HQ.
+5. Confirm the always-visible collection chip says `AUTO`, shows the waiting amount as `W$`, and identifies `[C]` as `RUSH`; open `[V]` and verify the full explanation.
+6. Tap `[C]` once.
+7. While that run is active, hold `[C]` for two seconds. Require no duplicate collector, pickup, deposit, or cash credit, plus `RUSH IN FLIGHT` in the collection readout.
+8. Require exactly one protected collector, one pickup, one HQ deposit, and one cash increase.
+9. Require the one-shot runner to exit and disappear after the deposit feedback. Fail if it remains parked at HQ.
 
 ## Test D — automatic collection after onboarding
 
 1. After the protected deposit, do not press `[C]` for at least two settlements.
 2. Confirm a fixed collector automatically picks up and banks newly accrued takings.
-3. Confirm automatic pickup and deposit have readable visual/audio feedback.
-4. Confirm there is no duplicate fixed collector or double cash credit.
-5. Let takings accrue again and tap `[C]`. Confirm it only advances collection timing.
-6. While that rush is in flight, tap `[C]` again. Confirm a clear no-op and unchanged state.
-7. Confirm that later eligible rush runner deposits and retires.
-8. Tap `[C]` with no accrued takings. Require a clear explanation that nothing is waiting; do not infer a defect merely because the automatic collector already banked it.
+3. Confirm the chip distinguishes `W$X` from `R$Y`, the `[V]` drawer expands these as waiting/road, and the readout reaches `$0 DUE` after banking.
+4. Confirm automatic pickup and deposit have readable visual/audio feedback.
+5. Confirm there is no duplicate fixed collector or double cash credit.
+6. Let takings accrue again and tap `[C]`. Confirm it only advances collection timing.
+7. While that rush is in flight, tap `[C]` again. Confirm a clear no-op and unchanged state.
+8. Confirm that later eligible rush runner deposits and retires.
+9. Tap `[C]` with no accrued takings. Require a clear explanation that nothing is waiting; do not infer a defect merely because the automatic collector already banked it.
 
 ## Test E — `[G]`, Heat, Federal Exposure, and keyboard repeat
 

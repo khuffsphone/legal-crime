@@ -249,6 +249,70 @@ function downBody(): Track {
   return finish(track, 0.78);
 }
 
+/**
+ * Distinct phase and end-state stings. These are intentionally compact punctuation marks rather than
+ * miniature score cues: each has a different rhythmic and tonal silhouette, so the player can identify
+ * the state change without reading the banner and without six filenames hiding two duplicated payloads.
+ */
+function phaseEstablish(): Track {
+  const track = empty(1.25);
+  addNoise(track, 0.02, 0.12, 0.32, 0.025, 801, -0.2, 0.08);
+  addTone(track, 0.02, 0.24, 92, 68, 0.36, 0.055, -0.2);
+  addBell(track, 0.28, 392, 0.22, -0.12);
+  addBell(track, 0.62, 523.25, 0.28, 0.15);
+  addCoin(track, 0.79, 1_420, 0.25, 802);
+  return finish(track, 0.78);
+}
+
+function phaseFirstBlood(): Track {
+  const track = empty(1.08);
+  addGunCrack(track, 0.035, 0.72, 811, -0.12);
+  addTone(track, 0.12, 0.62, 118, 62, 0.3, 0.19, 0.12);
+  addNoise(track, 0.42, 0.3, 0.22, 0.09, 812, 0.2, 0.05);
+  addBell(track, 0.57, 277.18, 0.16, -0.18);
+  return finish(track, 0.82);
+}
+
+function phaseContest(): Track {
+  const track = empty(1.5);
+  addTone(track, 0.02, 1.25, 76, 92, 0.26, 0.7, 0, 0.015);
+  addBell(track, 0.15, 349.23, 0.2, -0.38);
+  addBell(track, 0.5, 311.13, 0.22, 0.38);
+  addBell(track, 0.86, 349.23, 0.25, -0.12);
+  addNoise(track, 0.92, 0.28, 0.2, 0.08, 821, 0.2, 0.06);
+  return finish(track, 0.8);
+}
+
+function phaseDecapitate(): Track {
+  const track = empty(1.72);
+  [0.03, 0.16, 0.3].forEach((start, index) => addGunCrack(track, start, 0.58 + index * 0.05, 830 + index, index % 2 ? 0.18 : -0.18));
+  addTone(track, 0.31, 1.08, 104, 43, 0.48, 0.35, 0, 0.01);
+  addNoise(track, 0.52, 0.65, 0.36, 0.18, 834, 0, 0.035);
+  addBell(track, 0.78, 196, 0.2, -0.15);
+  return finish(track, 0.9);
+}
+
+function victory(): Track {
+  const track = empty(2.1);
+  addTone(track, 0.02, 1.75, 98, 147, 0.24, 0.8, 0, 0.02);
+  addBell(track, 0.08, 392, 0.24, -0.3);
+  addBell(track, 0.48, 493.88, 0.28, 0.05);
+  addBell(track, 0.88, 587.33, 0.34, 0.3);
+  [1.06, 1.14, 1.23, 1.34].forEach((start, index) => addCoin(track, start, 1_480 + index * 210, -0.45 + index * 0.3, 841 + index));
+  return finish(track, 0.86);
+}
+
+function defeat(): Track {
+  const track = empty(2.35);
+  addTone(track, 0.02, 2.05, 122, 46, 0.42, 0.92, -0.08, 0.02);
+  addBell(track, 0.12, 293.66, 0.2, 0.25);
+  addBell(track, 0.57, 246.94, 0.18, -0.25);
+  addNoise(track, 0.92, 0.5, 0.48, 0.12, 851, -0.1, 0.045);
+  addTone(track, 0.92, 0.62, 72, 38, 0.52, 0.18, -0.1);
+  addNoise(track, 1.48, 0.45, 0.2, 0.17, 852, 0.18, 0.025);
+  return finish(track, 0.82);
+}
+
 function encodeWave(track: Track): Buffer {
   const frameCount = track.left.length;
   const bytesPerSample = 2;
@@ -291,9 +355,15 @@ const OUTPUTS: readonly OutputSpec[] = [
   { file: 'sfx_hit_rifle.wav', build: () => fromRuntimeSynth('sfx_hit_rifle', 0.9) },
   { file: 'sfx_hit_hitman.wav', build: () => fromRuntimeSynth('sfx_hit_hitman', 0.82) },
   { file: 'sfx_hit_demolitions.wav', build: () => fromRuntimeSynth('sfx_hit_demolitions', 0.94, 0.06) },
-  { file: 'sfx_step_pavement.wav', build: () => fromRuntimeSynth('sfx_step_pavement', 0.62) },
-  { file: 'sfx_step_gravel.wav', build: () => fromRuntimeSynth('sfx_step_gravel', 0.62, 0.02) },
+  { file: 'sfx_step_pavement_v2.wav', build: () => fromRuntimeSynth('sfx_step_pavement', 0.62) },
+  { file: 'sfx_step_gravel_v2.wav', build: () => fromRuntimeSynth('sfx_step_gravel', 0.62, 0.02) },
   { file: 'sfx_down_body.wav', build: downBody },
+  { file: 'sfx_phase_establish_v2.wav', build: phaseEstablish },
+  { file: 'sfx_phase_first_blood_v2.wav', build: phaseFirstBlood },
+  { file: 'sfx_phase_contest_v2.wav', build: phaseContest },
+  { file: 'sfx_phase_decapitate_v2.wav', build: phaseDecapitate },
+  { file: 'sfx_victory_you_took_the_city_v2.wav', build: victory },
+  { file: 'sfx_defeat_the_city_took_you_v2.wav', build: defeat },
 ];
 
 export function generateFp01Audio(outputDirectory: string): string[] {

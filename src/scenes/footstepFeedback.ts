@@ -2,9 +2,9 @@ import type { TileKind } from '../sim';
 
 export type FootstepKey = 'sfx_step_pavement' | 'sfx_step_gravel';
 
-/** Ground-distance spacing: at the opening stroll speed this lands at about 2.2 footfalls/second. */
-export const WALK_FOOTFALL_TILES = 0.52;
-export const RUN_FOOTFALL_TILES = 0.75;
+/** Ground-distance spacing: an unhurried shoe cadence, not a rapid mechanical click-track. */
+export const WALK_FOOTFALL_TILES = 0.6;
+export const RUN_FOOTFALL_TILES = 0.84;
 
 /** Parks and unfinished ground read as loose grit; every paved city surface uses the hard step. */
 export function footstepKeyForTile(kind: TileKind): FootstepKey {
@@ -26,8 +26,8 @@ export function advanceFootstepCadence(travelTiles: number, distanceTiles: numbe
   return { travelTiles: total % spacing, emit: total >= spacing };
 }
 
-const STEP_RATES = [0.94, 1, 0.97, 1.03] as const;
-const STEP_GAINS = [0.94, 1, 0.97, 0.92] as const;
+const STEP_RATES = [0.9, 0.98, 0.94, 1.01] as const;
+const STEP_GAINS = [0.86, 0.94, 0.9, 0.92] as const;
 
 /** Deterministic heel/toe variation without RNG or immediate repetition of the exact same playback. */
 export function footstepPlayback(stepIndex: number, unitSeed = 0): { rate: number; gain: number } {

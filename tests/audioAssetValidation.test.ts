@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   categoryForClip,
+  expectedContainerForFile,
   formatAudioAssetValidation,
   parseAudioAssetPolicy,
   parseCoreAudioCatalog,
@@ -119,9 +120,30 @@ describe('FP-01 physical audio validation', () => {
       expect.objectContaining({ code: 'duration-unreadable', key: 'bad', detail: 'decoder rejected file' }),
     ]);
   });
+
+  it('rejects mislabeled containers and differently named byte-identical cues', () => {
+    const result = validateAudioAssets(
+      [clip('win', 'win.wav'), clip('lose', 'lose.m4a'), clip('watch', 'watch.wav')],
+      {
+        audioDir: '/audio', policy: POLICY, fileExists: () => true, durationSeconds: () => 1,
+        sniffContainer: () => 'wav',
+        fileFingerprint: (path) => path.endsWith('watch.wav') ? 'unique' : 'same-payload',
+      },
+    );
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'container-extension-mismatch', key: 'lose' }),
+      expect.objectContaining({ code: 'duplicate-file-content', key: 'lose', detail: expect.stringContaining('win') }),
+    ]));
+  });
 });
 
 describe('FP-01 audio asset policy', () => {
+  it('maps supported filename extensions to their real container contract', () => {
+    expect(expectedContainerForFile('voice.wav')).toBe('wav');
+    expect(expectedContainerForFile('score.m4a')).toBe('mp4');
+    expect(expectedContainerForFile('clip.bin')).toBeUndefined();
+  });
+
   it('accepts explicit production categories and rejects ambiguous values', () => {
     expect(parseAudioAssetPolicy('{"maxEventSfxSeconds":5,"categories":{"intro":"cinematic"}}'))
       .toEqual({ maxEventSfxSeconds: 5, categories: { intro: 'cinematic' } });

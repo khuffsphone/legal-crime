@@ -42,7 +42,7 @@ describe('named confirmation routing', () => {
     const killTweensOf = vi.fn();
     const audio = manager();
     Object.assign(audio, {
-      scene: { tweens: { killTweensOf } },
+      scene: { time: { now: 1000 }, tweens: { killTweensOf } },
       voActive: active,
       voActiveKind: 'selection',
       voUntil: 5000,

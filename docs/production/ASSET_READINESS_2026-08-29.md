@@ -1,4 +1,4 @@
-# Brassmere Asset Readiness — 2026-08-29
+# Brassmere Asset Readiness — updated 2026-08-30
 
 This is a runtime audit, not an asset-counting exercise. An asset is **live** only when the normal showcase profile loads it, displays or plays it from a real gameplay trigger, and retains a working fallback. Presence in Git, Drive, a manifest, or a provider brief does not make it integrated.
 
@@ -10,12 +10,17 @@ This is a runtime audit, not an asset-counting exercise. An asset is **live** on
 | Thug action sheets | 5 | 5 | Idle, walk, run, and attack are live; hurt is provisionally wired into the casualty fall and is not a final death take |
 | Cop action sheets | 3 | 0 | Present; cops are disabled in the showcase profile pending balance UAT; no idle, hurt, or down sheet |
 | Modular facade-kit PNGs | 28 | 0 | Valid files and manifests, but nothing preloads or renders them; `facadeKit=true` currently selects procedural vector facades |
-| Physical audio files | 49 | 49 catalogued | Core catalog is wired and validation-green; 45 unique payloads because several stings share identical media |
+| Physical audio files | 49 | 49 catalogued | Core catalog is wired and validation-green; all 49 payloads are unique and file extensions now match their real containers |
 | Expanded atmosphere clips | 53 requested keys | 3 reused federal cues | Feature remains disabled; 50 requested clips have no physical file |
 | Video/cinematics | 0 | 0 | No runtime video exists |
 | Provider production records | 4 briefs | 0 | Meshy proprietor, ElevenLabs voice, Google music, and Google cinematic entries contain no jobs, files, rights evidence, approval, or runtime path |
 
 The public tree currently holds **60 decodable PNGs** and **49 physical audio files**. The normal build visibly consumes 24 props plus five thug sheets, with hurt used only as a provisional casualty bridge. File presence must not be reported as integration completion.
+
+The 2026-08-30 audio repair gives the two end states and four strategic phases six distinct stings,
+corrects nine PCM voice files that were mislabeled `.m4a`, and uses cache-busted `v2` footstep paths so
+an old browser cache cannot replay the superseded click-like samples. Container agreement and duplicate
+payload checks now run in CI. These files remain subject to in-game listening approval.
 
 ## Visual gaps
 

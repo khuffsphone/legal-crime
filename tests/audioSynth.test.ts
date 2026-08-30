@@ -73,7 +73,7 @@ describe('synthSamples — valid, non-empty, non-silent, in-range, deterministic
   it('keeps pavement and gravel steps long and dark enough to read as shoe contacts, not clicks', () => {
     for (const key of ['sfx_step_pavement', 'sfx_step_gravel'] as const) {
       const s = synthSamples(key, 44100);
-      expect(s.length / 44100).toBeGreaterThanOrEqual(0.2);
+      expect(s.length / 44100).toBeGreaterThanOrEqual(0.28);
       let energy = 0;
       let differenceEnergy = 0;
       for (let i = 1; i < s.length; i++) {

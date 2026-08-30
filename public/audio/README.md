@@ -37,19 +37,17 @@ The unused generic `warning` key was retired; NOTICE, WATCH, and RAID already ha
 - sfx_federal_85_raid.wav     — crossing 85 (RAID / hand-cranked siren)
 
 ## Win / lose stings (.wav)
-- sfx_victory_you_took_the_city.wav    — win
-- sfx_defeat_the_city_took_you.wav     — defeat
+- sfx_victory_you_took_the_city_v2.wav    — ascending win flourish
+- sfx_defeat_the_city_took_you_v2.wav     — descending defeat toll
 
-## ⚠ Phase stings — names ASSUMED (confirm or rename)
-The wiring expects these; if your `sfx_phase_*` files use different suffixes,
-either rename them to these or tell us the real suffixes:
-- sfx_phase_establish.wav · sfx_phase_first_blood.wav · sfx_phase_contest.wav · sfx_phase_decapitate.wav
+## Phase stings — distinct deterministic v2 cues
+- sfx_phase_establish_v2.wav · sfx_phase_first_blood_v2.wav
+- sfx_phase_contest_v2.wav · sfx_phase_decapitate_v2.wav
 
-## ⚠ VO — names NOT yet reconciled (optional flavor)
-The map still expects the LCR_vo_* names; map your `voice_*` files to these (rename
-table in the RTS-30e-audio receipt) when you want them — all optional, none gate a beat:
-- LCR_vo_confirm_1.m4a · _2 · _3   (crew-order confirm, rotated)
-- LCR_vo_tip_extort/_grease/_launder/_war.m4a   · LCR_vo_win.m4a · LCR_vo_lose.m4a
+## VO (.wav)
+The shipped voice files are 24 kHz mono PCM WAV and now use container-correct extensions:
+- LCR_vo_confirm_1.wav · _2 · _3   (crew-order confirm, rotated)
+- LCR_vo_tip_extort/_grease/_launder/_war.wav   · LCR_vo_win.wav · LCR_vo_lose.wav
 
 ## Combat & movement MVP (.wav) — physical candidates with synth fallback
 These nine exact paths now ship deterministic physical candidates. The eight hit/step keys retain their
@@ -60,8 +58,8 @@ runtime synth fallback if a physical file fails to load. `sfx_down_body` is phys
 - sfx_hit_rifle.wav        — tommy hit (0.22–0.40s, 4–6 taps)           · synth fallback
 - sfx_hit_hitman.wav       — hitman hit (0.08–0.18s, dry muted snap)    · synth fallback
 - sfx_hit_demolitions.wav  — demo hit (0.55–0.95s, satchel boom+tail)   · synth fallback
-- sfx_step_pavement.wav    — dark heel/toe pavement step (~0.25s)       · synth fallback
-- sfx_step_gravel.wav      — low boot + gravel crunch (~0.29s)          · synth fallback
+- sfx_step_pavement_v2.wav — leather heel/sole roll (~0.33s)             · synth fallback
+- sfx_step_gravel_v2.wav   — low boot + gravel settle (~0.37s)           · synth fallback
 - sfx_down_body.wav        — downed-body settle (0.30–0.65s)            · NO synth → silent if missing
 
 RESERVED (spec §8.2 — registered, NO file, NO forced surface map until a real context exists):

@@ -35,6 +35,13 @@ export {
   collectionSafety,
   collectionFraction,
 } from './collection';
+export {
+  collectionStatusView,
+  collectionPillLabel,
+  compactCollectionCash,
+  type CollectionStatusView,
+  type CollectionRushState,
+} from './collectionStatus';
 export { tick, tickN } from './tick';
 export { advanceClock, weekProgress, secondsUntilNextWeek } from './clock';
 export {

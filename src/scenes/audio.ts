@@ -55,8 +55,8 @@ const LIBRARY: ClipDef[] = [
   // synth fallback + file-wins rule as the hits. wood + interior are RESERVED (spec §8.2) — no confirmed wood
   // TileKind / interior traversal system yet, so they STAY registered as synth-only (file:'') and ship NO WAV;
   // do NOT force-map them until a real traversal context exists. ──
-  { key: 'sfx_step_pavement', file: 'sfx_step_pavement.wav', bus: 'sfx', vol: 0.35 },
-  { key: 'sfx_step_gravel', file: 'sfx_step_gravel.wav', bus: 'sfx', vol: 0.35 },
+  { key: 'sfx_step_pavement', file: 'sfx_step_pavement_v2.wav', bus: 'sfx', vol: 0.35 },
+  { key: 'sfx_step_gravel', file: 'sfx_step_gravel_v2.wav', bus: 'sfx', vol: 0.35 },
   { key: 'sfx_step_wood', file: '', bus: 'sfx', vol: 0.4, synth: true }, // RESERVED §8.2 — no wood surface yet
   { key: 'sfx_step_interior', file: '', bus: 'sfx', vol: 0.35, synth: true }, // RESERVED §8.2 — no interior yet
   // ── downed-body SETTLE (spec §8.1/§11 · Ticket 1 · NEW key). Body/coat weight + cobble/floor contact when a
@@ -83,22 +83,22 @@ const LIBRARY: ClipDef[] = [
   // ── phase + win/lose stings — RTS-30e-audio: win/lose reconciled to the user's exact assets; the four
   // phase stings ASSUME the user's `sfx_phase_<phase>.wav` convention (confirm the suffixes / see the
   // rename table in the receipt if the real files differ). ──
-  { key: 'sting_establish', file: 'sfx_phase_establish.wav', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_first_blood', file: 'sfx_phase_first_blood.wav', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_contest', file: 'sfx_phase_contest.wav', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_decapitate', file: 'sfx_phase_decapitate.wav', bus: 'sfx', vol: 0.9, urgent: true },
-  { key: 'sting_win', file: 'sfx_victory_you_took_the_city.wav', bus: 'sfx', vol: 0.95, urgent: true },
-  { key: 'sting_lose', file: 'sfx_defeat_the_city_took_you.wav', bus: 'sfx', vol: 0.95, urgent: true },
+  { key: 'sting_establish', file: 'sfx_phase_establish_v2.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_first_blood', file: 'sfx_phase_first_blood_v2.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_contest', file: 'sfx_phase_contest_v2.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_decapitate', file: 'sfx_phase_decapitate_v2.wav', bus: 'sfx', vol: 0.9, urgent: true },
+  { key: 'sting_win', file: 'sfx_victory_you_took_the_city_v2.wav', bus: 'sfx', vol: 0.95, urgent: true },
+  { key: 'sting_lose', file: 'sfx_defeat_the_city_took_you_v2.wav', bus: 'sfx', vol: 0.95, urgent: true },
   // ── VO (expected; rotated takes) ──
-  { key: 'vo_confirm_1', file: 'LCR_vo_confirm_1.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_confirm_2', file: 'LCR_vo_confirm_2.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_confirm_3', file: 'LCR_vo_confirm_3.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_tip_extort', file: 'LCR_vo_tip_extort.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_tip_grease', file: 'LCR_vo_tip_grease.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_tip_launder', file: 'LCR_vo_tip_launder.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_tip_war', file: 'LCR_vo_tip_war.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_win', file: 'LCR_vo_win.m4a', bus: 'vo', vol: 1 },
-  { key: 'vo_lose', file: 'LCR_vo_lose.m4a', bus: 'vo', vol: 1 },
+  { key: 'vo_confirm_1', file: 'LCR_vo_confirm_1.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_confirm_2', file: 'LCR_vo_confirm_2.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_confirm_3', file: 'LCR_vo_confirm_3.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_tip_extort', file: 'LCR_vo_tip_extort.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_tip_grease', file: 'LCR_vo_tip_grease.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_tip_launder', file: 'LCR_vo_tip_launder.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_tip_war', file: 'LCR_vo_tip_war.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_win', file: 'LCR_vo_win.wav', bus: 'vo', vol: 1 },
+  { key: 'vo_lose', file: 'LCR_vo_lose.wav', bus: 'vo', vol: 1 },
   // ── MUSIC beds (provided; looped) ──
   { key: 'music_theme', file: 'LCR_music_theme.m4a', bus: 'music', loop: true, vol: 0.7 },
   { key: 'music_menu', file: 'LCR_music_menu.m4a', bus: 'music', loop: true, vol: 0.7 },
@@ -120,7 +120,7 @@ const SAME_CLIP_DEBOUNCE = 70; // ms — swallow a retrigger of the SAME clip in
 // window/threshold are pure data in audioMap.ts (SOFT_SFX_MAX / SOFT_SFX_PRIORITY / SOFT_BURST_*);
 // these two are the Phaser-side durations the manager applies once those pure decisions are made. ──
 const SOFT_BURST_DUCK_MS = 450; // a soft burst ducks the beds this long (lighter than an urgent's 700)
-const VO_MAX_MS = 8000; // exceeds the longest shipped tip while still preventing a wedged VO gate
+const VO_MAX_MS = 8000; // watchdog cadence; real VO completion—not this value—releases the beds
 const SETTINGS_KEY = 'lcr.audio.settings.v1';
 
 export interface AudioSettings { master: number; sfx: number; vo: number; music: number; ambience: number; muted: boolean; }
@@ -142,6 +142,10 @@ export class AudioManager {
   private voActive?: Phaser.Sound.BaseSound;
   private voUntil = 0;
   private voActiveKind?: 'selection' | 'other';
+  private voWatchdog?: Phaser.Time.TimerEvent;
+  // Beds stay ducked for the REAL lifetime of admitted VO. Transient SFX ducks have their own
+  // deadline so a voice ending cannot accidentally lift a still-active combat/federal duck.
+  private transientDuckUntil = 0;
   private musicSound?: Phaser.Sound.BaseSound;
   private ambienceSound?: Phaser.Sound.BaseSound;
   // RTS-31 — the conductor's live beds (≤1 after a crossfade settles) + the beds mid-fade-out, so a
@@ -288,11 +292,12 @@ export class AudioManager {
       const snd = this.scene.sound.add(key, { volume: this.voiceVolume(def, opts), rate: opts.rate ?? 1 });
       if (!snd.play()) { snd.destroy(); return false; }
       this.lastPlayed.set(key, now);
-      this.duck(900); // VO speaks over a ducked bed — duck only once the gate admits it
       this.voActive = snd;
       this.voActiveKind = 'other';
       this.voUntil = now + VO_MAX_MS; // failsafe so a missed 'complete' can't wedge the gate forever
-      snd.once('complete', () => { if (this.voActive === snd) { this.voActive = undefined; this.voActiveKind = undefined; this.voUntil = 0; } });
+      this.armVoWatchdog(snd);
+      this.refreshBedDuck(); // hold until this exact sound completes, not an arbitrary 900 ms
+      snd.once('complete', () => this.finishVo(snd));
       return true;
     }
 
@@ -333,6 +338,28 @@ export class AudioManager {
     this.activeSoftVoices = this.activeSoftVoices.filter((v) => v.snd.isPlaying);
   }
 
+  /** Retire one admitted VO exactly once, then release only the VO portion of the bed duck. */
+  private finishVo(snd: Phaser.Sound.BaseSound): void {
+    if (this.voActive !== snd) return;
+    this.voWatchdog?.remove(false);
+    this.voWatchdog = undefined;
+    this.voActive = undefined;
+    this.voActiveKind = undefined;
+    this.voUntil = 0;
+    this.refreshBedDuck();
+    snd.destroy();
+  }
+
+  /** A missed Phaser completion event cannot wedge the VO gate forever. Longer real lines stay held. */
+  private armVoWatchdog(snd: Phaser.Sound.BaseSound): void {
+    this.voWatchdog?.remove(false);
+    this.voWatchdog = this.scene.time.delayedCall?.(VO_MAX_MS, () => {
+      if (this.voActive !== snd) return;
+      if (snd.isPlaying) this.armVoWatchdog(snd);
+      else this.finishVo(snd);
+    });
+  }
+
   /** Rotate a VO take from a list so it doesn't grate. The single-VO gate + the bed-duck now live in
    * play()'s VO branch, so a take dropped by the gate no longer ducks the beds for nothing. */
   vo(takes: string[]): boolean {
@@ -364,12 +391,10 @@ export class AudioManager {
     // Selection is low priority. A real order may cut a still-playing selection bark so immediate input
     // always receives feedback; tips and other VO remain non-interruptible under the one-VO rule.
     if (intent === 'order' && this.voActiveKind === 'selection' && this.voActive) {
-      this.scene.tweens.killTweensOf(this.voActive);
-      this.voActive.stop();
-      this.voActive.destroy();
-      this.voActive = undefined;
-      this.voActiveKind = undefined;
-      this.voUntil = 0;
+      const interrupted = this.voActive;
+      this.scene.tweens.killTweensOf(interrupted);
+      interrupted.stop();
+      this.finishVo(interrupted);
     }
     const takes = confirmationTakesForPersona(persona).filter((key) => this.loaded.has(key));
     const pick = pickTake(takes, this.lastConfirmIndex.get(persona) ?? -1);
@@ -390,6 +415,7 @@ export class AudioManager {
       this.ambienceSound.play();
     }
     this.setPhase(this.currentPhase, true);
+    if (this.voActive?.isPlaying) this.refreshBedDuck();
   }
 
   /** Switch the music bed for a match phase, crossfading. ONE conductor: on every change it retires
@@ -438,23 +464,56 @@ export class AudioManager {
       this.liveBeds.push({ id: ++this.bedSeq, bed, snd: next });
     }
     this.musicSound = this.liveBeds.length > 0 ? this.liveBeds[this.liveBeds.length - 1].snd : undefined;
+    if (Math.max(this.transientDuckUntil, this.voActive?.isPlaying ? this.voUntil : 0) > this.scene.time.now) {
+      this.refreshBedDuck();
+    }
   }
 
-  /** Briefly duck the music + ambience beds under a sting/VO, then restore. */
+  /** Briefly duck the music + ambience beds under a sting, without shortening a live VO duck. */
   duck(ms: number): void {
+    this.transientDuckUntil = Math.max(this.transientDuckUntil, this.scene.time.now + ms);
+    this.refreshBedDuck();
+  }
+
+  /** Rebuild the one authoritative bed restore. New ducks and VO completion cancel stale restores. */
+  private refreshBedDuck(): void {
+    if (this.destroyed) return;
+    const now = this.scene.time.now;
+    const voiceHeld = !!this.voActive?.isPlaying;
+    const holdUntil = this.transientDuckUntil;
+    const delay = Math.max(0, holdUntil - now);
     for (const [snd, bus, key] of [[this.musicSound, 'music', this.currentBed], [this.ambienceSound, 'ambience', 'ambience_city']] as const) {
       if (!snd) continue;
       const full = this.bedVol(bus, key);
       this.scene.tweens.killTweensOf(snd);
-      (snd as Phaser.Sound.BaseSound & { volume: number }).volume = full * 0.45;
-      this.scene.tweens.add({ targets: snd, volume: full, duration: 400, delay: ms });
+      const ducked = voiceHeld || holdUntil > now;
+      const voiced = snd as Phaser.Sound.BaseSound & { volume: number };
+      if (ducked) {
+        voiced.volume = full * 0.45;
+        // VO owns release through its completion callback. A transient duck can safely schedule itself.
+        if (!voiceHeld) this.scene.tweens.add({ targets: snd, volume: full, duration: 400, delay });
+      } else if (voiced.volume < full * 0.99) {
+        this.scene.tweens.add({ targets: snd, volume: full, duration: 400 });
+      } else {
+        voiced.volume = full;
+      }
     }
   }
 
   private bedVol(bus: AudioBus, key: string): number { return this.busVolume(bus) * (DEFS.get(key)?.vol ?? 0.7); }
   private applyBedVolumes(): void {
-    if (this.musicSound) (this.musicSound as Phaser.Sound.BaseSound & { volume: number }).volume = this.bedVol('music', this.currentBed);
-    if (this.ambienceSound) (this.ambienceSound as Phaser.Sound.BaseSound & { volume: number }).volume = this.bedVol('ambience', 'ambience_city');
+    const ducked = !!this.voActive?.isPlaying || this.transientDuckUntil > this.scene.time.now;
+    if (ducked) { this.refreshBedDuck(); return; }
+    // A settings write during the 400 ms release fade must cancel that stale tween first, or its old
+    // captured target can later overwrite the new volume (including audibly undoing MUTE).
+    if (this.musicSound) {
+      this.scene.tweens.killTweensOf(this.musicSound);
+      (this.musicSound as Phaser.Sound.BaseSound & { volume: number }).volume = this.bedVol('music', this.currentBed);
+    }
+    if (this.ambienceSound) {
+      this.scene.tweens.killTweensOf(this.ambienceSound);
+      (this.ambienceSound as Phaser.Sound.BaseSound & { volume: number }).volume = this.bedVol('ambience', 'ambience_city');
+    }
   }
 
   // ── AUDIO E-H (H3) — ATMOSPHERE LOOP VOICES ─────────────────────────────────────────────────────
@@ -535,6 +594,8 @@ export class AudioManager {
       sound.stop();
       sound.destroy();
     }
+    this.voWatchdog?.remove(false);
+    this.voWatchdog = undefined;
     this.liveBeds = [];
     this.retiringBeds = [];
     this.activeUrgentVoices.clear();
@@ -546,6 +607,7 @@ export class AudioManager {
     this.voActive = undefined;
     this.voActiveKind = undefined;
     this.voUntil = 0;
+    this.transientDuckUntil = 0;
   }
 
   /** A clip is available to play (loaded). */
