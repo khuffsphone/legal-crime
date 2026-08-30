@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInitialState } from '../src/sim/state';
+import { effectiveDecay, raidChance } from '../src/sim/law';
 import type { GameState, Business, BeatCop, IncidentRecord } from '../src/sim';
 import { fullyVisible, sealed } from '../src/scenes/ui/statusVisibility';
 import { buildScreenView } from '../src/scenes/ui/statusScreenBodies';
@@ -66,8 +67,9 @@ describe('status bodies — NO-X-RAY: fog-sensitive fields mask under `sealed`',
     const { state } = fixture();
     const hidden = json(build('racketOperations', state, sealed));
     expect(hidden).toContain(MY_DEN);          // own op always visible
-    expect(hidden).not.toContain(RIVAL_DEN);   // rival op masked → "Rival racket"
-    expect(hidden).toContain('Rival racket');
+    expect(hidden).not.toContain(RIVAL_DEN);   // rival op masked behind one generic rumor
+    expect(hidden).toContain('Unconfirmed activity');
+    expect(hidden).not.toMatch(/OPERATIONS \(\d+\)/); // no all-city hidden operation count
     const shown = json(build('racketOperations', state, fullyVisible));
     expect(shown).toContain(RIVAL_DEN);        // scouted ⇒ surfaced (gate works both ways)
   });
@@ -77,6 +79,7 @@ describe('status bodies — NO-X-RAY: fog-sensitive fields mask under `sealed`',
     const hidden = json(build('frontsExtortion', state, sealed));
     expect(hidden).toContain(MY_FRONT);        // own extorted front always visible
     expect(hidden).not.toContain(RIVAL_FRONT); // rival-held front masked
+    expect(hidden).toContain('Unconfirmed activity');
     expect(json(build('frontsExtortion', state, fullyVisible))).toContain(RIVAL_FRONT);
   });
 
@@ -97,6 +100,7 @@ describe('status bodies — NO-X-RAY: fog-sensitive fields mask under `sealed`',
     expect(hidden).toContain('weekly settlement');      // player-global incident always shown
     expect(hidden).not.toContain(RIVAL_INCIDENT);       // rival grab at an unscouted block masked
     expect(hidden).toContain('another part of town');
+    expect(hidden).not.toMatch(/territory · week/);     // rumor discloses neither hidden type nor week
     expect(json(build('incidentLedger', state, fullyVisible))).toContain(RIVAL_INCIDENT);
   });
 
@@ -107,6 +111,53 @@ describe('status bodies — NO-X-RAY: fog-sensitive fields mask under `sealed`',
     expect(hidden).not.toContain(RIVAL_SHOCK);  // type 'shock' (audit/speakeasy-raid) names rivals — must mask
     expect(hidden).toContain(MY_BUST);          // the player's OWN bust (familyId = player) still shows
     expect(hidden).toContain('weekly settlement'); // own settlement always shown
+  });
+
+  it('one or many hidden incidents produce exactly one identical generic rumor', () => {
+    const a = fixture().state;
+    const b = fixture().state;
+    const rivalId = b.rivals[0].id;
+    for (let i = 0; i < 7; i++) {
+      b.incidents.push({
+        seq: 100 + i,
+        week: 900 + i,
+        type: i % 2 === 0 ? 'shock' : 'bust',
+        severity: 'danger',
+        summary: `HIDDEN_EXTRA_${i}`,
+        data: { familyId: rivalId },
+      });
+    }
+    const va = build('incidentLedger', a, sealed);
+    const vb = build('incidentLedger', b, sealed);
+    expect(vb).toEqual(va);
+    const rumors = vb.sections.flatMap((section) => section.rows).filter((row) => row.kind === 'unknown');
+    expect(rumors).toHaveLength(1);
+    expect(json(vb)).not.toMatch(/HIDDEN_EXTRA|90\d/);
+  });
+
+  it('hidden business cardinality is not observable in operations or fronts', () => {
+    const a = fixture().state;
+    const b = fixture().state;
+    const district = b.districts[b.districts.length - 1];
+    const rivalId = b.rivals[0].id;
+    for (let i = 0; i < 5; i++) {
+      district.businesses.push({
+        id: `hidden-op-${i}`, name: `HIDDEN_OP_${i}`, districtId: district.id,
+        kind: 'speakeasy', baseIncome: 100, heatPerTick: 1, ownerFamily: rivalId,
+      });
+      district.businesses.push({
+        id: `hidden-front-${i}`, name: `HIDDEN_FRONT_${i}`, districtId: district.id,
+        kind: 'front', baseIncome: 100, heatPerTick: 1, extortedBy: rivalId,
+      });
+    }
+    for (const screen of ['racketOperations', 'frontsExtortion']) {
+      const va = build(screen, a, sealed);
+      const vb = build(screen, b, sealed);
+      expect(vb, `${screen} leaked hidden cardinality`).toEqual(va);
+      const rumors = vb.sections.flatMap((section) => section.rows).filter((row) => row.kind === 'unknown');
+      expect(rumors).toHaveLength(1);
+      expect(json(vb)).not.toMatch(/HIDDEN_OP|HIDDEN_FRONT/);
+    }
   });
 
   it('districtDossier of an unscouted rival district is fully masked under sealed', () => {
@@ -140,6 +191,18 @@ describe('status bodies — SAFE screens stay readable under `sealed` (no over-g
     const v = json(build('federalLadder', state, sealed));
     expect(v).toContain('Federal exposure');
     expect(v).toMatch(/CLEAR|NOTICE|WATCH|RAID/);
+  });
+
+  it('Heat / Beat uses The Beat for raid odds and City Hall for cooling, not the total retainer', () => {
+    const { state } = fixture();
+    state.player.heat = 80;
+    state.player.bribes = { police: 10, judges: 50, politicians: 40, feds: 30 };
+    state.player.bribeLevel = 130;
+    const rows = build('heatBeatMeter', state, sealed).sections.flatMap((section) => section.rows);
+    const raid = rows.find((row) => 'label' in row && row.label === 'Raid risk');
+    const decay = rows.find((row) => 'label' in row && row.label === 'Weekly decay');
+    expect(raid && 'value' in raid ? raid.value : null).toBe(`${Math.round(raidChance(80, 10) * 100)}%`);
+    expect(decay && 'value' in decay ? decay.value : null).toBe(`−${Math.round(effectiveDecay(40))}`);
   });
 
   it('thugRoster lists own crew (unit rows) under sealed', () => {

@@ -154,6 +154,15 @@ describe('firstObjective — the guided next move', () => {
     expect(win.detail).toMatch(/DOMINATION|GO STRAIGHT|MAYOR/);
   });
 
+  it('does not graduate the first grease lesson until The Beat unlock is funded', () => {
+    const s = createInitialState(1, { bigCity: true });
+    s.districts[0].businesses[0].extortedBy = 'player';
+    s.player.bribes.feds = 10;
+    expect(firstObjective(s).step).toBe('grease');
+    s.player.bribes.police = 10;
+    expect(firstObjective(s).step).toBe('hold');
+  });
+
   it('RTS-33: only the terminal WIN step is `done` — the player always has a next goal until then', () => {
     const s = createInitialState(1, { bigCity: true });
     s.districts[0].businesses[0].extortedBy = 'player';

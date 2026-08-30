@@ -17,6 +17,9 @@ export type UnitRole = 'collector' | 'enforcer';
 
 export interface MovableUnit {
   id: string;
+  /** Optional link to the persistent strategic-roster member embodied by this map unit. Older saves
+   * omit it; the legacy-binding pass repairs those units deterministically on load. */
+  gangsterId?: string;
   /** Continuous grid-space position (gx, gy are fractional while between tiles). */
   pos: GridPos;
   /** Remaining tile waypoints to travel to, in order. Empty ⇒ idle / arrived. */

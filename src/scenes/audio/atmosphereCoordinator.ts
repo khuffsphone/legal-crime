@@ -161,7 +161,7 @@ export function stepAtmosphere(state: AtmosphereState, frame: AtmosphereFrame): 
     || (frame.collectorArrivals?.length ?? 0) > 0;
   const mapped: readonly EventCueIntent[] = hasEvents
     ? [
-      ...mapLogEvents(logEvents),
+      ...mapLogEvents(logEvents, frame.playerFamilyId),
       ...mapExtortionEvents(obs.extortion ?? [], obs.tileOfFront),
       ...mapInterceptions(obs.interceptions ?? [], frame.playerFamilyId),
       ...mapCollectorBeats(frame.collectorDeposits ?? [], frame.playerFamilyId, frame.collectorArrivals ?? []),

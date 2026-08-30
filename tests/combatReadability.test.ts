@@ -8,7 +8,10 @@ import { update } from '../src/sim/realtime';
 import { THUG_MAX_HEALTH } from '../src/sim/constants';
 import { healthFraction, isDamaged, shouldShowHealthBar, isCritical, showTargetReticle } from '../src/scenes/combatReadout';
 import {
-  recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
+  recordDownedBody, advanceDownedBodies, downedBodyFallProgress, downedBodyMotionPaused,
+  downedBodyDecay, downedBodyAngleDeg,
+  DOWNED_BODY_CONTACT_SECONDS, DOWNED_BODY_FADE_START_SECONDS, DOWNED_BODY_PERSIST_SECONDS,
+  MAX_DOWNED_BODIES, type DownedBody,
 } from '../src/sim/downedBodies';
 import type { CombatEvent } from '../src/sim/combat';
 
@@ -56,16 +59,41 @@ describe('downed-body persistence — a body, not an instant delete', () => {
     bodies = recordDownedBody(bodies, { ...DOWN_EV, kind: 'hit' }); // a hit is not a body
     expect(bodies).toHaveLength(1);
   });
-  it('ages then CULLS the body after the persist window (and fades over it)', () => {
+  it('falls by ~0.5s, stays readable, then fades and CULLS by six seconds', () => {
     let bodies = recordDownedBody([], DOWN_EV);
     expect(downedBodyDecay(bodies[0])).toBe(0);
-    // age to just under the window — still present, decaying toward 1
-    bodies = advanceDownedBodies(bodies, DOWNED_BODY_PERSIST_SECONDS - 0.5);
+    expect(downedBodyFallProgress(bodies[0])).toBe(0);
+    bodies = advanceDownedBodies(bodies, DOWNED_BODY_CONTACT_SECONDS);
+    expect(downedBodyFallProgress(bodies[0])).toBe(1);
+    expect(downedBodyDecay(bodies[0])).toBe(0); // readable corpse, not a six-second ghost
+    bodies = advanceDownedBodies(bodies, DOWNED_BODY_FADE_START_SECONDS - DOWNED_BODY_CONTACT_SECONDS + 0.75);
     expect(bodies).toHaveLength(1);
-    expect(downedBodyDecay(bodies[0])).toBeGreaterThan(0.8);
-    // age past the window — culled
-    bodies = advanceDownedBodies(bodies, 1);
+    expect(downedBodyDecay(bodies[0])).toBeGreaterThan(0);
+    // age past the six-second hard window — culled (well under the 6.5s presentation budget)
+    bodies = advanceDownedBodies(bodies, DOWNED_BODY_PERSIST_SECONDS);
     expect(bodies).toHaveLength(0);
+  });
+
+  it('caps simultaneous bodies and keeps the newest casualties', () => {
+    let bodies: DownedBody[] = [];
+    for (let i = 0; i < MAX_DOWNED_BODIES + 5; i++) {
+      bodies = recordDownedBody(bodies, { ...DOWN_EV, unitId: `down-${i}` });
+    }
+    expect(bodies).toHaveLength(MAX_DOWNED_BODIES);
+    expect(bodies[0].id).toBe('down-5');
+    expect(bodies.at(-1)?.id).toBe(`down-${MAX_DOWNED_BODIES + 4}`);
+  });
+
+  it('chooses a stable isometric fall orientation', () => {
+    expect(downedBodyAngleDeg('r')).toBe(downedBodyAngleDeg('r'));
+    expect(Math.abs(downedBodyAngleDeg('r'))).toBe(64);
+  });
+
+  it('lets the hurt take play during the fall, then holds it still at contact (and under pause)', () => {
+    const falling = { id: 'r', factionId: 'rival-a', gx: 6, gy: 5, ageSec: 0.2 };
+    expect(downedBodyMotionPaused(falling, false)).toBe(false);
+    expect(downedBodyMotionPaused(falling, true)).toBe(true);
+    expect(downedBodyMotionPaused({ ...falling, ageSec: DOWNED_BODY_CONTACT_SECONDS }, false)).toBe(true);
   });
 });
 

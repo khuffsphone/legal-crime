@@ -70,6 +70,37 @@ export function combatEventKind(kind: 'hit' | 'down'): EventKind {
   return kind === 'down' ? 'unit.down' : 'combat.hit';
 }
 
+/** A player-knowable event ready for the Wire adapter. Positional fields are optional because a known
+ * district change can still be reported without inventing a jump target when world layout is unavailable. */
+export interface InfoIntent {
+  kind: EventKind;
+  message: string;
+  gx?: number;
+  gy?: number;
+}
+
+export interface CombatInfoIntent extends InfoIntent {
+  gx: number;
+  gy: number;
+}
+
+/** The single NO-X-RAY decision for combat information. Hidden rival-vs-rival combat must be
+ * observationally identical to empty fog across The Wire, minimap pings, edge alerts and [Q]. */
+export function combatInfoIntent(
+  ev: { kind: 'hit' | 'down'; faction: string; gx: number; gy: number },
+  playerFamilyId: string,
+  visible: boolean,
+): CombatInfoIntent | null {
+  if (!visible) return null;
+  const faction = ev.faction === playerFamilyId ? 'player' : 'rival';
+  return {
+    kind: combatEventKind(ev.kind),
+    message: ev.kind === 'down' ? `a ${faction} thug went DOWN` : `${faction} thug took a hit`,
+    gx: ev.gx,
+    gy: ev.gy,
+  };
+}
+
 /** An embodied-extortion transition → its kind (or null for an intermediate transition that isn't logged). */
 export function extortionEventKind(ev: { converted: boolean; retook: boolean; failed: boolean }): EventKind | null {
   if (ev.converted) return ev.retook ? 'front.retaken' : 'front.converted';
@@ -85,4 +116,34 @@ export function bribeEventKind(landed: boolean): EventKind {
 /** A turf-war capture → district.lost (the player lost it) or district.captured (the player took it). */
 export function captureEventKind(lostByPlayer: boolean): EventKind {
   return lostByPlayer ? 'district.lost' : 'district.captured';
+}
+
+/**
+ * A strategic capture -> a player-knowable Wire intent.
+ *
+ * Own gains/losses are always knowable. A third-party capture is knowable only after the district has
+ * been scouted; otherwise it collapses to `null`, preventing its name, timing and location from leaking
+ * through the Wire, minimap ping, edge alert or jump-to-event surfaces.
+ */
+export function captureInfoIntent(
+  capture: { before: string | null; after: string | null },
+  playerId: string,
+  district: { name: string; gx?: number; gy?: number },
+  districtKnown: boolean,
+): InfoIntent | null {
+  const lostByPlayer = capture.before === playerId && capture.after !== playerId;
+  const gainedByPlayer = capture.after === playerId && capture.before !== playerId;
+  if (!lostByPlayer && !gainedByPlayer && !districtKnown) return null;
+
+  const message = lostByPlayer
+    ? `${district.name} LOST to a rival`
+    : gainedByPlayer
+      ? `${district.name} captured`
+      : `${district.name} changed hands`;
+  return {
+    kind: captureEventKind(lostByPlayer),
+    message,
+    ...(district.gx !== undefined ? { gx: district.gx } : {}),
+    ...(district.gy !== undefined ? { gy: district.gy } : {}),
+  };
 }

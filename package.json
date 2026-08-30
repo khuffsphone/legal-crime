@@ -8,15 +8,21 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "generate:fp01-audio": "vite-node --script scripts/generate-fp01-audio.ts",
+    "validate:audio-assets": "vite-node --script scripts/validate-audio-assets.ts",
+    "validate:asset-manifests": "vite-node --script scripts/validate-asset-manifests.ts"
   },
   "dependencies": {
     "phaser": "^3.80.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "typescript": "^5.4.0",
     "vite": "^5.0.0",
+    "vite-node": "^2.1.9",
     "vitest": "^2.0.0"
   }
 }

@@ -25,9 +25,10 @@ import {
 } from '../sim';
 import { TEX, PED_COATS, pedTexKey, ensureCitizenMarkers } from './cityArt';
 import { ambientShown } from './fx';
+import { resolveFeatureProfile } from './featureProfile';
 import { districtIdentityFor } from './art/districtIdentity';
 import {
-  parseCitizensEnabled, parseCitizenLetters,
+  parseCitizenLetters,
   buildDistrictArchetypeMap, spawnWeightsForNodes, cumulative, weightedIndex,
   roleForSlot, movementSpeedForRole, citizenRoll, RollSalt,
   citizenMarkerTexKey, CITIZEN_MARKER_SCALE, roleIndex, ROLE_LETTER,
@@ -129,7 +130,7 @@ export class AmbientLife {
     this.rng = new Rng((seed ^ 0x11fe) >>> 0);
 
     const search = typeof window !== 'undefined' ? (window.location?.search ?? '') : '';
-    this.citizensEnabled = parseCitizensEnabled(search); // Rider R2: parsed HERE — IsoScene needs zero changes
+    this.citizensEnabled = resolveFeatureProfile(search).citizens;
     this.citizenLetters = parseCitizenLetters(search);
     if (this.citizensEnabled) {
       ensureCitizenMarkers(scene); // R4 warm-neutral marker bakes (lazy — flag-off boot never bakes)

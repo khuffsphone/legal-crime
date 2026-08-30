@@ -7,8 +7,9 @@
 // — directly (click a channel) or via [G] targeting the HOTTEST one — so a lean player greases only what's hot.
 // It does NOT touch the sim's heat model (tick/law/commands are sacred); it only decides the target channel.
 
-import { BRIBE_CHANNELS } from '../sim/bribery';
+import { BRIBE_CHANNELS, bustAvoidChance } from '../sim/bribery';
 import { HEAT_MAX } from '../sim/constants';
+import { effectiveDecay, raidChance } from '../sim/law';
 import type { BribeChannel } from '../sim';
 
 /** Current pressure readings, each addressed by ONE channel. Sourced from the existing pure sim helpers. */
@@ -51,4 +52,32 @@ export function hottestChannel(p: GreasePressure): BribeChannel {
   let best: BribeChannel = BRIBE_CHANNELS[0];
   for (const c of BRIBE_CHANNELS) if (score[c] > score[best]) best = c;
   return best;
+}
+
+export interface GreaseReceiptContext {
+  heat: number;
+  exposureBefore: number;
+  exposureAfter: number;
+}
+
+const percent = (value: number): string => `${Math.round(value * 100)}%`;
+
+/** Exact player-facing effect of a successful channel increase. Keeps Heat, raid risk, and Federal
+ * Exposure distinct so the receipt can never promise that The Beat lowers the visible exposure meter. */
+export function greaseEffectReceipt(
+  channel: BribeChannel,
+  beforeLevel: number,
+  afterLevel: number,
+  context: GreaseReceiptContext,
+): string {
+  switch (channel) {
+    case 'police':
+      return `raid odds ${percent(raidChance(context.heat, beforeLevel))} → ${percent(raidChance(context.heat, afterLevel))}; Heat/Exposure unchanged`;
+    case 'judges':
+      return `bust survival ${percent(bustAvoidChance(beforeLevel))} → ${percent(bustAvoidChance(afterLevel))}; Heat/Exposure unchanged`;
+    case 'politicians':
+      return `weekly Heat cooling ${effectiveDecay(beforeLevel)} → ${effectiveDecay(afterLevel)} on future settlements`;
+    case 'feds':
+      return `Exposure ${context.exposureBefore} → ${context.exposureAfter}; raw Heat unchanged`;
+  }
 }

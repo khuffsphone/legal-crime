@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   KEY_ACTIONS,
   DEFAULT_KEYBINDS,
   RESERVED_KEYS,
   normalizeKey,
+  isFreshKeydown,
   keyLabel,
   resolveKeybinds,
   applyRemap,
@@ -59,6 +62,20 @@ describe('normalizeKey — raw KeyboardEvent.key → Phaser token', () => {
     expect(keyLabel('PERIOD')).toBe('.');
     expect(keyLabel('E')).toBe('E');
     expect(keyLabel('SPACE')).toBe('Space');
+  });
+});
+
+describe('keydown edge — one physical press is one gameplay command', () => {
+  it('admits the initial event and rejects browser auto-repeat', () => {
+    expect(isFreshKeydown({ repeat: false })).toBe(true);
+    expect(isFreshKeydown({})).toBe(true);
+    expect(isFreshKeydown({ repeat: true })).toBe(false);
+  });
+
+  it('guards the remappable gameplay dispatcher before it resolves G/C/E/R', () => {
+    const iso = readFileSync(join(process.cwd(), 'src', 'scenes', 'IsoScene.ts'), 'utf8');
+    const dispatcher = iso.slice(iso.indexOf('  private dispatchKeybind('), iso.indexOf('  private runAction(', iso.indexOf('  private dispatchKeybind(')));
+    expect(dispatcher).toContain('if (!isFreshKeydown(e)) return');
   });
 });
 

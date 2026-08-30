@@ -72,7 +72,8 @@ export function dominationProgress(state: GameState): WinPathProgress {
 /** GO STRAIGHT progress — legit empire value toward the retire-clean target. */
 export function goStraightProgress(state: GameState): WinPathProgress {
   const val = legitEmpireValue(state);
-  const pct = Math.round(Math.min(1, val / GO_STRAIGHT_TARGET) * 100);
+  // Never let presentation rounding award a win before the exact economic gate is met.
+  const pct = Math.floor(Math.min(1, val / GO_STRAIGHT_TARGET) * 100);
   return {
     path: 'go-straight', label: 'GO STRAIGHT', pct,
     read: pct >= 100 ? 'You can retire clean and respectable.' : `clean empire $${val}/${GO_STRAIGHT_TARGET}.`,
@@ -86,11 +87,12 @@ export function mayorProgress(state: GameState): WinPathProgress {
   const infl = influenceOf(state);
   const cityPct = Math.min(1, cityHall / MAYOR_CITYHALL_REQ);
   const inflPct = Math.min(1, infl / MAYOR_INFLUENCE_REQ);
-  const pct = Math.round(Math.min(cityPct, inflPct) * 100); // the LAGGING gate sets the pace
+  // The lagging gate sets the pace. Floor keeps 99.5 at 99 instead of displaying/awarding 100 early.
+  const pct = Math.floor(Math.min(cityPct, inflPct) * 100);
   return {
     path: 'mayor', label: 'GET ELECTED', pct,
     read: pct >= 100 ? 'The city is yours — at the ballot box.' : `City Hall $${cityHall}/${MAYOR_CITYHALL_REQ} · influence ${infl}/${MAYOR_INFLUENCE_REQ}.`,
-    advances: 'grease CITY HALL to the max and build civic INFLUENCE (turf + legit fronts).',
+    advances: `grease CITY HALL to $${MAYOR_CITYHALL_REQ}/wk and build civic INFLUENCE (turf + legit fronts).`,
   };
 }
 
@@ -102,7 +104,12 @@ export function winPaths(state: GameState): WinPathProgress[] {
 /** The first win path that has reached 100% (drives evaluateEndgame), or null. Domination is
  * already resolved by the canon evaluator; this surfaces the two NEW paths. */
 export function metWinPath(state: GameState): WinPathProgress | null {
-  for (const w of [goStraightProgress(state), mayorProgress(state)]) if (w.pct >= 100) return w;
+  // Completion is an exact simulation rule, never a rounded display percentage.
+  if (legitEmpireValue(state) >= GO_STRAIGHT_TARGET) return goStraightProgress(state);
+  if (
+    (state.player.bribes.politicians ?? 0) >= MAYOR_CITYHALL_REQ
+    && influenceOf(state) >= MAYOR_INFLUENCE_REQ
+  ) return mayorProgress(state);
   return null;
 }
 
@@ -114,7 +121,9 @@ export function metWinPath(state: GameState): WinPathProgress | null {
  */
 export function advanceCivics(state: GameState): void {
   const p = state.player;
-  const cityHall = p.bribes.politicians ?? 0;
+  // Money above the stated City Hall requirement may still be retained, but cannot turbo-charge
+  // civic influence beyond the political path's advertised maximum contribution.
+  const cityHall = Math.min(p.bribes.politicians ?? 0, MAYOR_CITYHALL_REQ);
   const gain = cityHall * INFLUENCE_PER_CITYHALL
     + districtsHeld(state, p.id).length * INFLUENCE_PER_DISTRICT
     + legalFrontCount(state) * INFLUENCE_PER_FRONT;

@@ -133,8 +133,8 @@ export function firstObjective(state: GameState): Objective {
       step: 'collect',
       title: 'COLLECT THE TAKE',
       detail: safe
-        ? "Takings are piling up — that's money you're owed but don't have yet. Press [C] to send a collector; your first run rides home SAFE."
-        : "Takings are piling up — money you're owed but don't have. Press [C] to send a collector, but watch the rival: time the run when he's away.",
+        ? "Your collectors normally run automatically. This protected FIRST take waits for you: press [C] once to RUSH it home SAFE. After it banks, [C] is optional."
+        : "Collections now run automatically. Press [C] only to RUSH waiting takings early — and watch the rival before you do.",
       targetBusinessId: null,
       done: false,
     };
@@ -145,12 +145,13 @@ export function firstObjective(state: GameState): Objective {
   // check, ordered so a beat already done is simply skipped (never forced to repeat). ──
   const id2 = state.player.id;
 
-  // 1) GREASE — the four channels are the political toolkit; greasing buys down heat AND unlocks crew.
-  if (totalGrease(state) <= 0) {
+  // 1) GREASE — teach the exact first unlock contract. The Pistol Man requires The Beat, so paying a
+  // different channel cannot graduate this step and strand the player at the next instruction.
+  if (state.player.bribes.police < 10) {
     return {
       step: 'grease',
       title: 'GREASE A CHANNEL',
-      detail: 'You\'re earning — now buy some protection. Press [G] to grease a bribery channel ($10/wk). The four channels (The Beat / The Bench / City Hall / The Bureau) buy down heat, slow raids, and UNLOCK weapon specialists. Greasing The Beat is the place to start.',
+      detail: 'You\'re earning — now buy some protection. Press [G] to grease The Beat ($10/wk). The Beat lowers raid odds; it does not lower raw Heat or Federal Exposure. City Hall cools Heat over time; The Bureau lowers Exposure. The Beat also opens your first Pistol Man.',
       targetBusinessId: null,
       done: false,
     };
@@ -193,7 +194,7 @@ export function firstObjective(state: GameState): Objective {
   return {
     step: 'win',
     title: 'CLOSE IT OUT — PICK YOUR WIN',
-    detail: 'You run your own outfit now. Three ways to take the city: DOMINATION (hold most of the districts / outlast the rivals) · GO STRAIGHT (launder a clean fortune and retire on top) · GET ELECTED MAYOR (max City Hall + civic influence). Pick your road and finish it.',
+    detail: 'You run your own outfit now. Three ways to take the city: DOMINATION (hold most of the districts / outlast the rivals) · GO STRAIGHT (launder a clean fortune and retire on top) · GET ELECTED MAYOR (City Hall $40/wk + civic influence 100). Pick your road and finish it.',
     targetBusinessId: null,
     done: true,
   };
@@ -237,6 +238,25 @@ export interface TutorialCard {
   targetBusinessId: string | null;
 }
 
+/** Monotonic tutorial read: preserve the protected first run, then treat later automatic collection
+ * states as part of GROW until The Beat lesson is complete. Once [G] is learned, later accrual never
+ * reopens the coach card. */
+function tutorialStepForState(state: GameState): TutorialStepId | null {
+  let step = tutorialStepFor(firstObjective(state).step);
+  const protectedFirstRunActive = state.units.some((unit) => (
+    unit.factionId === state.player.id
+    && unit.role === 'collector'
+    && unit.protectedRun === true
+    && (unit.carrying ?? 0) > 0
+  ));
+  if (
+    (step === 'collect' || step === 'protect')
+    && state.tutorialFreeRuns <= 0
+    && !protectedFirstRunActive
+  ) step = state.player.bribes.police >= 10 ? null : 'grow';
+  return step;
+}
+
 /** Map the broader objective step onto a tutorial beat. Returns null once the player has graduated past
  * the earn loop (greasing onward) — the FTUE is done and the ongoing objective banner takes over. */
 function tutorialStepFor(step: ObjectiveStep): TutorialStepId | null {
@@ -262,18 +282,18 @@ const TUTORIAL_COPY: Record<TutorialStepId, { title: string; body: string; actio
   },
   collect: {
     title: 'BRING THE TAKE HOME',
-    body: "The cut piles up at the front, but it isn't yours until it's banked at HQ. Send a collector to walk it back — your first run rides home safe.",
-    action: 'press [C] to send a collector',
+    body: 'Collectors normally make their rounds automatically. This protected FIRST take is waiting for you so you can learn the route. After it banks, collection runs automatically and [C] becomes optional.',
+    action: 'press [C] once to RUSH the protected first take',
   },
   protect: {
-    title: 'GUARD THE RUN',
-    body: 'A collector on the street is a target. Rival muscle that catches him takes the whole satchel — keep him clear of the prowling enforcer, or escort him with your crew.',
-    action: 'walk the take clear of the rival enforcer',
+    title: 'WATCH THE FIRST RUN',
+    body: 'This first satchel is protected and cannot be robbed. Watch it bank at HQ. Later automatic collectors can be hit on contested turf; [C] only brings waiting takings forward.',
+    action: 'watch the protected runner reach HQ',
   },
   grow: {
     title: 'PUT THE MONEY TO WORK',
-    body: "You're earning — now buy protection. Grease one of the four channels to cool heat, slow the raids, and unlock real specialists. That's the loop; the city is yours to take from here.",
-    action: 'press [G] to grease a channel',
+    body: "You're earning — now buy protection. Start with The Beat to lower raid odds and unlock your first Pistol Man. It does not lower raw Heat or Federal Exposure; City Hall and The Bureau handle those pressures.",
+    action: 'press [G] to grease The Beat',
   },
 };
 
@@ -288,7 +308,7 @@ export function tutorialCard(
 ): TutorialCard | null {
   if (progress.skipped) return null;
   const obj = firstObjective(state);
-  const step = tutorialStepFor(obj.step);
+  const step = tutorialStepForState(state);
   if (!step) return null;
   const copy = TUTORIAL_COPY[step];
   return {
@@ -305,5 +325,5 @@ export function tutorialCard(
 /** True once the player has worked all the way through the earn loop — the FTUE has nothing left to
  * teach (independent of SKIP). The scene uses this to fire a one-shot "tutorial complete" beat. */
 export function tutorialComplete(state: GameState): boolean {
-  return tutorialStepFor(firstObjective(state).step) === null;
+  return tutorialStepForState(state) === null;
 }

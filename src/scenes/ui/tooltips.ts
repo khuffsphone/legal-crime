@@ -31,7 +31,7 @@ export const HUD_TIPS: Record<string, string> = {
   // The bottom dossier-strip chips — one per drawer toggle.
   'dossier.wire': 'THE WIRE — the full event log of what just happened in the city. [L] opens/closes it; the number is unread slips.',
   'dossier.turf': 'TURF — districts you hold vs the city total, and how many are being contested right now. [T] opens it.',
-  'dossier.paths': 'PATHS — your automated collection routes and how close you are to city dominance. [V] opens it.',
+  'dossier.paths': 'COLLECTIONS ARE AUTOMATIC. WAIT is cash at fronts; ROAD is cash being carried. [C] only rushes waiting cash home early. [V] opens the full readout.',
   'dossier.crew': 'CREW — your muscle on the street and how many are idle and ready for orders. [K] opens it.',
   'dossier.finance': 'FINANCE — the ledger: clean vs dirty cash, exposure, and laundering. [F] opens it.',
 };

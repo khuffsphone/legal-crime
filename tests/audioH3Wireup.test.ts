@@ -32,9 +32,10 @@ const updateUnits = methodBody('updateUnits');
 const preload = methodBody('preload');
 const eligibility = src.slice(src.indexOf('isAudioFeedbackEligible = '), src.indexOf('isAudioFeedbackEligible = ') + 320);
 
-describe('H3 wire-up — the ?audio flag + F2 ordering', () => {
-  it('is gated behind ?audio (default OFF), mirroring the ?cops/?combat opt-in field idiom', () => {
-    expect(src).toMatch(/private atmosphereAudioEnabled = typeof window !== 'undefined' && atmosphereAudioRequested\(/);
+describe('H3 wire-up — the FP-01 profile gate + F2 ordering', () => {
+  it('is governed by the central runtime profile (showcase default, legacy/per-layer rollback)', () => {
+    expect(src).toContain("import { resolveFeatureProfile } from './featureProfile'");
+    expect(src).toContain('private atmosphereAudioEnabled = this.featureProfile.atmosphereAudio;');
   });
 
   it('MUTATION play-before-registration: registerAtmosphereClips() runs BEFORE AudioManager.preload()', () => {
@@ -66,7 +67,7 @@ describe('H3 wire-up — the single post-observe touch point', () => {
     const buildFrame = methodBody('buildAtmosphereFrame');
     expect(buildFrame).toMatch(/obs\.result\.extortion/);
     expect(buildFrame).toMatch(/obs\.result\.interceptions/);
-    expect(buildFrame).toMatch(/obs\.result\.combat\.length/);
+    expect(buildFrame).toMatch(/obs\.result\.combat\.filter\(.*isVisibleTile.*\)\.length/s);
     expect(buildFrame).toMatch(/this\.state\.log\.slice\(this\.atmoLogCursor\)/);
   });
 

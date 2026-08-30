@@ -1,0 +1,459 @@
+{
+  "$schema": "./asset-manifest.schema.json",
+  "schemaVersion": "1.0.0",
+  "manifestId": "brassmere.fp01.asset-production",
+  "project": "Brassmere",
+  "milestone": "FP-01",
+  "createdAt": "2026-08-29T00:00:00Z",
+  "updatedAt": "2026-08-29T00:00:00Z",
+  "owner": "Brassmere production",
+  "notes": "Starter briefs for the FP-01 showcase loop. Provider jobs, exact model versions, rights evidence, files, hashes, and measured specifications must be recorded after generation; no brief is approved by inclusion here.",
+  "assets": [
+    {
+      "assetId": "fp01.model.proprietor-base.01",
+      "title": "Storefront proprietor base character",
+      "kind": "model3d",
+      "lifecycleState": "brief",
+      "intent": "Create the original proprietor source model used for readable fear, recoil, and surrender performances during the first shakedown.",
+      "creativeBrief": {
+        "prompt": "Original stylized 1920s American neighborhood shop proprietor, middle-aged, practical rolled-sleeve shirt, vest and apron, expressive hands and face, readable silhouette at isometric game scale, production-ready neutral pose, restrained hand-painted PBR materials, historically grounded but not based on any real person or existing character.",
+        "negativePrompt": "No celebrity likeness, no protected character, no franchise costume, no modern objects, no weapon, no text, no exaggerated comedy anatomy, no fused fingers, no loose disconnected geometry.",
+        "script": null,
+        "direction": "Match Brassmere's fixed 2:1 dimetric presentation. Favor a strong silhouette and clean deformation over close-up realism. The character must survive sprite rendering at approximately 198 pixels tall.",
+        "referenceAssetIds": [],
+        "referenceUris": [],
+        "iterationNotes": "Generate several silhouettes; select only after a neutral-turntable and deformation review. Rigging and action clips are derived records, not silently folded into this source record."
+      },
+      "provenance": {
+        "origin": "ai-generated",
+        "provider": {
+          "name": "Meshy AI",
+          "product": "Text to 3D and rigging",
+          "model": null,
+          "modelVersion": null,
+          "jobId": null,
+          "jobUri": null,
+          "generationTimestamp": null,
+          "accountPlan": null,
+          "parameters": {
+            "targetTopology": "game-ready",
+            "targetTextureStyle": "restrained hand-painted PBR",
+            "rigRequested": true
+          }
+        },
+        "sourceAssetIds": [],
+        "referenceDisclosure": "Text-only original brief; any later image reference must be added before generation.",
+        "identitySafety": {
+          "realPersonVoiceOrLikeness": false,
+          "protectedCharacterOrFranchise": false,
+          "notes": "Do not name or visually target a real performer, public figure, film, television series, or game character."
+        }
+      },
+      "rights": {
+        "basis": "provider-commercial-terms",
+        "commercialUseConfirmed": false,
+        "redistributionConfirmed": false,
+        "attributionRequired": false,
+        "attributionText": null,
+        "termsUri": null,
+        "termsEffectiveDate": null,
+        "planOrLicense": null,
+        "evidencePaths": [],
+        "reviewedBy": null,
+        "reviewedAt": null,
+        "restrictions": "Pending verification of the exact Meshy AI account tier and terms in effect on the generation date."
+      },
+      "files": [],
+      "technical": {
+        "temporal": {
+          "durationSeconds": null,
+          "targetDurationSeconds": null,
+          "loop": {
+            "enabled": false,
+            "startSeconds": null,
+            "endSeconds": null,
+            "crossfadeSeconds": 0
+          }
+        },
+        "audio": null,
+        "video": null,
+        "image": null,
+        "model3d": {
+          "container": "glb",
+          "units": "metres",
+          "upAxis": "Z",
+          "polygonCount": null,
+          "targetPolygonCountMaximum": 50000,
+          "rigged": true,
+          "animations": []
+        },
+        "processingNotes": "Normalize in Blender, verify scale and deformation, then render deterministic eight-direction runtime sheets as separately tracked derived assets."
+      },
+      "integration": {
+        "inGameKey": "source.character.proprietor-base.01",
+        "trigger": "Production source for the proprietor actor in the embodied shakedown sequence.",
+        "runtimePath": null,
+        "catalog": "character source library",
+        "bus": null,
+        "variationGroup": null,
+        "fallbackKey": null,
+        "preload": false,
+        "implementationNotes": "The source GLB is not loaded directly by Phaser; the final sprite-sheet records must cite this assetId in provenance.sourceAssetIds."
+      },
+      "approval": {
+        "state": "not-submitted",
+        "owner": "Art lead",
+        "requestedAt": null,
+        "decidedBy": null,
+        "decidedAt": null,
+        "gates": {
+          "creative": "not-reviewed",
+          "rights": "not-reviewed",
+          "technical": "not-reviewed",
+          "integration": "not-reviewed",
+          "fun": "not-reviewed"
+        },
+        "notes": "Brief only. Approval requires the rendered in-game result, not just the 3D turntable."
+      },
+      "notes": "FP-01 visual-production starter."
+    },
+    {
+      "assetId": "fp01.voice.crew-lead-select.01",
+      "title": "Crew lead selection acknowledgment 01",
+      "kind": "voice",
+      "lifecycleState": "brief",
+      "intent": "Give the player's first named gangster an immediate, confident response when selected.",
+      "creativeBrief": {
+        "prompt": "Original fictional adult crew leader; close, dry studio recording; understated confidence; compact delivery; natural 1920s American urban cadence without imitating any known performer.",
+        "negativePrompt": "No celebrity or actor imitation, no cinematic trailer voice, no caricature accent, no shouting, no room echo, no music, no background noise.",
+        "script": "I'm listening, boss.",
+        "direction": "Deliver as a private acknowledgment, not a catchphrase. One clean breath at most; land the final word without melodrama.",
+        "referenceAssetIds": [],
+        "referenceUris": [],
+        "iterationNotes": "Generate at least three performances under the same original voice identity. Each selected take receives its own asset record and variation key."
+      },
+      "provenance": {
+        "origin": "ai-generated",
+        "provider": {
+          "name": "ElevenLabs",
+          "product": "Text to Speech",
+          "model": null,
+          "modelVersion": null,
+          "jobId": null,
+          "jobUri": null,
+          "generationTimestamp": null,
+          "accountPlan": null,
+          "parameters": {
+            "voiceId": null,
+            "seed": null,
+            "stability": null,
+            "similarityBoost": null,
+            "style": null
+          }
+        },
+        "sourceAssetIds": [],
+        "referenceDisclosure": "Original text direction only; no real-person voice sample is permitted.",
+        "identitySafety": {
+          "realPersonVoiceOrLikeness": false,
+          "protectedCharacterOrFranchise": false,
+          "notes": "Use an original synthetic voice identity and retain its provider voice identifier for continuity."
+        }
+      },
+      "rights": {
+        "basis": "provider-commercial-terms",
+        "commercialUseConfirmed": false,
+        "redistributionConfirmed": false,
+        "attributionRequired": false,
+        "attributionText": null,
+        "termsUri": null,
+        "termsEffectiveDate": null,
+        "planOrLicense": null,
+        "evidencePaths": [],
+        "reviewedBy": null,
+        "reviewedAt": null,
+        "restrictions": "Pending verification of the exact ElevenLabs plan, voice origin, and terms in effect on the generation date."
+      },
+      "files": [],
+      "technical": {
+        "temporal": {
+          "durationSeconds": null,
+          "targetDurationSeconds": {
+            "minimum": 0.6,
+            "maximum": 1.5
+          },
+          "loop": {
+            "enabled": false,
+            "startSeconds": null,
+            "endSeconds": null,
+            "crossfadeSeconds": 0
+          }
+        },
+        "audio": {
+          "container": "wav",
+          "codec": "pcm_s24le",
+          "sampleRateHz": 48000,
+          "bitDepth": 24,
+          "channels": 1,
+          "loudnessTargetLufs": -18,
+          "truePeakCeilingDbtp": -1
+        },
+        "video": null,
+        "image": null,
+        "model3d": null,
+        "processingNotes": "Retain the unprocessed source, edit breaths and head/tail silence non-destructively, then export a runtime derivative with no baked music or ambience."
+      },
+      "integration": {
+        "inGameKey": "voice.crew-lead.select.01",
+        "trigger": "Player selects the named opening crew leader and the voice concurrency rule permits a bark.",
+        "runtimePath": null,
+        "catalog": "audio catalog",
+        "bus": "vo",
+        "variationGroup": "crew-lead.select",
+        "fallbackKey": null,
+        "preload": true,
+        "implementationNotes": "Randomize without immediate repetition; selection barks must not overlap one another."
+      },
+      "approval": {
+        "state": "not-submitted",
+        "owner": "Audio lead",
+        "requestedAt": null,
+        "decidedBy": null,
+        "decidedAt": null,
+        "gates": {
+          "creative": "not-reviewed",
+          "rights": "not-reviewed",
+          "technical": "not-reviewed",
+          "integration": "not-reviewed",
+          "fun": "not-reviewed"
+        },
+        "notes": "Review in the live selection interaction at gameplay mix level, not in isolation."
+      },
+      "notes": "First of at least three non-repeating selection acknowledgments."
+    },
+    {
+      "assetId": "fp01.music.establish-loop.01",
+      "title": "Establish phase adaptive music loop",
+      "kind": "music",
+      "lifecycleState": "brief",
+      "intent": "Make the opening neighborhood feel purposeful and alive while leaving room for voices, footsteps, and the first shakedown.",
+      "creativeBrief": {
+        "prompt": "Original instrumental Prohibition-era noir strategy-game underscore, small acoustic ensemble, brushed drums, upright bass, muted brass color, restrained piano motif, sly forward motion, intimate nighttime street atmosphere, clear edit points, loop-friendly ending, sparse enough for dialogue and gameplay sound effects; no vocals and no reference to a named composer, artist, soundtrack, film, or game.",
+        "negativePrompt": "No recognizable melody, no artist imitation, no vocals, no modern synth lead, no epic trailer percussion, no wall-to-wall brass, no abrupt ending, no mastered-to-exhaustion loudness.",
+        "script": null,
+        "direction": "The player should feel clever and curious, not already at war. Preserve dynamic headroom and make the last phrase reconnect cleanly to the first after editorial looping.",
+        "referenceAssetIds": [],
+        "referenceUris": [],
+        "iterationNotes": "Generate alternates, choose on thematic identity and mix space, then create a seamless master and runtime derivative. If stems are available, track each stem as a derived asset."
+      },
+      "provenance": {
+        "origin": "ai-generated",
+        "provider": {
+          "name": "Google",
+          "product": "Flow Music",
+          "model": null,
+          "modelVersion": null,
+          "jobId": null,
+          "jobUri": null,
+          "generationTimestamp": null,
+          "accountPlan": null,
+          "parameters": {
+            "requestedModelFamily": "Lyria",
+            "seed": null,
+            "requestedDurationSeconds": 60,
+            "instrumental": true
+          }
+        },
+        "sourceAssetIds": [],
+        "referenceDisclosure": "Original text brief only; do not supply copyrighted recordings as style references.",
+        "identitySafety": {
+          "realPersonVoiceOrLikeness": false,
+          "protectedCharacterOrFranchise": false,
+          "notes": "Prompt must not request a living or historical artist's style or an existing soundtrack."
+        }
+      },
+      "rights": {
+        "basis": "provider-commercial-terms",
+        "commercialUseConfirmed": false,
+        "redistributionConfirmed": false,
+        "attributionRequired": false,
+        "attributionText": null,
+        "termsUri": null,
+        "termsEffectiveDate": null,
+        "planOrLicense": null,
+        "evidencePaths": [],
+        "reviewedBy": null,
+        "reviewedAt": null,
+        "restrictions": "Pending verification of the exact Google account tier, selected Lyria model/version, availability region, and terms in effect on the generation date."
+      },
+      "files": [],
+      "technical": {
+        "temporal": {
+          "durationSeconds": null,
+          "targetDurationSeconds": {
+            "minimum": 45,
+            "maximum": 60
+          },
+          "loop": {
+            "enabled": true,
+            "startSeconds": null,
+            "endSeconds": null,
+            "crossfadeSeconds": 0.08
+          }
+        },
+        "audio": {
+          "container": "wav",
+          "codec": "pcm_s24le",
+          "sampleRateHz": 48000,
+          "bitDepth": 24,
+          "channels": 2,
+          "loudnessTargetLufs": -16,
+          "truePeakCeilingDbtp": -1
+        },
+        "video": null,
+        "image": null,
+        "model3d": null,
+        "processingNotes": "Measure and record exact loop points after editorial approval. Retain an unlooped source and a seamless master; verify the seam for five consecutive cycles."
+      },
+      "integration": {
+        "inGameKey": "music.fp01.establish-loop.01",
+        "trigger": "Normal new game enters the establish phase after the browser audio gesture.",
+        "runtimePath": null,
+        "catalog": "audio catalog",
+        "bus": "music",
+        "variationGroup": "music.establish",
+        "fallbackKey": "music.menu",
+        "preload": true,
+        "implementationNotes": "Duck beneath voice and priority action feedback; transition out on a musical boundary when contest tension begins."
+      },
+      "approval": {
+        "state": "not-submitted",
+        "owner": "Audio lead",
+        "requestedAt": null,
+        "decidedBy": null,
+        "decidedAt": null,
+        "gates": {
+          "creative": "not-reviewed",
+          "rights": "not-reviewed",
+          "technical": "not-reviewed",
+          "integration": "not-reviewed",
+          "fun": "not-reviewed"
+        },
+        "notes": "Fun review requires at least one complete first-shakedown playthrough at the final mix."
+      },
+      "notes": "Core adaptive-music brief for FP-01."
+    },
+    {
+      "assetId": "fp01.cinematic.opening-city-reveal.01",
+      "title": "Opening city reveal",
+      "kind": "cinematic",
+      "lifecycleState": "brief",
+      "intent": "Punctuate the transition into the neighborhood with a short original city reveal that hands off cleanly to interactive play.",
+      "creativeBrief": {
+        "prompt": "Six-second original cinematic reveal of a fictional 1920s American industrial neighborhood at night, elevated dimetric composition echoing the Brassmere gameplay camera, wet pavement, restrained window light, sparse pedestrians and period automobiles, drifting steam, tactile miniature-like buildings, slow controlled push toward one corner storefront, end composition aligned for a dissolve into the interactive map; no text, logos, real landmarks, real people, or existing fictional properties.",
+        "negativePrompt": "No famous skyline, no real landmark, no franchise imagery, no celebrity, no modern vehicle, no readable signage, no guns fired, no rapid camera, no cuts, no excessive film grain, no baked subtitles.",
+        "script": null,
+        "direction": "Atmospheric punctuation only. Match the game's palette and dimetric geometry closely enough that gameplay is not a visual downgrade. End on a stable frame and avoid depicting any action the simulation cannot support.",
+        "referenceAssetIds": [],
+        "referenceUris": [],
+        "iterationNotes": "Use an approved in-house map still only if it is recorded in referenceAssetIds. Select for geometric continuity and absence of generation artifacts before color finishing."
+      },
+      "provenance": {
+        "origin": "ai-generated",
+        "provider": {
+          "name": "Google",
+          "product": "Flow",
+          "model": null,
+          "modelVersion": null,
+          "jobId": null,
+          "jobUri": null,
+          "generationTimestamp": null,
+          "accountPlan": null,
+          "parameters": {
+            "requestedModelFamily": "Veo",
+            "requestedDurationSeconds": 6,
+            "aspectRatio": "16:9",
+            "audioRequested": false,
+            "seed": null
+          }
+        },
+        "sourceAssetIds": [],
+        "referenceDisclosure": "Text-only original brief at initial planning; any image-to-video source must be added and hashed as a source file before generation.",
+        "identitySafety": {
+          "realPersonVoiceOrLikeness": false,
+          "protectedCharacterOrFranchise": false,
+          "notes": "Do not prompt with a filmmaker, film, game, or recognizable real location as a style target."
+        }
+      },
+      "rights": {
+        "basis": "provider-commercial-terms",
+        "commercialUseConfirmed": false,
+        "redistributionConfirmed": false,
+        "attributionRequired": false,
+        "attributionText": null,
+        "termsUri": null,
+        "termsEffectiveDate": null,
+        "planOrLicense": null,
+        "evidencePaths": [],
+        "reviewedBy": null,
+        "reviewedAt": null,
+        "restrictions": "Pending verification of the exact Google account tier, selected Veo model/version, watermark status, and terms in effect on the generation date."
+      },
+      "files": [],
+      "technical": {
+        "temporal": {
+          "durationSeconds": null,
+          "targetDurationSeconds": {
+            "minimum": 4,
+            "maximum": 8
+          },
+          "loop": {
+            "enabled": false,
+            "startSeconds": null,
+            "endSeconds": null,
+            "crossfadeSeconds": 0
+          }
+        },
+        "audio": null,
+        "video": {
+          "container": "mp4",
+          "codec": "h264",
+          "width": 1920,
+          "height": 1080,
+          "framesPerSecond": 24,
+          "hasAudio": false,
+          "skippable": true
+        },
+        "image": null,
+        "model3d": null,
+        "processingNotes": "Color-match to gameplay, export a web runtime derivative, verify first-frame availability, and provide poster/fallback art as a separately tracked derived asset."
+      },
+      "integration": {
+        "inGameKey": "cinematic.opening.city-reveal.01",
+        "trigger": "Player confirms New Game; clip may play while the opening district finishes loading and must yield immediately to Skip.",
+        "runtimePath": null,
+        "catalog": "cinematic catalog",
+        "bus": null,
+        "variationGroup": null,
+        "fallbackKey": null,
+        "preload": false,
+        "implementationNotes": "Never block game start on network or decode failure. Provide Skip from frame one and fall back to the approved poster or direct gameplay transition."
+      },
+      "approval": {
+        "state": "not-submitted",
+        "owner": "Creative director",
+        "requestedAt": null,
+        "decidedBy": null,
+        "decidedAt": null,
+        "gates": {
+          "creative": "not-reviewed",
+          "rights": "not-reviewed",
+          "technical": "not-reviewed",
+          "integration": "not-reviewed",
+          "fun": "not-reviewed"
+        },
+        "notes": "Approve only after reviewing the transition into live gameplay and the skip/failure path."
+      },
+      "notes": "Optional FP-01 punctuation; cut rather than delay the interactive slice."
+    }
+  ]
+}

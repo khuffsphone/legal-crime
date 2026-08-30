@@ -96,7 +96,7 @@ describe('quickload restart teardown — F9 crash regression net', () => {
     }
     const requiredMapClears = [
       'bizMarkers', 'bizPlates', 'bizOwnerGlow', 'bizDistrict', 'bizBuildings', 'districtLabels',
-      'downedBodyViews',
+      'downedBodyViews', 'bizFacadeDecals',
     ];
     for (const f of requiredMapClears) {
       expect(body, `clears this.${f}`).toContain(`this.${f}.clear()`);
@@ -106,6 +106,9 @@ describe('quickload restart teardown — F9 crash regression net', () => {
     expect(body).toContain('this.endgameShown = false');
     expect(body).toContain('this.alerts = []');
     expect(body).toContain('this.pings = []');
+    expect(body).toContain('this.tipsFired.clear()');
+    expect(body).toContain('this.tipUnlockQueued.clear()');
+    expect(body).toContain('this.rushUsed = false');
   });
 
   it('EVERY lazily-created display singleton is reset — new get-or-create fields must join the teardown', () => {

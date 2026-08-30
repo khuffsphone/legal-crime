@@ -2,7 +2,8 @@
 // geometry, and the minimap math — encoding the 6 canon rulings.
 import { describe, it, expect } from 'vitest';
 import {
-  EVENT_TAXONOMY, metaFor, combatEventKind, extortionEventKind, captureEventKind,
+  EVENT_TAXONOMY, metaFor, combatEventKind, combatInfoIntent, extortionEventKind, captureEventKind,
+  captureInfoIntent,
 } from '../src/scenes/info/infoEvents';
 import {
   initLog, pushLog, MAX_LOG, COMBAT_THROTTLE_MS, latestUnreadPositional, markRead, unreadCount,
@@ -36,9 +37,51 @@ describe('event adapter — a sim event maps to the right taxonomy entry', () =>
     expect(metaFor('combat.hit').alert).toBe(false);
     expect(metaFor('combat.hit').ping).toBe(false);
   });
+  it.each(['hit', 'down'] as const)('a hidden rival %s produces no information intent', (kind) => {
+    expect(combatInfoIntent({ kind, faction: 'rival-a', gx: 70, gy: 71 }, 'player', false)).toBeNull();
+  });
+  it('the same revealed combat reports its exact tile and taxonomy', () => {
+    expect(combatInfoIntent({ kind: 'down', faction: 'rival-a', gx: 70, gy: 71 }, 'player', true)).toEqual({
+      kind: 'unit.down', message: 'a rival thug went DOWN', gx: 70, gy: 71,
+    });
+    expect(combatInfoIntent({ kind: 'hit', faction: 'player', gx: 7, gy: 8 }, 'player', true)).toEqual({
+      kind: 'combat.hit', message: 'player thug took a hit', gx: 7, gy: 8,
+    });
+  });
   it('captures map to district.lost / district.captured', () => {
     expect(captureEventKind(true)).toBe('district.lost');
     expect(captureEventKind(false)).toBe('district.captured');
+  });
+  it('a hidden third-party capture produces no Wire intent', () => {
+    const intent = captureInfoIntent(
+      { before: 'rival-a', after: 'rival-b' },
+      'player',
+      { name: 'The Heights', gx: 70, gy: 71 },
+      false,
+    );
+    expect(intent).toBeNull();
+  });
+  it('own capture/loss remains knowable even when the district is not scouted', () => {
+    expect(captureInfoIntent(
+      { before: 'player', after: 'rival-a' },
+      'player',
+      { name: 'Dockside', gx: 7, gy: 8 },
+      false,
+    )).toEqual({ kind: 'district.lost', message: 'Dockside LOST to a rival', gx: 7, gy: 8 });
+    expect(captureInfoIntent(
+      { before: 'rival-a', after: 'player' },
+      'player',
+      { name: 'Dockside', gx: 7, gy: 8 },
+      false,
+    )).toEqual({ kind: 'district.captured', message: 'Dockside captured', gx: 7, gy: 8 });
+  });
+  it('a scouted third-party capture reports a neutral change, without inventing missing coordinates', () => {
+    expect(captureInfoIntent(
+      { before: 'rival-a', after: 'rival-b' },
+      'player',
+      { name: 'The Heights' },
+      true,
+    )).toEqual({ kind: 'district.captured', message: 'The Heights changed hands' });
   });
   it('⚠ #3 — FEDERAL is global: logged + critical, but NO directional alert and NO ping', () => {
     const m = metaFor('federal.threshold');

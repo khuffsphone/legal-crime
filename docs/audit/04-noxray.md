@@ -1,5 +1,22 @@
 # Report 4 — NO-X-RAY Audit
 
+## 2026-08-30 remediation update — PR #93
+
+The report below is preserved as the historical audit of `7e3ddae`; its headline and line numbers are not a
+description of the current PR candidate. The current FP-01 branch now:
+
+- gates combat and strategic-capture information before Wire rows, alerts, minimap pings, and `[Q]` targets exist;
+- masks unscouted district control on the minimap and City rail;
+- removes exact hidden rival holdings, HQ integrity, identity, weakest-target, operation-count, and incident metadata;
+- suppresses fogged hover reads, district labels/colors, rival HQ art, and hidden-event audio;
+- rejects `[1]`–`[4]` auto-targeting until the player has current observable evidence; an aged dossier identifies
+  a family but cannot arm a live strike or disclose an off-screen death;
+- drives match-stage/audio copy from player-owned progress rather than hidden rival weakness; and
+- proves hidden-state observational equivalence with dedicated city, capture, incident, and offense tests.
+
+The original combat leak and the former “by-design” minimap-control exception are therefore remediated in this
+candidate. Browser UAT Test I in `docs/production/CLAUDE_UAT_MASTER_PROMPT.md` remains the human release gate.
+
 Codebase: Brassmere (`7e3ddae`). Law audited: no information surface may disclose a HIDDEN actor's state/position unless its tile passes the canonical reveal predicate (`isRevealed` ∨ the `?reveal` dev override). Fog is grow-only (`sim/fog.ts` has no re-shroud path; `revealAround` only adds keys).
 
 **Headline:** Every *cursor* and *render* surface is correctly gated, and the whole audio atmosphere lane funnels through one gate. But there is **one critical, untested leak**: the combat info-event path (`playCombatBeat` → `recordInfoEvent`) records positional Wire-log rows, minimap pings, and screen-edge alerts for *any* combat beat — including **rival-vs-rival brawls fought entirely inside the fog** — with **no visibility gate at all**. The flash/SFX beside it are gated; the information channels are not.

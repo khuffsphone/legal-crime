@@ -27,7 +27,14 @@ import { recruitableEnforcers } from './enforcers';
 import type { WeaponTier } from './types';
 import { canCollect } from './toolbar';
 import { FEDERAL_LADDER } from './hudText';
-import { offenseReadout, expandTargetDistrictId, weeksToAfford, type OffenseKey } from './pacing';
+import {
+  offenseReadout,
+  offenseReadoutForTargets,
+  expandTargetDistrictId,
+  weeksToAfford,
+  type OffenseKey,
+  type OffenseTargetIds,
+} from './pacing';
 import type { VerbId } from './actionCard';
 import type { GameState } from './types';
 
@@ -114,6 +121,8 @@ export type InspectableActionId = VerbId | 'lockout';
 export interface InspectorContext {
   extortTarget?: boolean;
   attackTarget?: boolean;
+  /** Undefined preserves legacy auto-targeting; `{}` means the player knows of no strategic target. */
+  offenseTargets?: OffenseTargetIds;
 }
 
 /** The glyph for a row's state — symbol PLUS text, never colour alone (visual-accessibility rule). */
@@ -211,8 +220,9 @@ const TITLES: Partial<Record<InspectableActionId, { title: string; summary: stri
 };
 
 /** Pull one offense option's live cost/heat/target from the existing readout (the same numbers the HUD shows). */
-function offenseOption(state: GameState, key: OffenseKey) {
-  return offenseReadout(state).find((o) => o.key === key)!;
+function offenseOption(state: GameState, key: OffenseKey, targets?: OffenseTargetIds) {
+  const readout = targets === undefined ? offenseReadout(state) : offenseReadoutForTargets(state, targets);
+  return readout.find((o) => o.key === key)!;
 }
 
 /** The rows for a verb — each requirement read independently from existing state, so the breakdown
@@ -220,7 +230,7 @@ function offenseOption(state: GameState, key: OffenseKey) {
 function rowsFor(state: GameState, verb: InspectableActionId, ctx: InspectorContext): ActionRequirementRow[] {
   switch (verb) {
     case 'lockout': {
-      const o = offenseOption(state, 'lockout');
+      const o = offenseOption(state, 'lockout', ctx.offenseTargets);
       return [
         cooldownRow(state),
         targetRow('target', o.target !== null, o.target, 'Rival to lock down', 'No rival to lock down', 'a living rival family must remain'),
@@ -239,7 +249,7 @@ function rowsFor(state: GameState, verb: InspectableActionId, ctx: InspectorCont
       return [targetRow('target', !!ctx.extortTarget, null, 'Front in sights', 'No front focused', 'click an un-shaken [%] front first')];
     case 'attack':
     case 'demolish': {
-      const o = offenseOption(state, 'sabotage');
+      const o = offenseOption(state, 'sabotage', ctx.offenseTargets);
       return [
         targetRow('target', !!ctx.attackTarget, null, 'Rival racket in sights', 'No rival racket focused', 'right-click a rival racket first'),
         cooldownRow(state),
@@ -249,7 +259,7 @@ function rowsFor(state: GameState, verb: InspectableActionId, ctx: InspectorCont
       ];
     }
     case 'sabotage': {
-      const o = offenseOption(state, 'sabotage');
+      const o = offenseOption(state, 'sabotage', ctx.offenseTargets);
       return [
         cooldownRow(state),
         targetRow('target', o.target !== null, o.target, 'Rival racket to hit', 'No rival racket to hit', 'a rival must run a racket you can reach'),
@@ -259,7 +269,7 @@ function rowsFor(state: GameState, verb: InspectableActionId, ctx: InspectorCont
       ];
     }
     case 'raid': {
-      const o = offenseOption(state, 'raid');
+      const o = offenseOption(state, 'raid', ctx.offenseTargets);
       return [
         cooldownRow(state),
         homeBlockRow(state),
@@ -270,7 +280,7 @@ function rowsFor(state: GameState, verb: InspectableActionId, ctx: InspectorCont
       ];
     }
     case 'assassinate': {
-      const o = offenseOption(state, 'assassinate');
+      const o = offenseOption(state, 'assassinate', ctx.offenseTargets);
       return [
         cooldownRow(state),
         targetRow('target', o.target !== null, o.target, 'Rival Don in reach', 'No rival Don left', 'a living rival family must remain'),

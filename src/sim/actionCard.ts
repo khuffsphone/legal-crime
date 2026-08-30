@@ -6,7 +6,7 @@
 // lesson: the chip's verb + enabled state are unit-tested here).
 
 import type { GameState, WeaponTier } from './types';
-import { offenseReadout, buildReadout } from './pacing';
+import { offenseReadout, offenseReadoutForTargets, buildReadout, type OffenseTargetIds } from './pacing';
 import { verbChipState } from './hudText';
 import { canCollect } from './toolbar';
 
@@ -36,6 +36,11 @@ export interface UnitActionContext {
   extortTarget: boolean;
   /** A rival racket is currently focused (a valid ATTACK / DEMOLISH target). */
   attackTarget: boolean;
+  /**
+   * Optional player-knowable strategic targets. Undefined preserves the legacy auto-target readout;
+   * an explicit empty object prevents hidden city state from enabling or naming offense chips.
+   */
+  offenseTargets?: OffenseTargetIds;
 }
 
 /** The verbs a unit TYPE offers, in display order. A collector is near-passive; a hitman/demolitions
@@ -50,8 +55,9 @@ export function unitRepertoire(ctx: UnitActionContext): VerbId[] {
   return ['move', 'attack', 'extort', 'patrol', 'collect', 'raid', 'expand', 'recruit'];
 }
 
-function offenseGate(state: GameState, key: 'raid' | 'sabotage' | 'assassinate'): { ok: boolean; reason: string } {
-  const o = offenseReadout(state).find((x) => x.key === key);
+function offenseGate(state: GameState, key: 'raid' | 'sabotage' | 'assassinate', targets?: OffenseTargetIds): { ok: boolean; reason: string } {
+  const readout = targets === undefined ? offenseReadout(state) : offenseReadoutForTargets(state, targets);
+  const o = readout.find((x) => x.key === key);
   if (!o) return { ok: false, reason: 'unavailable' };
   return { ok: o.available, reason: o.available ? 'ready' : o.reason };
 }
@@ -67,10 +73,10 @@ export function resolveChip(state: GameState, verb: VerbId, ctx: UnitActionConte
     case 'collect': return chip(canCollect(state), 'no takings to rush yet'); // RTS-30d-fix: [C] now RUSHES the accrued take home early
     case 'extort': return chip(ctx.extortTarget, 'focus an un-shaken [%] front');
     case 'attack': return chip(ctx.attackTarget, 'right-click a rival racket');
-    case 'demolish': { const g = offenseGate(state, 'sabotage'); return chip(g.ok && ctx.attackTarget, ctx.attackTarget ? g.reason : 'right-click a rival racket'); }
-    case 'sabotage': { const g = offenseGate(state, 'sabotage'); return chip(g.ok, g.reason); }
-    case 'assassinate': { const g = offenseGate(state, 'assassinate'); return chip(g.ok, g.reason); }
-    case 'raid': { const g = offenseGate(state, 'raid'); return chip(g.ok, g.reason); }
+    case 'demolish': { const g = offenseGate(state, 'sabotage', ctx.offenseTargets); return chip(g.ok && ctx.attackTarget, ctx.attackTarget ? g.reason : 'right-click a rival racket'); }
+    case 'sabotage': { const g = offenseGate(state, 'sabotage', ctx.offenseTargets); return chip(g.ok, g.reason); }
+    case 'assassinate': { const g = offenseGate(state, 'assassinate', ctx.offenseTargets); return chip(g.ok, g.reason); }
+    case 'raid': { const g = offenseGate(state, 'raid', ctx.offenseTargets); return chip(g.ok, g.reason); }
     case 'expand': { const e = buildReadout(state).find((b) => b.key === 'expand'); return chip(!!e?.affordable, e ? 'save up / get a foothold' : 'nowhere to expand'); }
     default: return chip(false, 'unavailable');
   }

@@ -15,10 +15,11 @@ import {
   federalExposure, fedWarningTier, federalTierLabel, FEDERAL_LADDER, dirtyExposurePoints, fedExposureRelief,
   topFederalWarning, firstObjective, districtStatusOf, districtsHeldBy, districtIdentity, districtValue,
   inspectDistrict, businessEarner, businessAccrual, operationHeat, uncollectedOf, tierOf, isShutDown,
-  extortProgress, recentIncidents, crewReadout, expandTargetDistrictId,
+  extortProgress, crewReadout, expandTargetDistrictId,
   HEAT_MAX, FED_ARM_DELAY, FED_WARN_TIER_1, FED_WARN_TIER_2, FED_WARN_TIER_3,
-  type GameState, type Business, type District, type IncidentRecord,
+  type GameState, type Business, type District,
 } from '../../sim';
+import { resolveIncidentVisibility } from '../info/incidentVisibility';
 import type { StatusVisibility } from './statusVisibility';
 import { money, deltaStr, pct, unknownRow, type ScreenRow, type ScreenSection, type ScreenView } from './screenView';
 
@@ -38,7 +39,9 @@ const scouted = (vis: StatusVisibility, held: Set<string>, id: string): boolean 
 /** The latest economic-settlement deltas (own — from the player's own settlement incident data). Used for
  * the dashboard's cash/heat/exposure deltas, which have no selector (they live in the settlement record). */
 function settlementDeltas(state: GameState): { heat?: number; exposure?: number; clean?: number; dirty?: number } {
-  const settle = recentIncidents(state, 12).find((i) => i.type === 'settlement');
+  // Scan the complete bounded ledger. Hidden rival activity must not crowd an older, player-visible
+  // settlement out of this read and thereby become an indirect event-count signal.
+  const settle = [...state.incidents].reverse().find((i) => i.type === 'settlement');
   const d = (settle?.data ?? {}) as Record<string, unknown>;
   const num = (k: string): number | undefined => (typeof d[k] === 'number' ? (d[k] as number) : undefined);
   return { heat: num('heatDelta'), exposure: num('exposureDelta'), clean: num('cleanDelta'), dirty: num('dirtyDelta') };
@@ -183,8 +186,8 @@ export function buildHeatBeatMeter(state: GameState, vis: StatusVisibility): Scr
     sections: [
       { heading: 'STREET HEAT', rows: [
         { kind: 'meter', label: 'Heat', value: p.heat, max: HEAT_MAX, tone: 'blood' },
-        { kind: 'value', label: 'Raid risk', value: pct(raidChance(p.heat, p.bribeLevel)), tone: 'blood' },
-        { kind: 'value', label: 'Weekly decay', value: `−${Math.round(effectiveDecay(p.bribeLevel))}`, tone: 'neutral' },
+        { kind: 'value', label: 'Raid risk', value: pct(raidChance(p.heat, p.bribes.police)), tone: 'blood' },
+        { kind: 'value', label: 'Weekly decay', value: `−${Math.round(effectiveDecay(p.bribes.politicians))}`, tone: 'neutral' },
       ] },
       { heading: 'SOURCES (itemizable)', rows: [
         { kind: 'source', label: 'Illegal operations', contribution: `+${Math.round(opHeat)}/tick`, tone: 'blood' },
@@ -201,7 +204,8 @@ export function buildFederalLadder(state: GameState, _vis: StatusVisibility): Sc
   const p = state.player;
   const exposure = federalExposure(p);
   const armTimer = p.bustArmed ? 'ARMED' : `${Math.max(0, p.fedImminentTicks)}/${FED_ARM_DELAY} at imminent`;
-  const fedIncidents = recentIncidents(state, 40).filter((i) => i.type === 'federal_warning' || i.type === 'federal_warrant' || i.type === 'federal_cooldown');
+  const fedIncidents = [...state.incidents].reverse()
+    .filter((i) => i.type === 'federal_warning' || i.type === 'federal_warrant' || i.type === 'federal_cooldown');
   return {
     id: 'federalLadder',
     title: 'Federal Ladder',
@@ -244,23 +248,29 @@ export function buildThugRoster(state: GameState, _vis: StatusVisibility): Scree
 // ── 7. Racket Operations ────────────────────────────────────────────────────────────────────────
 export function buildRacketOperations(state: GameState, vis: StatusVisibility): ScreenView {
   const ops = allBiz(state).filter(({ biz }) => biz.kind !== 'front');
-  const rows: ScreenRow[] = ops.map(({ biz, district }) => {
+  const rows: ScreenRow[] = [];
+  let hiddenActivity = false;
+  for (const { biz, district } of ops) {
     if (ownsBusiness(state, biz)) {
       // OWN operation — full detail is safe.
       const shut = isShutDown(biz);
-      return {
+      rows.push({
         kind: 'value', label: `${biz.name} · ${biz.kind}`,
         value: `${district.name} · T${tierOf(biz)} · ${money(businessAccrual(biz))}/tick · +${Math.round(operationHeat(biz, district))}h${shut ? ' · SHUT' : ''}${uncollectedOf(biz) > 0 ? ` · ${money(uncollectedOf(biz))} uncollected` : ''}`,
         tone: shut ? 'blood' : 'brass',
-      };
+      });
+      continue;
     }
     // Rival/other operation — surface ONLY if its tile is revealed (scouted). Else mask.
     if (vis.businessVisible(biz.id)) {
-      return { kind: 'value', label: `${biz.name} · ${biz.kind}`, value: `${district.name} · rival racket · T${tierOf(biz)}`, tone: 'blood' };
+      rows.push({ kind: 'value', label: `${biz.name} · ${biz.kind}`, value: `${district.name} · rival racket · T${tierOf(biz)}`, tone: 'blood' });
+      continue;
     }
-    return unknownRow('Rival racket', 'unscouted — location and take unknown');
-  });
-  return { id: 'racketOperations', title: 'Racket Operations', sections: [{ heading: `OPERATIONS (${ops.length})`, rows: rows.length > 0 ? rows : [{ kind: 'note', text: 'No operations.' }] }] };
+    hiddenActivity = true;
+  }
+  // One stable rumor for one-or-many hidden operations: no hidden count, type, district or take.
+  if (hiddenActivity) rows.push(unknownRow('Unconfirmed activity', 'Details unavailable beyond the fog.'));
+  return { id: 'racketOperations', title: 'Racket Operations', sections: [{ heading: 'OPERATIONS ON RECORD', rows: rows.length > 0 ? rows : [{ kind: 'note', text: 'No operations on record.' }] }] };
 }
 
 // ── 8. Fronts / Extortion ─────────────────────────────────────────────────────────────────────────
@@ -268,6 +278,7 @@ export function buildFrontsExtortion(state: GameState, vis: StatusVisibility): S
   const fronts = allBiz(state).filter(({ biz }) => biz.kind === 'front');
   const mine: ScreenRow[] = [];
   const other: ScreenRow[] = [];
+  let hiddenActivity = false;
   for (const { biz, district } of fronts) {
     if (ownsBusiness(state, biz)) {
       // OWN extorted front — full detail safe.
@@ -275,7 +286,7 @@ export function buildFrontsExtortion(state: GameState, vis: StatusVisibility): S
       continue;
     }
     // Unshaken or rival-held front — reveals block/ownership detail; gate on the funnel.
-    if (!vis.businessVisible(biz.id)) { other.push(unknownRow('Front', 'unscouted block')); continue; }
+    if (!vis.businessVisible(biz.id)) { hiddenActivity = true; continue; }
     const prog = extortProgress(state, biz.id);
     const rivalHeld = businessEarner(biz) !== undefined; // visible ⇒ we may read who (scouted)
     other.push({
@@ -284,6 +295,8 @@ export function buildFrontsExtortion(state: GameState, vis: StatusVisibility): S
       tone: rivalHeld ? 'blood' : 'neutral',
     });
   }
+  // Do not emit one masked row per hidden front: that was an exact hidden-cardinality oracle.
+  if (hiddenActivity) other.push(unknownRow('Unconfirmed activity', 'Details unavailable beyond the fog.'));
   const acts = state.extortionActs ?? []; // player's own thug orders — safe
   return {
     id: 'frontsExtortion',
@@ -297,38 +310,21 @@ export function buildFrontsExtortion(state: GameState, vis: StatusVisibility): S
 }
 
 // ── 9. Incident Ledger ────────────────────────────────────────────────────────────────────────────
-// NO-X-RAY: an incident is knowable by TYPE only when it is structurally the player's own or globally
-// player-facing AND its summary carries no rival PII — the player's own weekly settlement, the player-only
-// federal ladder (resolveFederalWarnings logs only for isPlayer), and game over. EVERY other type is
-// emitted PER-FAMILY by the sim (bust / mutiny / desertion / loan / shock-audit / speakeasy-raid / robbery /
-// interception all fire for rivals too, and harvestIncidents projects them regardless of family), so their
-// summaries embed rival name/heat/debt/crew/dirty-cash/op-location. Those MUST prove player-involvement or
-// a scouted location, else they mask — never trust the type alone.
-const PLAYER_GLOBAL_INCIDENT: ReadonlySet<string> = new Set([
-  'settlement', 'game_over', 'federal_warning', 'federal_warrant', 'federal_cooldown',
-]);
-/** SAFE own-involvement test — every key is compared to the PLAYER id, so it reveals only the player's own
- * stake, never a rival identity. Broad because the sim tags involvement under many different data keys. */
-function incidentInvolvesPlayer(state: GameState, rec: IncidentRecord): boolean {
-  const d = (rec.data ?? {}) as Record<string, unknown>;
-  const pid = state.player.id;
-  const keys = ['familyId', 'newHolder', 'oldHolder', 'attackerId', 'attackerFaction', 'victimFamily',
-    'victimFaction', 'ownerFamily', 'holderId', 'invaderId', 'defenderId', 'byFamily'];
-  return keys.some((k) => d[k] === pid);
-}
 export function buildIncidentLedger(state: GameState, vis: StatusVisibility, limit = 20): ScreenView {
   const held = heldIds(state);
-  const rows: ScreenRow[] = recentIncidents(state, limit).map((rec) => {
-    const data = (rec.data ?? {}) as Record<string, unknown>;
-    const districtId = typeof data.districtId === 'string' ? data.districtId : undefined;
-    const known = PLAYER_GLOBAL_INCIDENT.has(rec.type) || incidentInvolvesPlayer(state, rec)
-      || (districtId ? scouted(vis, held, districtId) : false);
-    if (!known) {
-      // A located rival/turf event the player has no eyes on — surface that SOMETHING happened, not where/who.
-      return unknownRow('Word from another part of town', `${rec.type} · week ${rec.week}`);
-    }
-    return { kind: 'incident', week: rec.week, category: rec.type, severity: rec.severity, summary: rec.summary };
-  });
+  // Filter the complete bounded ledger BEFORE applying the visible-row limit. Otherwise a burst of hidden
+  // rival events could crowd safe rows out and disclose its cardinality indirectly.
+  const ordered = [...state.incidents].reverse();
+  const visibility = resolveIncidentVisibility(
+    ordered,
+    state.player.id,
+    (districtId) => scouted(vis, held, districtId),
+  );
+  const rows: ScreenRow[] = visibility.visible.slice(0, Math.max(0, limit)).map((rec) => ({
+    kind: 'incident', week: rec.week, category: rec.type, severity: rec.severity, summary: rec.summary,
+  }));
+  // Exactly one stable rumor for one-or-many hidden records. It carries no count, type, week or severity.
+  if (visibility.hasHiddenActivity) rows.push(unknownRow('Word from another part of town', 'Details remain unconfirmed.'));
   return { id: 'incidentLedger', title: 'Incident Ledger', sections: [{ heading: 'RECENT (newest first)', rows: rows.length > 0 ? rows : [{ kind: 'note', text: 'Quiet so far.' }] }] };
 }
 

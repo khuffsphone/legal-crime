@@ -4,6 +4,16 @@
 
 export type MusicPhase = 'TITLE' | 'ESTABLISH' | 'FIRST BLOOD' | 'CONTEST' | 'DECAPITATE' | 'GAMEOVER';
 export type AudioBus = 'sfx' | 'vo' | 'music' | 'ambience';
+export type ConfirmPersona = 'sal' | 'vito' | 'crew';
+export type ConfirmIntent = 'selection' | 'order';
+
+/** Provisional identity routing over the three shipped generic confirmation takes. Sal and Vito start
+ * on different clips, but this is variation routing—not a substitute for their final cast VO packs. */
+export function confirmationTakesForPersona(persona: ConfirmPersona): string[] {
+  if (persona === 'sal') return ['vo_confirm_1', 'vo_confirm_3'];
+  if (persona === 'vito') return ['vo_confirm_2', 'vo_confirm_3'];
+  return ['vo_confirm_1', 'vo_confirm_2', 'vo_confirm_3'];
+}
 
 /** The looping MUSIC BED for a match phase (the adaptive state-machine target). FIRST BLOOD and
  * CONTEST share the conflict bed; DECAPITATE is the war bed; TITLE/GAMEOVER their own. */
@@ -167,8 +177,10 @@ export const SOFT_SFX_MAX = 3;
  * When the cap is full the LOWEST priority loses (the incoming cue if it ties or is weaker — no thrash). */
 export const SOFT_SFX_PRIORITY: Record<string, number> = {
   wire_routine: 3, // the Wire's routine tick — info-critical, stays audible over chatter
-  extort: 2, cashdrop: 2, // a racket folds / cash banked
+  extort: 2, cashpickup: 2, cashdrop: 2, // a racket folds / cash gathered / cash banked
   grease_beat: 2, grease_bench: 2, grease_cityhall: 2, grease_bureau: 2, // a channel greased
+  sfx_down_body: 3, // a visible unit-down must survive incidental movement texture
+  sfx_step_pavement: 0, sfx_step_gravel: 0, // texture — always the first voices shed under pressure
   door: 1, typewriter: 1, // texture — a slammed door, the adding machine
 };
 /** Priority for a soft cue not in the table (treated as economy-tier feedback). */

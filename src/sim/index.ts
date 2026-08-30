@@ -2,6 +2,7 @@
 // This module must never import Phaser or touch browser globals.
 
 export * from './types';
+export * from './crewIdentity';
 export * from './constants';
 export { Rng, mulberry32, seedToCursor } from './rng';
 export { createInitialState } from './state';
@@ -34,6 +35,13 @@ export {
   collectionSafety,
   collectionFraction,
 } from './collection';
+export {
+  collectionStatusView,
+  collectionPillLabel,
+  compactCollectionCash,
+  type CollectionStatusView,
+  type CollectionRushState,
+} from './collectionStatus';
 export { tick, tickN } from './tick';
 export { advanceClock, weekProgress, secondsUntilNextWeek } from './clock';
 export {
@@ -144,6 +152,12 @@ export {
 } from './mapEconomy';
 export { update, updateAndObserve, type UpdateResult, type ObserveResult } from './realtime';
 export {
+  cleanupDeadRivalEmbodiment,
+  emptyRivalEmbodimentCleanup,
+  mergeRivalEmbodimentCleanup,
+  type RivalEmbodimentCleanup,
+} from './rivalLifecycle';
+export {
   unitHealth, isCombatant, hostile, enemyInRange, damageUnit, resolveProximityCombat, type CombatEvent,
 } from './combat';
 export {
@@ -167,7 +181,10 @@ export {
   type RetreatResponse, type StrikeOutcome, type StrikeResolution,
 } from './telegraph';
 export {
-  recordDownedBody, advanceDownedBodies, downedBodyDecay, DOWNED_BODY_PERSIST_SECONDS, type DownedBody,
+  recordDownedBody, advanceDownedBodies, downedBodyFallProgress, downedBodyMotionPaused,
+  downedBodyDecay, downedBodyAngleDeg,
+  DOWNED_BODY_CONTACT_SECONDS, DOWNED_BODY_FADE_START_SECONDS, DOWNED_BODY_PERSIST_SECONDS,
+  MAX_DOWNED_BODIES, type DownedBody,
 } from './downedBodies';
 export {
   spawnBeatCops, advanceBeatCops, desiredCopCount, copDistrictWeights, buildPatrolWorld,
@@ -234,6 +251,7 @@ export {
   collectorsVulnerable,
   type RouteSetup,
   type RouteStatus,
+  type RouteAdvanceEvent,
 } from './routes';
 export {
   CITY_ARCHETYPES,
@@ -298,6 +316,7 @@ export {
 } from './offense';
 export {
   offenseReadout,
+  offenseReadoutForTargets,
   matchPhase,
   hudPhase,
   offensePreview,
@@ -308,6 +327,7 @@ export {
   isNearlyHeld,
   type OffenseKey,
   type OffenseOption,
+  type OffenseTargetIds,
   type MatchPhase,
   type PhaseReadout,
   type HudPhase,

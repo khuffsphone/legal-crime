@@ -1,5 +1,9 @@
 # Report 6 — Recommended-Fixes Backlog
 
+> **2026-08-30 status:** PR #93's current FP-01 candidate completes BL-01/02 and the minimap half of BL-05,
+> then extends the same fix across City/Wire/hover/world-label/HQ/offense surfaces with behavioral twin-world
+> tests. BL-03/04/06/07/08 remain structural follow-up work; see Report 4's remediation update and Claude UAT Test I.
+
 Dispatch-ready synthesis of reports 1–5. No fix is implemented here — this is the next-iterations menu.
 Every item traces to a `file:line`-cited finding upstream. **Parallel-safety** is judged against the known
 open lanes (#80 cop-p1-heat, #75, #73, #77) and, above all, against **`IsoScene.ts`** — the 6701-LOC

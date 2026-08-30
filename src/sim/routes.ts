@@ -6,7 +6,8 @@
 // acts on it exactly like a manual run), so guarding the route still matters. The economic
 // settlement (tick) is untouched — banking reuses the existing depositCollector skim.
 
-import { spawnCollector, issueMove, unitArrived, type MovableUnit } from './movement';
+import { spawnCollector, issueMove, unitArrived, unitDestination, unitTile, type MovableUnit } from './movement';
+import { tileEquals } from './iso';
 import { depositCollector, hqTileOf, businessTileOf, navGridForLayout, type MapLayout } from './mapEconomy';
 import { uncollectedOf } from './collection';
 import { findBusiness } from './commands';
@@ -35,7 +36,6 @@ export function ensureBusinessCollector(
   state: GameState, layout: MapLayout, familyId: string, businessId: string, grid?: NavGrid,
 ): RouteSetup | null {
   const routeId = businessRouteId(businessId);
-  if (state.units.some((u) => u.routeId === routeId)) return null; // already has its collector
   const found = findBusiness(state, businessId);
   if (!found || businessEarner(found.business) !== familyId) return null;
   const hq = hqTileOf(layout, familyId);
@@ -43,7 +43,27 @@ export function ensureBusinessCollector(
   if (!hq || !tile) return null;
 
   const route: CollectionRoute = { id: routeId, familyId, stops: [businessId] };
-  state.routes = [...(state.routes ?? []).filter((r) => r.id !== routeId), route];
+  const savedRoute = state.routes?.find((r) => r.id === routeId);
+  const routeValid = savedRoute?.familyId === familyId
+    && savedRoute.stops.length === 1
+    && savedRoute.stops[0] === businessId;
+  if (!routeValid) state.routes = [...(state.routes ?? []).filter((r) => r.id !== routeId), route];
+
+  // SAVE HEALING — an older/malformed save can retain the fixed collector but lose its route. The old
+  // early return treated that body as proof of a working pair, leaving it inert at HQ forever. Repair the
+  // canonical route and destination in place so its already-attached scene view remains authoritative.
+  const existing = state.units.find((u) => u.routeId === routeId);
+  if (existing && existing.role === 'collector' && existing.factionId === familyId) {
+    existing.routeIndex = 0;
+    existing.routePhase = (existing.carrying ?? 0) > 0 ? 'toBank' : 'toStop';
+    const target = existing.routePhase === 'toBank' ? hq : tile;
+    const destination = unitDestination(existing);
+    if (!destination || !tileEquals(destination, target)) issueMove(existing, target, grid ?? navGridForLayout(layout));
+    return null;
+  }
+  // A route id on the wrong role/faction cannot safely be adopted; replace only that malformed claimant.
+  if (existing) state.units = state.units.filter((u) => u !== existing);
+
   const col = spawnCollector(`collector-${businessId}`, hq.gx, hq.gy, familyId, 0, STROLL_SPEED);
   col.routeId = routeId;
   col.routeIndex = 0;
@@ -78,6 +98,14 @@ export function routeCollectorOf(state: GameState, familyId: string): MovableUni
 }
 
 export interface RouteSetup { route: CollectionRoute; unit: MovableUnit; }
+
+export interface RouteAdvanceEvent {
+  kind: 'pickup' | 'deposit';
+  collectorId: string;
+  familyId: string;
+  amount: number;
+  businessId?: string;
+}
 
 /**
  * Create (or replace) `familyId`'s automated collection route over all the businesses it currently
@@ -120,8 +148,9 @@ export function createCollectionRoute(
  * stop it heads to HQ; at HQ it BANKS (the existing skim) and loops back to the first stop. A no-op
  * when there are no routes (so prior tests are unaffected). Pure (mutates state).
  */
-export function advanceRoutes(state: GameState, layout: MapLayout, grid?: NavGrid): void {
-  if (!state.routes || state.routes.length === 0) return;
+export function advanceRoutes(state: GameState, layout: MapLayout, grid?: NavGrid): RouteAdvanceEvent[] {
+  const events: RouteAdvanceEvent[] = [];
+  if (!state.routes || state.routes.length === 0) return events;
   const g = grid ?? navGridForLayout(layout);
   for (const col of state.units) {
     if (col.routeId === undefined || col.role !== 'collector') continue;
@@ -130,14 +159,39 @@ export function advanceRoutes(state: GameState, layout: MapLayout, grid?: NavGri
     if (!unitArrived(col)) continue; // still walking — let movement carry it
 
     if (col.routePhase === 'toStop') {
+      // FP-01 — the opening fixed collector must not silently steal the back-pay that teaches [C] RUSH.
+      // While the player's guaranteed tutorial run is still unused, a per-business collector waits at
+      // its storefront and leaves the pile on the books. Dispatching the protected rush spends the free
+      // run, so this guard naturally falls away on the next frame; every later round is unchanged. Keep
+      // deliberate multi-stop routes and rival collectors out of this narrow onboarding exception.
+      if (
+        route.familyId === state.player.id &&
+        route.id.startsWith('route-biz-') &&
+        state.tutorialFreeRuns > 0
+      ) continue;
       const idx = col.routeIndex ?? 0;
       const stopId = route.stops[idx];
+      const stopTile = businessTileOf(layout, stopId);
+      // SAVE/COMMAND HEALING — an empty path means only "idle", not "at the intended stop". Never
+      // collect remotely from HQ; reissue the route when the stored position and phase disagree.
+      if (!stopTile) continue;
+      if (!tileEquals(unitTile(col), stopTile)) {
+        issueMove(col, stopTile, g);
+        continue;
+      }
       const found = findBusiness(state, stopId);
       // gather only if it is still ours and producing
       if (found && businessEarner(found.business) === route.familyId) {
-        col.carrying = (col.carrying ?? 0) + uncollectedOf(found.business);
+        const pickedUp = uncollectedOf(found.business);
+        col.carrying = (col.carrying ?? 0) + pickedUp;
         found.business.uncollected = 0;
         col.originDistrictId = found.district.id;
+        if (pickedUp > 0) {
+          events.push({
+            kind: 'pickup', collectorId: col.id, familyId: route.familyId,
+            amount: pickedUp, businessId: stopId,
+          });
+        }
       }
       const next = idx + 1;
       if (next < route.stops.length) {
@@ -151,13 +205,21 @@ export function advanceRoutes(state: GameState, layout: MapLayout, grid?: NavGri
       }
     } else {
       // toBank — arrived at HQ: bank the take (existing skim/heat), then loop the route.
-      depositCollector(state, col);
+      const hq = hqTileOf(layout, route.familyId);
+      if (!hq) continue;
+      if (!tileEquals(unitTile(col), hq)) {
+        issueMove(col, hq, g);
+        continue;
+      }
+      const banked = depositCollector(state, col);
+      if (banked > 0) events.push({ kind: 'deposit', collectorId: col.id, familyId: route.familyId, amount: banked });
       col.routePhase = 'toStop';
       col.routeIndex = 0;
       const t = businessTileOf(layout, route.stops[0]);
       if (t) issueMove(col, t, g);
     }
   }
+  return events;
 }
 
 /** A compact status read for the route (RTS-22 legibility): stops, carrying, phase. */

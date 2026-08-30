@@ -4,6 +4,7 @@
 // the fixed-HUD camera and routes a chip click to its panel. No pixels here — just the at-a-glance lines.
 
 import { PANELS, type PanelId } from './panelState';
+import { compactCollectionCash } from '../../sim/collectionStatus';
 
 export interface DossierData {
   /** Unread Wire slips (drives the [L] chip's count). */
@@ -15,6 +16,11 @@ export interface DossierData {
   /** Collection-route dominance: districts you run a path through / total. */
   pathsDom: number;
   pathsTotal: number;
+  /** Live automatic-collection summary for the always-visible Paths chip. */
+  collectionAuto: number;
+  collectionWaiting: number;
+  collectionRoad: number;
+  collectionRushState: 'ready' | 'in-flight' | 'nothing-due';
   /** Free (idle) muscle — thugs with no current order. */
   crewIdle: number;
   /** Dirty-cash share of the hoard, as a whole-number percent (the launder pressure). */
@@ -27,12 +33,31 @@ export interface DossierChip {
   label: string;
 }
 
+/** Scale just the chip text enough to keep the fixed one-row strip inside the logical viewport. */
+export function dossierFitScale(textWidth: number, fixedWidth: number, viewportWidth: number): number {
+  if (textWidth <= 0) return 1;
+  return Math.min(1, Math.max(0.1, (Math.max(0, viewportWidth - 20 - fixedWidth)) / textWidth));
+}
+
 /** Build the five strip chips (in PANELS order) from the live summary. Pure — same data ⇒ same chips. */
 export function buildDossierChips(d: DossierData): DossierChip[] {
+  const waiting = compactCollectionCash(d.collectionWaiting);
+  const road = compactCollectionCash(d.collectionRoad);
+  const collection = d.collectionAuto === 0
+    ? 'AUTO · first front starts it'
+    : d.collectionRushState === 'in-flight'
+      ? `AUTO ${d.collectionAuto} · IN FLIGHT $${road}`
+      : d.collectionWaiting > 0 && d.collectionRoad > 0
+        ? `AUTO ${d.collectionAuto} · W$${waiting} · R$${road}`
+        : d.collectionWaiting > 0
+          ? `AUTO ${d.collectionAuto} · W$${waiting} · [C] RUSH`
+        : d.collectionRoad > 0
+          ? `AUTO ${d.collectionAuto} · R$${road}`
+          : `AUTO ${d.collectionAuto} · $0 DUE`;
   const label: Record<PanelId, string> = {
     wire: `Wire · ${d.wireUnread} unread`,
     turf: `Turf ${d.turfHeld}/${d.turfTotal} · ${d.turfContested} contested`,
-    paths: `Paths · Dom ${d.pathsDom}/${d.pathsTotal}`,
+    paths: collection,
     crew: `Crew · ${d.crewIdle} idle`,
     finance: `Ledger · dirty ${d.ledgerDirtyPct}%`,
   };

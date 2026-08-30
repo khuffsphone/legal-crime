@@ -1,0 +1,12 @@
+{
+  "$schema": "./asset-manifest.schema.json",
+  "schemaVersion": "1.0.0",
+  "manifestId": "brassmere.fp01.replace-me",
+  "project": "Brassmere",
+  "milestone": "FP-01",
+  "createdAt": "2026-08-29T00:00:00Z",
+  "updatedAt": "2026-08-29T00:00:00Z",
+  "owner": "Replace with production owner",
+  "notes": "Copy this file, assign a stable manifestId, and add asset records using fp01-asset-manifest.json as the field-complete reference.",
+  "assets": []
+}

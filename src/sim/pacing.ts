@@ -39,6 +39,19 @@ import type { GameState } from './types';
 
 export type OffenseKey = 'sabotage' | 'raid' | 'lockout' | 'assassinate';
 
+/**
+ * Targets the caller has decided the player is allowed to act on. The ids are deliberately explicit:
+ * this readout never searches beyond them, so a scene can pass only fog-visible / earned-intel targets.
+ * An empty object means "no known targets"; omitting this object at higher-level compatibility APIs keeps
+ * their legacy auto-target behaviour.
+ */
+export interface OffenseTargetIds {
+  sabotageBusinessId?: string | null;
+  raidDistrictId?: string | null;
+  lockoutRivalId?: string | null;
+  assassinateRivalId?: string | null;
+}
+
 export interface OffenseOption {
   key: OffenseKey;
   /** Player-facing label + the hotkey the scene binds. */
@@ -96,28 +109,47 @@ function hitHeatAfterCityHall(state: GameState): number {
 }
 
 /**
- * The four offensive actions with their live cost / heat / availability, in the intended unlock
- * order (sabotage first, the decapitating hit last). Pure — drives the HUD's "what can I do, what
- * will it cost" readout. Each row uses a representative target (the same one the scene's command
- * would pick), so the gate reason is the true reason that command would give.
+ * Target-explicit offense readout. Unlike `offenseReadout`, this function performs no citywide target
+ * discovery: it scores only the ids supplied by the caller. This is the visibility-safe seam for render
+ * code — pass `{}` when the player has no visible/earned target and hidden rival state cannot change the
+ * resulting chips or inspector rows.
  */
-export function offenseReadout(state: GameState): OffenseOption[] {
-  const sab = sabotageTarget(state);
-  const raidT = raidTarget(state);
-  const weak = weakestRival(state);
-  const district = (id: string | null): string | null => id ? (state.districts.find((d) => d.id === id)?.name ?? id) : null;
+export function offenseReadoutForTargets(state: GameState, targets: OffenseTargetIds): OffenseOption[] {
+  const sabId = targets.sabotageBusinessId ?? null;
+  const raidId = targets.raidDistrictId ?? null;
+  const lockId = targets.lockoutRivalId ?? null;
+  const hitId = targets.assassinateRivalId ?? null;
+  const sab = sabId ? allBusinesses(state).find((b) => b.id === sabId) : undefined;
+  const raid = raidId ? state.districts.find((d) => d.id === raidId) : undefined;
+  const lock = lockId ? state.rivals.find((r) => r.id === lockId) : undefined;
+  const hit = hitId ? state.rivals.find((r) => r.id === hitId) : undefined;
 
   const sabGate: Gate = sab ? canSabotage(state, sab.id) : { ok: false, reason: 'no rival racket to hit' };
-  const raidGate: Gate = raidT ? canRaid(state, raidT) : { ok: false, reason: 'no rival turf to raid' };
-  const lockGate: Gate = weak ? canLockout(state, weak.familyId) : { ok: false, reason: 'no rival to lock down' };
-  const hitGate: Gate = weak ? canAssassinate(state, weak.familyId) : { ok: false, reason: 'no rival Don left' };
+  const raidGate: Gate = raid ? canRaid(state, raid.id) : { ok: false, reason: 'no rival turf to raid' };
+  const lockGate: Gate = lock ? canLockout(state, lock.id) : { ok: false, reason: 'no rival to lock down' };
+  const hitGate: Gate = hit ? canAssassinate(state, hit.id) : { ok: false, reason: 'no rival Don left' };
 
   return [
     { key: 'sabotage', label: 'Sabotage', hotkey: '2', cost: SABOTAGE_COST, heat: SABOTAGE_HEAT, available: sabGate.ok, reason: sabGate.reason, target: sab?.name ?? null, affordEtaWeeks: weeksToAfford(state, SABOTAGE_COST) },
-    { key: 'raid', label: 'Raid', hotkey: '1', cost: RAID_COST, heat: raidHeatAfterBench(state), available: raidGate.ok, reason: raidGate.reason, target: district(raidT), affordEtaWeeks: weeksToAfford(state, RAID_COST) },
-    { key: 'lockout', label: 'Lockout', hotkey: '4', cost: LOCKOUT_COST, heat: 0, available: lockGate.ok, reason: lockGate.reason, target: weak?.name ?? null, affordEtaWeeks: weeksToAfford(state, LOCKOUT_COST) },
-    { key: 'assassinate', label: 'Assassinate', hotkey: '3', cost: ASSASSINATE_COST, heat: hitHeatAfterCityHall(state), available: hitGate.ok, reason: hitGate.reason, target: weak?.name ?? null, affordEtaWeeks: weeksToAfford(state, ASSASSINATE_COST) },
+    { key: 'raid', label: 'Raid', hotkey: '1', cost: RAID_COST, heat: raidHeatAfterBench(state), available: raidGate.ok, reason: raidGate.reason, target: raid?.name ?? null, affordEtaWeeks: weeksToAfford(state, RAID_COST) },
+    { key: 'lockout', label: 'Lockout', hotkey: '4', cost: LOCKOUT_COST, heat: 0, available: lockGate.ok, reason: lockGate.reason, target: lock?.name ?? null, affordEtaWeeks: weeksToAfford(state, LOCKOUT_COST) },
+    { key: 'assassinate', label: 'Assassinate', hotkey: '3', cost: ASSASSINATE_COST, heat: hitHeatAfterCityHall(state), available: hitGate.ok, reason: hitGate.reason, target: hit?.name ?? null, affordEtaWeeks: weeksToAfford(state, ASSASSINATE_COST) },
   ];
+}
+
+/**
+ * Legacy compatibility readout: auto-discovers the same representative citywide targets as before.
+ * Visibility-sensitive callers should use `offenseReadoutForTargets` instead.
+ */
+export function offenseReadout(state: GameState): OffenseOption[] {
+  const sab = sabotageTarget(state);
+  const weak = weakestRival(state);
+  return offenseReadoutForTargets(state, {
+    sabotageBusinessId: sab?.id,
+    raidDistrictId: raidTarget(state),
+    lockoutRivalId: weak?.familyId,
+    assassinateRivalId: weak?.familyId,
+  });
 }
 
 export type MatchPhase = 'establish' | 'contest' | 'endgame';
@@ -282,4 +314,3 @@ export function offensePreview(key: OffenseKey): OffensePreview {
       return { key, effect: `−${ASSASSINATE_HQ_DAMAGE} HQ integrity (≈3 hits topple a Don)`, retaliation: 'the rival ENRAGES — strikes your HQ' };
   }
 }
-

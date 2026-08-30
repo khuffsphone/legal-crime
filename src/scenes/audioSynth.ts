@@ -21,11 +21,13 @@ export const HIT_KEYS = [
 export const STEP_KEYS = [
   'sfx_step_pavement', 'sfx_step_wood', 'sfx_step_gravel', 'sfx_step_interior',
 ] as const;
+/** Original procedural, nonverbal casualty reactions. These are breaths/grunts, not cloned speech. */
+export const DEATH_REACTION_KEYS = ['sfx_death_reaction_1', 'sfx_death_reaction_2'] as const;
 
-export type SynthKey = (typeof HIT_KEYS)[number] | (typeof STEP_KEYS)[number];
+export type SynthKey = (typeof HIT_KEYS)[number] | (typeof STEP_KEYS)[number] | (typeof DEATH_REACTION_KEYS)[number];
 
-/** Every key the synth fills (hits + footsteps). */
-export const SYNTH_KEYS: readonly SynthKey[] = [...HIT_KEYS, ...STEP_KEYS];
+/** Every key the synth fills (hits + footsteps + restrained nonverbal casualty reactions). */
+export const SYNTH_KEYS: readonly SynthKey[] = [...HIT_KEYS, ...STEP_KEYS, ...DEATH_REACTION_KEYS];
 
 // ── tiny deterministic DSP toolkit (pure) ─────────────────────────────────────────────────────────
 /** A seeded PRNG (mulberry32) so each key's noise is deterministic + distinct. */
@@ -150,10 +152,27 @@ export function synthSamples(key: SynthKey, sampleRate: number): Float32Array {
       for (let i = 0; i < crack.length; i++) out[i] += crack[i] * decayAt(i, sr * 0.01) * 0.8;
       return finish(out, sr);
     }
-    case 'sfx_step_pavement': { // a crisp mid filtered-noise tap
-      const n = secs(sr, 0.07); const out = noise(n, seed); highpass(out, 0.4); lowpass(out, 0.5);
-      for (let i = 0; i < n; i++) out[i] *= decayAt(i, sr * 0.012);
-      return finish(out, sr, 0.6);
+    case 'sfx_step_pavement': { // leather heel → sole roll → restrained scuff; deliberately not a click
+      const n = secs(sr, 0.3); const out = new Float32Array(n);
+      const heel = noise(n, seed); lowpass(heel, 0.04);
+      const sole = noise(n, seed + 41); lowpass(sole, 0.07);
+      const scuff = noise(n, seed + 73); lowpass(scuff, 0.055);
+      const soleAt = secs(sr, 0.09);
+      const scuffAt = secs(sr, 0.15);
+      for (let i = 0; i < n; i++) {
+        const body = Math.sin((2 * Math.PI * 78 * i) / sr) * decayAt(i, sr * 0.065) * 0.52;
+        const heelContact = heel[i] * decayAt(i, sr * 0.052) * 0.66;
+        const si = i - soleAt;
+        const soleContact = si >= 0
+          ? (sole[si] * decayAt(si, sr * 0.065) * 0.34
+            + Math.sin((2 * Math.PI * 64 * si) / sr) * decayAt(si, sr * 0.055) * 0.24)
+          : 0;
+        const ci = i - scuffAt;
+        const leatherScuff = ci >= 0 ? scuff[ci] * decayAt(ci, sr * 0.085) * 0.2 : 0;
+        out[i] = body + heelContact + soleContact + leatherScuff;
+      }
+      lowpass(out, 0.13); // aggressive high roll-off: shoe weight, no bright mechanical transient
+      return finish(out, sr, 0.5);
     }
     case 'sfx_step_wood': { // a hollow tap with a short resonant ring
       const n = secs(sr, 0.09); const out = noise(n, seed); lowpass(out, 0.3);
@@ -163,21 +182,49 @@ export function synthSamples(key: SynthKey, sampleRate: number): Float32Array {
       }
       return finish(out, sr, 0.6);
     }
-    case 'sfx_step_gravel': { // several gritty crackle grains
-      const n = secs(sr, 0.11); const out = new Float32Array(n);
-      const grains = 7, glen = secs(sr, 0.012);
-      for (let k = 0; k < grains; k++) {
-        const off = Math.floor((mulberry32(seed + k * 13)() ) * n * 0.6);
-        const g = noise(glen, seed + k * 31); highpass(g, 0.5);
-        for (let i = 0; i < glen && off + i < n; i++) out[off + i] += g[i] * decayAt(i, sr * 0.004) * 0.8;
+    case 'sfx_step_gravel': { // boot weight followed by a loose, low gravel settle
+      const n = secs(sr, 0.34); const out = new Float32Array(n);
+      const body = noise(n, seed); lowpass(body, 0.045);
+      for (let i = 0; i < n; i++) {
+        out[i] = body[i] * decayAt(i, sr * 0.075) * 0.55
+          + Math.sin((2 * Math.PI * 92 * i) / sr) * decayAt(i, sr * 0.05) * 0.45;
       }
-      for (let i = 0; i < n; i++) out[i] *= decayAt(i, sr * 0.05);
-      return finish(out, sr, 0.6);
+      const grains = 9, glen = secs(sr, 0.034);
+      for (let k = 0; k < grains; k++) {
+        const off = Math.floor(mulberry32(seed + k * 13)() * n * 0.68);
+        const g = noise(glen, seed + k * 31); lowpass(g, 0.16);
+        for (let i = 0; i < glen && off + i < n; i++) {
+          out[off + i] += g[i] * decayAt(i, sr * 0.018) * 0.32;
+        }
+      }
+      for (let i = 0; i < n; i++) out[i] *= decayAt(i, sr * 0.11);
+      lowpass(out, 0.16);
+      return finish(out, sr, 0.5);
     }
     case 'sfx_step_interior': { // a muffled, heavily low-passed soft tap
       const n = secs(sr, 0.07); const out = noise(n, seed); lowpass(out, 0.08);
       for (let i = 0; i < n; i++) out[i] *= decayAt(i, sr * 0.012) * 0.7;
       return finish(out, sr, 0.55);
+    }
+    case 'sfx_death_reaction_1':
+    case 'sfx_death_reaction_2': { // a low, falling breath/grunt — deliberately nonverbal and restrained
+      const n = secs(sr, key.endsWith('_1') ? 0.38 : 0.46);
+      const out = new Float32Array(n);
+      const breath = noise(n, seed); lowpass(breath, 0.045);
+      const startHz = key.endsWith('_1') ? 142 : 116;
+      const endHz = key.endsWith('_1') ? 84 : 72;
+      let phase = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / Math.max(1, n - 1);
+        const hz = startHz + (endHz - startHz) * t;
+        phase += (2 * Math.PI * hz) / sr;
+        const attack = Math.min(1, i / Math.max(1, secs(sr, 0.018)));
+        const env = attack * Math.pow(1 - t, 1.35);
+        const voiced = Math.sin(phase) * 0.72 + Math.sin(phase * 2.02) * 0.16;
+        out[i] = (voiced + breath[i] * 0.42) * env;
+      }
+      lowpass(out, 0.16); // keep it chesty; never a sharp yelp competing with combat reports
+      return finish(out, sr, 0.44);
     }
   }
 }

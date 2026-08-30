@@ -92,6 +92,7 @@ export function detectInterceptions(units: readonly MovableUnit[]): Interception
  */
 export function resolveInterceptions(state: GameState): InterceptionEvent[] {
   const events = detectInterceptions(state.units);
+  const retiredOneShotIds = new Set<string>();
   for (const ev of events) {
     const attackerFamily = findFamily(state, ev.attackerFaction);
     const collector = state.units.find((u) => u.id === ev.collectorId);
@@ -103,6 +104,11 @@ export function resolveInterceptions(state: GameState): InterceptionEvent[] {
     }
     collector.carrying = 0;
     stopUnit(collector);
+    // A manual [C] collector is a one-shot messenger. Once its bag is stolen there is no return leg,
+    // deposit, or route state left to advance, so keeping it in state.units creates an inert body and
+    // can collide with the next same-week rush id. Automated route collectors are permanent actors:
+    // preserve them so advanceRoutes can resume their loop after the empty stop.
+    if (collector.routeId === undefined) retiredOneShotIds.add(collector.id);
 
     // RTS-14: losing a run to an ambush shakes the victim's crew.
     const victim = findFamily(state, ev.victimFaction);
@@ -114,6 +120,9 @@ export function resolveInterceptions(state: GameState): InterceptionEvent[] {
       message: `${ev.attackerFaction} ambushed ${ev.victimFaction}'s collector ${ev.collectorId} for $${ev.amount}`,
       data: { ...ev },
     });
+  }
+  if (retiredOneShotIds.size > 0) {
+    state.units = state.units.filter((unit) => !retiredOneShotIds.has(unit.id));
   }
   return events;
 }

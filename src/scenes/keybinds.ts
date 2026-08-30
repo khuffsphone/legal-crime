@@ -105,6 +105,11 @@ export function normalizeKey(raw: string): string {
   return '';
 }
 
+/** Browser keydown repeats are not new player commands. One physical press must buy/send exactly once. */
+export function isFreshKeydown(event: { repeat?: boolean }): boolean {
+  return event.repeat !== true;
+}
+
 /** A short human label for a token, for the settings UI ('PERIOD' → '.', 'E' → 'E'). Pure. */
 export function keyLabel(token: string): string {
   const k = normalizeKey(token);

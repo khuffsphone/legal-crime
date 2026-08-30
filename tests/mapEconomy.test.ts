@@ -16,7 +16,7 @@ import {
 import { createInitialState } from '../src/sim/state';
 import { collectionSafety, collectionFraction } from '../src/sim/collection';
 import { Rng } from '../src/sim/rng';
-import { spawnEnforcer, unitDestination } from '../src/sim/movement';
+import { spawnCollector, spawnEnforcer, unitDestination } from '../src/sim/movement';
 import { update } from '../src/sim/realtime';
 import { allBusinesses } from '../src/sim/economy';
 import type { GameState } from '../src/sim/types';
@@ -181,6 +181,55 @@ describe('depositCollector / processCollectorArrivals — reaching HQ deposits (
     expect(s.player.cash).toBe(3500 + expected); // STARTING_CASH (RTS-21: 3500) + banked
     expect(s.player.dirtyCash).toBe(expected); // banked as dirty money
     expect(c.carrying).toBe(0);
+    expect(s.units).not.toContain(c); // a completed manual RUSH runner retires instead of idling at HQ forever
+  });
+
+  it('retires a completed one-shot runner without disturbing an automated route collector', () => {
+    const s = seeded(300);
+    const layout = buildMapLayout(s);
+    const manual = startCollectorRun(s, layout, 'player', 'district-0').unit!;
+    manual.pos = { ...layout.hqTiles.player };
+    manual.path = [];
+
+    const route = spawnCollector('fixed-route', layout.hqTiles.player.gx, layout.hqTiles.player.gy, 'player', 0);
+    route.routeId = 'route-biz-front-0';
+    route.routePhase = 'toStop';
+    s.units.push(route);
+
+    expect(processCollectorArrivals(s, layout)).toHaveLength(1);
+    expect(s.units.some((u) => u.id === manual.id)).toBe(false);
+    expect(s.units.some((u) => u.id === route.id)).toBe(true);
+  });
+
+  it('prunes a legacy empty one-shot saved at HQ without creating a second deposit', () => {
+    const s = seeded(0);
+    const layout = buildMapLayout(s);
+    const stale = spawnCollector('legacy-empty-runner', layout.hqTiles.player.gx, layout.hqTiles.player.gy, 'player', 0);
+    s.units.push(stale);
+    const cashBefore = s.player.cash;
+
+    expect(processCollectorArrivals(s, layout)).toEqual([]);
+    expect(s.units).not.toContain(stale);
+    expect(s.player.cash).toBe(cashBefore);
+  });
+
+  it('allows a later [C] rush after the prior one has banked and retired', () => {
+    const s = seeded(300);
+    const layout = buildMapLayout(s);
+    const first = rushCollection(s, layout, 'player');
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    first.unit.pos = { ...layout.hqTiles.player };
+    first.unit.path = [];
+    processCollectorArrivals(s, layout);
+
+    const nextFront = s.districts[1].businesses[0];
+    nextFront.extortedBy = 'player';
+    nextFront.uncollected = 175;
+    const second = rushCollection(s, layout, 'player');
+
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.carrying).toBe(175);
   });
 
   it('does not deposit a collector that has not reached its HQ', () => {
@@ -231,6 +280,31 @@ describe('intercept-able in transit — robbed runs bank nothing (RTS-4 × RTS-5
     c.path = [];
     expect(processCollectorArrivals(s, layout)).toEqual([]);
     expect(s.player.dirtyCash).toBe(0);
+  });
+
+  it('retires a robbed one-shot runner and allows another [C] rush in the same week', () => {
+    const s = seeded(300);
+    const layout = buildMapLayout(s);
+    const first = rushCollection(s, layout, 'player');
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const firstId = first.unit.id;
+    s.units.push(spawnEnforcer('ambusher', first.unit.pos.gx, first.unit.pos.gy, 'rival-a'));
+
+    expect(update(s, 0.01, 1_000).interceptions).toHaveLength(1);
+    expect(s.units.some((unit) => unit.id === firstId)).toBe(false);
+    expect(rushCollectorInFlight(s, 'player')).toBe(false);
+
+    // No settlement crossed, so the default id is deliberately the same. Retirement prevents an
+    // old/new duplicate and lets the replacement carry the newly accrued take normally.
+    const front = s.districts[0].businesses[0];
+    front.uncollected = 125;
+    const second = rushCollection(s, layout, 'player');
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.unit.id).toBe(firstId);
+    expect(second.carrying).toBe(125);
+    expect(s.units.filter((unit) => unit.id === firstId)).toHaveLength(1);
   });
 });
 
